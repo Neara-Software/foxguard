@@ -41,83 +41,99 @@ const goRules = [
 const totalRules = jsRules.length + pyRules.length + goRules.length;
 
 function severityColor(s: string) {
-  if (s === 'critical') return 'var(--red)';
+  if (s === 'critical') return '#ef4444';
   if (s === 'high') return '#f97316';
-  if (s === 'medium') return 'var(--yellow)';
-  return 'var(--text-dim)';
+  if (s === 'medium') return '#eab308';
+  return '#737373';
 }
 ---
 
 <Base title="foxguard - Blazing fast security linter">
 
   <!-- Hero -->
-  <section class="hero">
-    <div class="container">
-      <div class="hero-badge">Written in Rust</div>
-      <h1 class="hero-title">foxguard</h1>
-      <p class="hero-tagline">The <strong>Ruff</strong> of security. Blazing fast security linter.</p>
+  <section class="relative pt-24 pb-16 sm:pt-32 sm:pb-20">
+    <div class="max-w-5xl mx-auto px-6 text-center">
 
-      <div class="terminal">
-        <div class="terminal-bar">
-          <span class="terminal-dot" style="background:#ef4444"></span>
-          <span class="terminal-dot" style="background:#eab308"></span>
-          <span class="terminal-dot" style="background:#22c55e"></span>
-          <span class="terminal-title">terminal</span>
-        </div>
-        <div class="terminal-body">
-          <div class="terminal-line">
-            <span class="t-prompt">$</span> <span class="t-cmd">foxguard .</span>
+      <!-- Fox icon -->
+      <div class="fade-up mb-8 flex justify-center">
+        <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 8L20 28L32 20L44 28L56 8L52 32L44 44L36 52H28L20 44L12 32L8 8Z" fill="#F59E0B" fill-opacity="0.15" stroke="#F59E0B" stroke-width="2" stroke-linejoin="round"/>
+          <circle cx="24" cy="32" r="2.5" fill="#F59E0B"/>
+          <circle cx="40" cy="32" r="2.5" fill="#F59E0B"/>
+          <path d="M28 40L32 44L36 40" stroke="#F59E0B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+
+      <!-- Badge -->
+      <div class="fade-up fade-up-delay-1 mb-6">
+        <span class="inline-block font-mono text-xs text-fox border border-fox/30 rounded-full px-3 py-1 tracking-wide">
+          Written in Rust
+        </span>
+      </div>
+
+      <!-- Title -->
+      <h1 class="fade-up fade-up-delay-2 font-heading font-900 text-white leading-none tracking-tight mb-6" style="font-size: clamp(3.5rem, 12vw, 7rem);">
+        fox<span class="text-fox">guard</span>
+      </h1>
+
+      <!-- Tagline -->
+      <p class="fade-up fade-up-delay-3 text-lg sm:text-xl text-smoke max-w-lg mx-auto mb-10">
+        The <span class="text-white font-semibold">Ruff</span> of security. Blazing fast security linter.
+      </p>
+
+      <!-- npx copy button -->
+      <div class="fade-up fade-up-delay-4 flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+        <button
+          id="npx-btn"
+          class="group relative flex items-center gap-3 bg-night-light border border-night-lighter hover:border-fox/30 rounded-lg px-5 py-3 font-mono text-sm text-fox transition-all duration-200 cursor-pointer"
+        >
+          <span class="text-ash">$</span>
+          <span>npx foxguard</span>
+          <svg class="w-4 h-4 text-ash group-hover:text-fox transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+
+        <!-- GitHub star button -->
+        <a
+          href="https://github.com/peaktwilight/foxguard"
+          target="_blank"
+          rel="noopener"
+          class="flex items-center gap-2 bg-white text-black font-semibold rounded-lg px-5 py-3 text-sm hover:bg-white/90 transition-colors no-underline hover:no-underline"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          Star on GitHub
+        </a>
+      </div>
+
+      <!-- Terminal -->
+      <div class="fade-up fade-up-delay-5 max-w-2xl mx-auto">
+        <div class="rounded-xl border border-night-lighter overflow-hidden bg-[#0d0d0d] shadow-2xl shadow-fox/5">
+          <!-- Terminal title bar -->
+          <div class="flex items-center gap-2 px-4 py-3 bg-night-light border-b border-night-lighter">
+            <span class="w-3 h-3 rounded-full bg-[#ef4444]"></span>
+            <span class="w-3 h-3 rounded-full bg-[#eab308]"></span>
+            <span class="w-3 h-3 rounded-full bg-[#22c55e]"></span>
+            <span class="font-mono text-[11px] text-ash mx-auto">terminal</span>
           </div>
-          <div class="terminal-line t-dim">
-            Scanning 1,247 files...
-          </div>
-          <div class="terminal-line">
-            <br />
-          </div>
-          <div class="terminal-line">
-            <span class="t-file">src/auth/login.js</span><span class="t-pos">:14:5</span>
-          </div>
-          <div class="terminal-line t-indent">
-            <span class="t-sev t-critical">critical</span>
-            <span class="t-rule">js/no-sql-injection</span>
-            <span class="t-cwe">CWE-89</span>
-          </div>
-          <div class="terminal-line t-indent t-dim">
-            SQL query built with template literal interpolation
-          </div>
-          <div class="terminal-line">
-            <br />
-          </div>
-          <div class="terminal-line">
-            <span class="t-file">src/utils/config.py</span><span class="t-pos">:7:1</span>
-          </div>
-          <div class="terminal-line t-indent">
-            <span class="t-sev t-high">high</span>
-            <span class="t-rule">py/no-hardcoded-secret</span>
-            <span class="t-cwe">CWE-798</span>
-          </div>
-          <div class="terminal-line t-indent t-dim">
-            Hardcoded secret in 'api_key'
-          </div>
-          <div class="terminal-line">
-            <br />
-          </div>
-          <div class="terminal-line">
-            <span class="t-file">cmd/server.go</span><span class="t-pos">:42:3</span>
-          </div>
-          <div class="terminal-line t-indent">
-            <span class="t-sev t-high">high</span>
-            <span class="t-rule">go/no-ssrf</span>
-            <span class="t-cwe">CWE-918</span>
-          </div>
-          <div class="terminal-line t-indent t-dim">
-            Potential SSRF via http.Get with variable URL
-          </div>
-          <div class="terminal-line">
-            <br />
-          </div>
-          <div class="terminal-line t-summary">
-            Found <span class="t-accent">3 issues</span> in <span class="t-accent">1,247 files</span> <span class="t-dim">(0.84s)</span>
+          <!-- Terminal body -->
+          <div class="p-4 sm:p-5 font-mono text-[13px] leading-7 text-left">
+            <div><span class="text-fox">$</span> <span class="text-white">foxguard .</span></div>
+            <div class="text-ash">Scanning 1,247 files...</div>
+            <div class="h-4"></div>
+            <div><span class="text-blue-400">src/auth/login.js</span><span class="text-ash">:14:5</span></div>
+            <div class="pl-4"><span class="text-[#ef4444] font-semibold text-[11px] uppercase tracking-wide">critical</span> <span class="text-white/90 ml-1">js/no-sql-injection</span> <span class="text-ash ml-1">CWE-89</span></div>
+            <div class="pl-4 text-ash">SQL query built with template literal interpolation</div>
+            <div class="h-4"></div>
+            <div><span class="text-blue-400">src/utils/config.py</span><span class="text-ash">:7:1</span></div>
+            <div class="pl-4"><span class="text-[#f97316] font-semibold text-[11px] uppercase tracking-wide">high</span> <span class="text-white/90 ml-1">py/no-hardcoded-secret</span> <span class="text-ash ml-1">CWE-798</span></div>
+            <div class="pl-4 text-ash">Hardcoded secret in 'api_key'</div>
+            <div class="h-4"></div>
+            <div><span class="text-blue-400">cmd/server.go</span><span class="text-ash">:42:3</span></div>
+            <div class="pl-4"><span class="text-[#f97316] font-semibold text-[11px] uppercase tracking-wide">high</span> <span class="text-white/90 ml-1">go/no-ssrf</span> <span class="text-ash ml-1">CWE-918</span></div>
+            <div class="pl-4 text-ash">Potential SSRF via http.Get with variable URL</div>
+            <div class="h-4"></div>
+            <div class="border-t border-night-lighter pt-3 mt-1">
+              Found <span class="text-fox font-semibold">3 issues</span> in <span class="text-fox font-semibold">1,247 files</span> <span class="text-ash">(0.84s)</span>
+            </div>
           </div>
         </div>
       </div>
@@ -125,33 +141,33 @@ function severityColor(s: string) {
   </section>
 
   <!-- Speed -->
-  <section class="section" id="speed">
-    <div class="container">
-      <h2 class="section-title">100x faster than Semgrep</h2>
-      <p class="section-sub">Benchmark: scanning 10,000 files, {totalRules} rules</p>
+  <section class="py-20 border-t border-night-lighter" id="speed">
+    <div class="max-w-5xl mx-auto px-6">
+      <h2 class="font-heading text-3xl font-bold text-white mb-2">100x faster than Semgrep</h2>
+      <p class="text-ash mb-10">Benchmark: scanning 10,000 files, {totalRules} rules</p>
 
-      <div class="chart">
-        <div class="chart-row">
-          <span class="chart-label">foxguard</span>
-          <div class="chart-bar-wrap">
-            <div class="chart-bar chart-bar-fox" style="width: 4%">
-              <span class="chart-val">0.8s</span>
+      <div class="max-w-xl flex flex-col gap-4">
+        <div class="flex items-center gap-4">
+          <span class="font-mono text-sm text-ash w-24 text-right shrink-0">foxguard</span>
+          <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
+            <div class="h-full rounded bg-fox flex items-center justify-end px-3 min-w-[60px]" style="width: 4%">
+              <span class="font-mono text-xs font-semibold text-night">0.8s</span>
             </div>
           </div>
         </div>
-        <div class="chart-row">
-          <span class="chart-label">Semgrep</span>
-          <div class="chart-bar-wrap">
-            <div class="chart-bar chart-bar-other" style="width: 85%">
-              <span class="chart-val">82s</span>
+        <div class="flex items-center gap-4">
+          <span class="font-mono text-sm text-ash w-24 text-right shrink-0">Semgrep</span>
+          <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
+            <div class="h-full rounded bg-night-lighter flex items-center justify-end px-3 min-w-[60px]" style="width: 85%">
+              <span class="font-mono text-xs font-semibold text-white">82s</span>
             </div>
           </div>
         </div>
-        <div class="chart-row">
-          <span class="chart-label">ESLint</span>
-          <div class="chart-bar-wrap">
-            <div class="chart-bar chart-bar-other" style="width: 100%">
-              <span class="chart-val">96s</span>
+        <div class="flex items-center gap-4">
+          <span class="font-mono text-sm text-ash w-24 text-right shrink-0">ESLint</span>
+          <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
+            <div class="h-full rounded bg-night-lighter flex items-center justify-end px-3 min-w-[60px]" style="width: 100%">
+              <span class="font-mono text-xs font-semibold text-white">96s</span>
             </div>
           </div>
         </div>
@@ -160,53 +176,49 @@ function severityColor(s: string) {
   </section>
 
   <!-- Features -->
-  <section class="section" id="features">
-    <div class="container">
-      <h2 class="section-title">Features</h2>
-      <div class="features-grid">
-        <div class="feature-card">
-          <div class="feature-icon">&#127760;</div>
-          <h3>Multi-language</h3>
-          <p>JavaScript/TypeScript, Python, and Go. More languages coming soon.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">&#128737;</div>
-          <h3>{totalRules} security rules</h3>
-          <p>Injection, XSS, secrets, crypto, SSRF, path traversal. All mapped to CWEs.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">&#128202;</div>
-          <h3>SARIF output</h3>
-          <p>Native SARIF support for GitHub Code Scanning and CI integration.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">&#9889;</div>
-          <h3>Zero config</h3>
-          <p>No config files, no setup. Just run <code>foxguard .</code> and go.</p>
-        </div>
+  <section class="py-20 border-t border-night-lighter" id="features">
+    <div class="max-w-5xl mx-auto px-6">
+      <h2 class="font-heading text-3xl font-bold text-white mb-2">Features</h2>
+      <p class="text-ash mb-10">Everything you need to catch vulnerabilities before they ship.</p>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { icon: '&#127760;', title: 'Multi-language', desc: 'JavaScript/TypeScript, Python, and Go. More languages coming soon.' },
+          { icon: '&#128737;', title: `${totalRules} security rules`, desc: 'Injection, XSS, secrets, crypto, SSRF, path traversal. All mapped to CWEs.' },
+          { icon: '&#128202;', title: 'SARIF output', desc: 'Native SARIF support for GitHub Code Scanning and CI integration.' },
+          { icon: '&#9889;', title: 'Zero config', desc: 'No config files, no setup. Just run foxguard . and go.' },
+        ].map((f) => (
+          <div class="group bg-night-light border border-night-lighter rounded-xl p-6 hover:border-fox/20 transition-colors">
+            <div class="text-2xl mb-3" set:html={f.icon} />
+            <h3 class="text-white font-semibold mb-2">{f.title}</h3>
+            <p class="text-sm text-ash leading-relaxed">{f.desc}</p>
+          </div>
+        ))}
       </div>
     </div>
   </section>
 
   <!-- Install -->
-  <section class="section" id="install">
-    <div class="container">
-      <h2 class="section-title">Install</h2>
-      <div class="install-grid">
-        <div class="install-card">
-          <div class="install-label">Rust / Cargo</div>
-          <div class="code-block">
+  <section class="py-20 border-t border-night-lighter" id="install">
+    <div class="max-w-5xl mx-auto px-6">
+      <h2 class="font-heading text-3xl font-bold text-white mb-2">Install</h2>
+      <p class="text-ash mb-10">Get started in seconds.</p>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+        <div class="bg-night-light border border-night-lighter rounded-xl p-5">
+          <div class="text-xs font-semibold text-ash uppercase tracking-wider mb-3">Rust / Cargo</div>
+          <div class="flex items-center justify-between bg-night border border-night-lighter rounded-lg px-4 py-3 font-mono text-sm text-fox">
             <code>cargo install foxguard</code>
-            <button class="copy-btn" data-copy="cargo install foxguard" aria-label="Copy">
+            <button class="copy-btn text-ash hover:text-white transition-colors cursor-pointer" data-copy="cargo install foxguard" aria-label="Copy">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
           </div>
         </div>
-        <div class="install-card">
-          <div class="install-label">npm / npx</div>
-          <div class="code-block">
+        <div class="bg-night-light border border-night-lighter rounded-xl p-5">
+          <div class="text-xs font-semibold text-ash uppercase tracking-wider mb-3">npm / npx</div>
+          <div class="flex items-center justify-between bg-night border border-night-lighter rounded-lg px-4 py-3 font-mono text-sm text-fox">
             <code>npx foxguard</code>
-            <button class="copy-btn" data-copy="npx foxguard" aria-label="Copy">
+            <button class="copy-btn text-ash hover:text-white transition-colors cursor-pointer" data-copy="npx foxguard" aria-label="Copy">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
           </div>
@@ -216,29 +228,32 @@ function severityColor(s: string) {
   </section>
 
   <!-- Rules -->
-  <section class="section" id="rules">
-    <div class="container">
-      <h2 class="section-title">Rules</h2>
-      <p class="section-sub">{totalRules} rules across 3 languages, each mapped to a CWE identifier</p>
+  <section class="py-20 border-t border-night-lighter" id="rules">
+    <div class="max-w-5xl mx-auto px-6">
+      <h2 class="font-heading text-3xl font-bold text-white mb-2">Rules</h2>
+      <p class="text-ash mb-10">{totalRules} rules across 3 languages, each mapped to a CWE identifier</p>
 
-      <div class="rules-groups">
+      <div class="flex flex-col gap-3">
         {[
           { name: 'JavaScript / TypeScript', rules: jsRules, count: jsRules.length },
           { name: 'Python', rules: pyRules, count: pyRules.length },
           { name: 'Go', rules: goRules, count: goRules.length },
         ].map((group) => (
-          <details class="rules-group">
-            <summary>
-              <span class="rules-group-name">{group.name}</span>
-              <span class="rules-group-count">{group.count} rules</span>
+          <details class="group bg-night-light border border-night-lighter rounded-xl overflow-hidden">
+            <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none font-semibold">
+              <span class="flex items-center gap-3">
+                <svg class="w-3 h-3 text-ash transition-transform duration-200 group-open:rotate-90" viewBox="0 0 12 12" fill="currentColor"><path d="M4 1l6 5-6 5V1z"/></svg>
+                <span class="text-white">{group.name}</span>
+              </span>
+              <span class="font-mono text-xs text-ash font-normal">{group.count} rules</span>
             </summary>
-            <div class="rules-list">
+            <div class="border-t border-night-lighter">
               {group.rules.map((rule) => (
-                <div class="rule-row">
-                  <code class="rule-id">{rule.id}</code>
-                  <span class="rule-sev" style={`color: ${severityColor(rule.severity)}`}>{rule.severity}</span>
-                  <span class="rule-cwe">{rule.cwe}</span>
-                  <span class="rule-desc">{rule.desc}</span>
+                <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_2fr] gap-x-3 gap-y-1 items-center px-5 py-2.5 text-[13px] border-b border-night-light last:border-b-0">
+                  <code class="font-mono text-fox text-[13px]">{rule.id}</code>
+                  <span class="font-mono text-[11px] font-semibold uppercase" style={`color: ${severityColor(rule.severity)}`}>{rule.severity}</span>
+                  <span class="font-mono text-[11px] text-ash">{rule.cwe}</span>
+                  <span class="text-ash text-[13px] hidden sm:block">{rule.desc}</span>
                 </div>
               ))}
             </div>
@@ -249,11 +264,16 @@ function severityColor(s: string) {
   </section>
 
   <!-- CTA -->
-  <section class="section cta-section">
-    <div class="container cta">
-      <h2 class="cta-title">Open source. MIT licensed.</h2>
-      <p class="cta-sub">Star us on GitHub and help make codebases safer.</p>
-      <a href="https://github.com/peaktwilight/foxguard" class="cta-btn" target="_blank" rel="noopener">
+  <section class="py-20 border-t border-night-lighter text-center">
+    <div class="max-w-5xl mx-auto px-6">
+      <h2 class="font-heading text-3xl font-bold text-white mb-3">Open source. MIT licensed.</h2>
+      <p class="text-ash mb-8">Star us on GitHub and help make codebases safer.</p>
+      <a
+        href="https://github.com/peaktwilight/foxguard"
+        target="_blank"
+        rel="noopener"
+        class="inline-flex items-center gap-2 bg-white text-black font-semibold rounded-lg px-6 py-3 text-sm hover:bg-white/90 transition-colors no-underline hover:no-underline"
+      >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
         Star on GitHub
       </a>
@@ -261,520 +281,38 @@ function severityColor(s: string) {
   </section>
 
   <!-- Footer -->
-  <footer class="footer">
-    <div class="container">
+  <footer class="border-t border-night-lighter py-8 text-center text-sm text-ash">
+    <div class="max-w-5xl mx-auto px-6">
       <span>MIT License</span>
-      <span class="footer-sep">|</span>
-      <span>Made by <a href="https://github.com/peaktwilight">Peak Twilight</a></span>
-      <span class="footer-sep">|</span>
+      <span class="mx-2 opacity-30">|</span>
+      <span>Made by <a href="https://github.com/peaktwilight" class="text-fox hover:text-fox-light">Peak Twilight</a></span>
+      <span class="mx-2 opacity-30">|</span>
       <span>foxguard.dev</span>
     </div>
   </footer>
 
   <script>
+    // Copy buttons
     document.querySelectorAll('.copy-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const text = btn.getAttribute('data-copy') || '';
         navigator.clipboard.writeText(text);
-        btn.classList.add('copied');
-        setTimeout(() => btn.classList.remove('copied'), 1500);
+        btn.classList.add('text-fox');
+        setTimeout(() => btn.classList.remove('text-fox'), 1500);
       });
     });
+
+    // npx copy button
+    const npxBtn = document.getElementById('npx-btn');
+    if (npxBtn) {
+      npxBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText('npx foxguard');
+        const original = npxBtn.innerHTML;
+        npxBtn.querySelector('span:nth-child(2)')!.textContent = 'Copied!';
+        setTimeout(() => {
+          npxBtn.querySelector('span:nth-child(2)')!.textContent = 'npx foxguard';
+        }, 1500);
+      });
+    }
   </script>
 </Base>
-
-<style>
-  /* Layout */
-  .container {
-    max-width: var(--max-w);
-    margin: 0 auto;
-    padding: 0 1.5rem;
-  }
-
-  .section {
-    padding: 5rem 0;
-    border-top: 1px solid var(--border);
-  }
-
-  .section-title {
-    font-size: 1.75rem;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
-  }
-
-  .section-sub {
-    color: var(--text-dim);
-    margin-bottom: 2.5rem;
-  }
-
-  /* Hero */
-  .hero {
-    padding: 6rem 0 4rem;
-    text-align: center;
-  }
-
-  .hero-badge {
-    display: inline-block;
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 9999px;
-    padding: 0.25rem 0.75rem;
-    margin-bottom: 1.5rem;
-    opacity: 0.8;
-  }
-
-  .hero-title {
-    font-family: var(--mono);
-    font-size: clamp(3rem, 10vw, 5.5rem);
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1;
-    margin-bottom: 1rem;
-    color: #fff;
-  }
-
-  .hero-tagline {
-    font-size: 1.25rem;
-    color: var(--text-dim);
-    max-width: 480px;
-    margin: 0 auto 3rem;
-  }
-
-  .hero-tagline strong {
-    color: var(--text);
-  }
-
-  /* Terminal */
-  .terminal {
-    max-width: 640px;
-    margin: 0 auto;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    overflow: hidden;
-    text-align: left;
-    background: #0d0d0d;
-  }
-
-  .terminal-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 10px 14px;
-    background: #161616;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .terminal-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-  }
-
-  .terminal-title {
-    font-family: var(--mono);
-    font-size: 0.7rem;
-    color: var(--text-dim);
-    margin-left: auto;
-    margin-right: auto;
-  }
-
-  .terminal-body {
-    padding: 1rem 1.25rem;
-    font-family: var(--mono);
-    font-size: 0.8rem;
-    line-height: 1.7;
-  }
-
-  .terminal-line {
-    white-space: nowrap;
-    overflow: hidden;
-  }
-
-  .t-prompt {
-    color: var(--accent);
-    margin-right: 0.5rem;
-  }
-
-  .t-cmd {
-    color: #fff;
-  }
-
-  .t-dim {
-    color: var(--text-dim);
-  }
-
-  .t-file {
-    color: var(--blue);
-  }
-
-  .t-pos {
-    color: var(--text-dim);
-  }
-
-  .t-indent {
-    padding-left: 1rem;
-  }
-
-  .t-sev {
-    font-weight: 600;
-    margin-right: 0.5rem;
-    text-transform: uppercase;
-    font-size: 0.7rem;
-  }
-
-  .t-critical {
-    color: var(--red);
-  }
-
-  .t-high {
-    color: #f97316;
-  }
-
-  .t-rule {
-    color: var(--text);
-    margin-right: 0.5rem;
-  }
-
-  .t-cwe {
-    color: var(--text-dim);
-  }
-
-  .t-summary {
-    border-top: 1px solid var(--border);
-    padding-top: 0.75rem;
-    margin-top: 0.25rem;
-  }
-
-  .t-accent {
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  /* Speed chart */
-  .chart {
-    max-width: 600px;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .chart-row {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .chart-label {
-    font-family: var(--mono);
-    font-size: 0.85rem;
-    width: 90px;
-    text-align: right;
-    color: var(--text-dim);
-    flex-shrink: 0;
-  }
-
-  .chart-bar-wrap {
-    flex: 1;
-    background: var(--bg-card);
-    border-radius: 4px;
-    overflow: hidden;
-    height: 32px;
-  }
-
-  .chart-bar {
-    height: 100%;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    padding-right: 0.75rem;
-    min-width: 60px;
-    transition: width 1s ease;
-  }
-
-  .chart-bar-fox {
-    background: var(--accent);
-  }
-
-  .chart-bar-other {
-    background: #333;
-  }
-
-  .chart-val {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #fff;
-  }
-
-  /* Features */
-  .features-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 1.25rem;
-  }
-
-  .feature-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1.5rem;
-    transition: border-color 0.2s;
-  }
-
-  .feature-card:hover {
-    border-color: #2e2e2e;
-  }
-
-  .feature-icon {
-    font-size: 1.5rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .feature-card h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: #fff;
-  }
-
-  .feature-card p {
-    font-size: 0.875rem;
-    color: var(--text-dim);
-    line-height: 1.5;
-  }
-
-  .feature-card code {
-    background: var(--bg);
-    padding: 0.1em 0.35em;
-    border-radius: 3px;
-    font-size: 0.8rem;
-    color: var(--accent);
-  }
-
-  /* Install */
-  .install-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1.25rem;
-  }
-
-  .install-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1.25rem 1.5rem;
-  }
-
-  .install-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.75rem;
-  }
-
-  .code-block {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0.75rem 1rem;
-    font-family: var(--mono);
-    font-size: 0.875rem;
-    color: var(--accent);
-  }
-
-  .copy-btn {
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    transition: color 0.2s;
-  }
-
-  .copy-btn:hover {
-    color: var(--text);
-  }
-
-  .copy-btn.copied {
-    color: var(--accent);
-  }
-
-  /* Rules */
-  .rules-groups {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .rules-group {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .rules-group summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 1.25rem;
-    cursor: pointer;
-    user-select: none;
-    list-style: none;
-    font-weight: 600;
-  }
-
-  .rules-group summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .rules-group summary::before {
-    content: '\25B6';
-    font-size: 0.6rem;
-    margin-right: 0.75rem;
-    color: var(--text-dim);
-    transition: transform 0.2s;
-  }
-
-  .rules-group[open] summary::before {
-    transform: rotate(90deg);
-  }
-
-  .rules-group-name {
-    color: #fff;
-  }
-
-  .rules-group-count {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    color: var(--text-dim);
-    font-weight: 400;
-  }
-
-  .rules-list {
-    border-top: 1px solid var(--border);
-  }
-
-  .rule-row {
-    display: grid;
-    grid-template-columns: 1fr auto auto 2fr;
-    gap: 0.75rem;
-    align-items: center;
-    padding: 0.6rem 1.25rem;
-    font-size: 0.8rem;
-    border-bottom: 1px solid #141414;
-  }
-
-  .rule-row:last-child {
-    border-bottom: none;
-  }
-
-  .rule-id {
-    font-family: var(--mono);
-    font-size: 0.78rem;
-    color: var(--accent);
-  }
-
-  .rule-sev {
-    font-family: var(--mono);
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-
-  .rule-cwe {
-    font-family: var(--mono);
-    font-size: 0.7rem;
-    color: var(--text-dim);
-  }
-
-  .rule-desc {
-    color: var(--text-dim);
-    font-size: 0.8rem;
-  }
-
-  /* CTA */
-  .cta-section {
-    text-align: center;
-  }
-
-  .cta-title {
-    font-size: 1.75rem;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
-    color: #fff;
-  }
-
-  .cta-sub {
-    color: var(--text-dim);
-    margin-bottom: 2rem;
-  }
-
-  .cta-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    background: #fff;
-    color: #000;
-    font-weight: 600;
-    padding: 0.75rem 1.5rem;
-    border-radius: 8px;
-    font-size: 0.95rem;
-    transition: opacity 0.2s;
-  }
-
-  .cta-btn:hover {
-    opacity: 0.9;
-    text-decoration: none;
-  }
-
-  /* Footer */
-  .footer {
-    border-top: 1px solid var(--border);
-    padding: 2rem 0;
-    text-align: center;
-    font-size: 0.8rem;
-    color: var(--text-dim);
-  }
-
-  .footer-sep {
-    margin: 0 0.5rem;
-    opacity: 0.3;
-  }
-
-  /* Responsive */
-  @media (max-width: 640px) {
-    .hero {
-      padding: 4rem 0 3rem;
-    }
-
-    .section {
-      padding: 3rem 0;
-    }
-
-    .terminal-body {
-      font-size: 0.7rem;
-      padding: 0.75rem 1rem;
-    }
-
-    .rule-row {
-      grid-template-columns: 1fr;
-      gap: 0.25rem;
-    }
-
-    .rule-desc {
-      display: none;
-    }
-  }
-</style>

@@ -15,66 +15,32 @@ const { title, description = 'Blazing fast security linter for modern codebases.
     <meta name="description" content={description} />
     <meta name="theme-color" content="#0a0a0a" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <title>{title}</title>
-
-    <style is:global>
-      @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
-
-      *, *::before, *::after {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
-
-      :root {
-        --bg: #0a0a0a;
-        --bg-card: #111111;
-        --bg-card-hover: #161616;
-        --border: #1e1e1e;
-        --text: #e5e5e5;
-        --text-dim: #737373;
-        --accent: #4ade80;
-        --accent-dim: #22c55e;
-        --red: #ef4444;
-        --yellow: #eab308;
-        --blue: #3b82f6;
-        --mono: 'JetBrains Mono', monospace;
-        --sans: 'Inter', system-ui, -apple-system, sans-serif;
-        --max-w: 1080px;
-      }
-
-      html {
-        background: var(--bg);
-        color: var(--text);
-        font-family: var(--sans);
-        line-height: 1.6;
-        -webkit-font-smoothing: antialiased;
-        scroll-behavior: smooth;
-      }
-
-      body {
-        min-height: 100vh;
-      }
-
-      a {
-        color: var(--accent);
-        text-decoration: none;
-      }
-      a:hover {
-        text-decoration: underline;
-      }
-
-      code {
-        font-family: var(--mono);
-      }
-
-      ::selection {
-        background: var(--accent);
-        color: var(--bg);
-      }
-    </style>
   </head>
-  <body>
+  <body class="bg-night text-smoke font-body antialiased min-h-screen grid-bg">
     <slot />
   </body>
 </html>
+
+<style is:global>
+  @import '../styles/global.css';
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  a {
+    color: var(--color-fox);
+    text-decoration: none;
+  }
+  a:hover {
+    text-decoration: underline;
+  }
+
+  code {
+    font-family: var(--font-mono);
+  }
+</style>
