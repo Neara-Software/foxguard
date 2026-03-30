@@ -1,5 +1,6 @@
 use crate::rules::Rule;
 use crate::{Finding, Language, Severity};
+#[allow(unused_imports)]
 use regex::Regex;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -387,6 +388,446 @@ impl Rule for NoCommandInjection {
                                     ));
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 6: no-document-write ──────────────────────────────────────────────
+
+pub struct NoDocumentWrite;
+
+impl Rule for NoDocumentWrite {
+    fn id(&self) -> &str {
+        "js/no-document-write"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-79")
+    }
+    fn description(&self) -> &str {
+        "document.write() can lead to XSS vulnerabilities"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "call_expression" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    if func_text == "document.write" || func_text == "document.writeln" {
+                        findings.push(make_finding(
+                            self.id(),
+                            self.severity(),
+                            self.cwe(),
+                            "document.write() can inject arbitrary HTML — use DOM APIs instead",
+                            node,
+                            src,
+                        ));
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 7: no-open-redirect ───────────────────────────────────────────────
+
+pub struct NoOpenRedirect;
+
+impl Rule for NoOpenRedirect {
+    fn id(&self) -> &str {
+        "js/no-open-redirect"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-601")
+    }
+    fn description(&self) -> &str {
+        "Open redirect via assignment to window.location with user input"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "assignment_expression" {
+                if let Some(left) = node.child_by_field_name("left") {
+                    let left_text = &src[left.byte_range()];
+                    if left_text == "window.location"
+                        || left_text == "window.location.href"
+                        || left_text == "location.href"
+                        || left_text == "document.location"
+                        || left_text == "document.location.href"
+                    {
+                        if let Some(right) = node.child_by_field_name("right") {
+                            // Flag if right side is not a string literal
+                            if right.kind() != "string" {
+                                findings.push(make_finding(
+                                    self.id(),
+                                    self.severity(),
+                                    self.cwe(),
+                                    "Assignment to window.location with dynamic value — risk of open redirect",
+                                    node,
+                                    src,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 8: no-weak-crypto ────────────────────────────────────────────────
+
+pub struct NoWeakCrypto;
+
+impl Rule for NoWeakCrypto {
+    fn id(&self) -> &str {
+        "js/no-weak-crypto"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-327")
+    }
+    fn description(&self) -> &str {
+        "Use of weak cryptographic hash (MD5/SHA1)"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            // Detect: createHash('md5') or createHash('sha1')
+            if node.kind() == "call_expression" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    let func_name = func_text.rsplit('.').next().unwrap_or(func_text);
+                    if func_name == "createHash" {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            if let Some(first_arg) = args.named_child(0) {
+                                if first_arg.kind() == "string" {
+                                    let val = &src[first_arg.byte_range()];
+                                    let inner = val.trim_matches(|c| c == '"' || c == '\'');
+                                    if inner == "md5" || inner == "sha1" {
+                                        findings.push(make_finding(
+                                            self.id(),
+                                            self.severity(),
+                                            self.cwe(),
+                                            &format!(
+                                                "createHash('{}') uses a weak hash — use sha256 or stronger",
+                                                inner
+                                            ),
+                                            node,
+                                            src,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 9: no-path-traversal ─────────────────────────────────────────────
+
+pub struct NoPathTraversal;
+
+impl Rule for NoPathTraversal {
+    fn id(&self) -> &str {
+        "js/no-path-traversal"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-22")
+    }
+    fn description(&self) -> &str {
+        "Potential path traversal via fs operations with user input"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        let fs_fns = [
+            "readFile", "readFileSync", "writeFile", "writeFileSync",
+            "readdir", "readdirSync", "unlink", "unlinkSync",
+            "stat", "statSync", "access", "accessSync",
+        ];
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "call_expression" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    let func_name = func_text.rsplit('.').next().unwrap_or(func_text);
+                    if fs_fns.contains(&func_name) {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            if let Some(first_arg) = args.named_child(0) {
+                                // Flag if path argument uses concatenation or template
+                                let kind = first_arg.kind();
+                                if kind == "binary_expression" || kind == "template_string" {
+                                    findings.push(make_finding(
+                                        self.id(),
+                                        self.severity(),
+                                        self.cwe(),
+                                        &format!(
+                                            "{}() called with dynamic path — validate and sanitize to prevent path traversal",
+                                            func_name
+                                        ),
+                                        node,
+                                        src,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 10: no-prototype-pollution ────────────────────────────────────────
+
+pub struct NoPrototypePollution;
+
+impl Rule for NoPrototypePollution {
+    fn id(&self) -> &str {
+        "js/no-prototype-pollution"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-1321")
+    }
+    fn description(&self) -> &str {
+        "Potential prototype pollution via dynamic property assignment"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            // Detect: obj[key][subkey] = value where keys are identifiers (not literals)
+            if node.kind() == "assignment_expression" {
+                if let Some(left) = node.child_by_field_name("left") {
+                    if left.kind() == "subscript_expression" {
+                        if let Some(index) = left.child_by_field_name("index") {
+                            // Flag if the index is a variable (not a string/number literal)
+                            if index.kind() == "identifier" {
+                                // Check if it's nested: obj[a][b] = value
+                                if let Some(object) = left.child_by_field_name("object") {
+                                    if object.kind() == "subscript_expression" {
+                                        findings.push(make_finding(
+                                            self.id(),
+                                            self.severity(),
+                                            self.cwe(),
+                                            "Nested dynamic property assignment — risk of prototype pollution",
+                                            node,
+                                            src,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 11: no-unsafe-regex ───────────────────────────────────────────────
+
+pub struct NoUnsafeRegex;
+
+impl Rule for NoUnsafeRegex {
+    fn id(&self) -> &str {
+        "js/no-unsafe-regex"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-1333")
+    }
+    fn description(&self) -> &str {
+        "Potentially catastrophic backtracking regex pattern"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        // Patterns known to cause catastrophic backtracking: nested quantifiers
+        let dangerous_pattern = Regex::new(
+            r"(\([^)]*[+*][^)]*\)[+*]|\([^)]*\|[^)]*\)[+*])"
+        ).unwrap();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            // Detect regex literals: /pattern/
+            if node.kind() == "regex" {
+                let regex_text = &src[node.byte_range()];
+                if dangerous_pattern.is_match(regex_text) {
+                    findings.push(make_finding(
+                        self.id(),
+                        self.severity(),
+                        self.cwe(),
+                        "Regex with nested quantifiers may cause catastrophic backtracking (ReDoS)",
+                        node,
+                        src,
+                    ));
+                }
+            }
+
+            // Detect: new RegExp("pattern")
+            if node.kind() == "new_expression" {
+                if let Some(constructor) = node.child_by_field_name("constructor") {
+                    let ctor_text = &src[constructor.byte_range()];
+                    if ctor_text == "RegExp" {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            if let Some(first_arg) = args.named_child(0) {
+                                if first_arg.kind() == "string" {
+                                    let pattern_text = &src[first_arg.byte_range()];
+                                    if dangerous_pattern.is_match(pattern_text) {
+                                        findings.push(make_finding(
+                                            self.id(),
+                                            self.severity(),
+                                            self.cwe(),
+                                            "RegExp with nested quantifiers may cause catastrophic backtracking (ReDoS)",
+                                            node,
+                                            src,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 12: no-cors-star ─────────────────────────────────────────────────
+
+pub struct NoCorsStar;
+
+impl Rule for NoCorsStar {
+    fn id(&self) -> &str {
+        "js/no-cors-star"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-942")
+    }
+    fn description(&self) -> &str {
+        "CORS misconfiguration allowing all origins"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            // Detect: setHeader("Access-Control-Allow-Origin", "*")
+            if node.kind() == "call_expression" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    let func_name = func_text.rsplit('.').next().unwrap_or(func_text);
+                    if func_name == "setHeader" || func_name == "set" || func_name == "header" {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            let arg_count = args.named_child_count();
+                            if arg_count >= 2 {
+                                if let (Some(first), Some(second)) =
+                                    (args.named_child(0), args.named_child(1))
+                                {
+                                    if first.kind() == "string" && second.kind() == "string" {
+                                        let header_name = &src[first.byte_range()];
+                                        let header_val = &src[second.byte_range()];
+                                        let name_inner =
+                                            header_name.trim_matches(|c| c == '"' || c == '\'');
+                                        let val_inner =
+                                            header_val.trim_matches(|c| c == '"' || c == '\'');
+                                        if name_inner.eq_ignore_ascii_case(
+                                            "Access-Control-Allow-Origin",
+                                        ) && val_inner == "*"
+                                        {
+                                            findings.push(make_finding(
+                                                self.id(),
+                                                self.severity(),
+                                                self.cwe(),
+                                                "Access-Control-Allow-Origin set to '*' — restrict to specific origins",
+                                                node,
+                                                src,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Detect: { origin: "*" } in cors config objects
+            if node.kind() == "pair" {
+                if let (Some(key), Some(value)) = (
+                    node.child_by_field_name("key"),
+                    node.child_by_field_name("value"),
+                ) {
+                    let key_text = &src[key.byte_range()];
+                    let key_inner = key_text.trim_matches(|c| c == '"' || c == '\'');
+                    if key_inner == "origin" && value.kind() == "string" {
+                        let val_text = &src[value.byte_range()];
+                        let val_inner = val_text.trim_matches(|c| c == '"' || c == '\'');
+                        if val_inner == "*" {
+                            findings.push(make_finding(
+                                self.id(),
+                                self.severity(),
+                                self.cwe(),
+                                "CORS origin set to '*' — restrict to specific origins",
+                                node,
+                                src,
+                            ));
                         }
                     }
                 }

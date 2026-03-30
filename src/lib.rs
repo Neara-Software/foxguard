@@ -30,6 +30,7 @@ impl std::fmt::Display for Severity {
 pub enum Language {
     JavaScript,
     Python,
+    Go,
 }
 
 impl std::fmt::Display for Language {
@@ -37,6 +38,7 @@ impl std::fmt::Display for Language {
         match self {
             Language::JavaScript => write!(f, "javascript"),
             Language::Python => write!(f, "python"),
+            Language::Go => write!(f, "go"),
         }
     }
 }

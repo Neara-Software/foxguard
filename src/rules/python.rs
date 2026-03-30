@@ -282,3 +282,546 @@ impl Rule for NoSqlInjection {
         findings
     }
 }
+
+// ─── Rule 4: no-command-injection ───────────────────────────────────────────
+
+pub struct NoCommandInjection;
+
+impl Rule for NoCommandInjection {
+    fn id(&self) -> &str {
+        "py/no-command-injection"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Critical
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-78")
+    }
+    fn description(&self) -> &str {
+        "Potential command injection via os.system/subprocess with user input"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        let dangerous_fns = [
+            "os.system", "os.popen", "subprocess.call", "subprocess.run",
+            "subprocess.Popen", "subprocess.check_output", "subprocess.check_call",
+        ];
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "call" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    if dangerous_fns.contains(&func_text) {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            if let Some(first_arg) = args.named_child(0) {
+                                // Flag if argument is not a plain string literal
+                                let is_dynamic = match first_arg.kind() {
+                                    "string" => {
+                                        let text = &src[first_arg.byte_range()];
+                                        text.starts_with("f\"") || text.starts_with("f'")
+                                    }
+                                    "concatenated_string" | "binary_operator" | "identifier"
+                                    | "call" => true,
+                                    _ => false,
+                                };
+                                if is_dynamic {
+                                    findings.push(make_finding(
+                                        self.id(),
+                                        self.severity(),
+                                        self.cwe(),
+                                        &format!(
+                                            "{}() called with dynamic argument — risk of command injection",
+                                            func_text
+                                        ),
+                                        node,
+                                        src,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 5: no-path-traversal ──────────────────────────────────────────────
+
+pub struct NoPathTraversal;
+
+impl Rule for NoPathTraversal {
+    fn id(&self) -> &str {
+        "py/no-path-traversal"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-22")
+    }
+    fn description(&self) -> &str {
+        "Potential path traversal via open() with user input"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "call" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    if func_text == "open" {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            if let Some(first_arg) = args.named_child(0) {
+                                // Flag if path uses concatenation or f-string
+                                let is_dynamic = match first_arg.kind() {
+                                    "binary_operator" | "concatenated_string" | "identifier" => true,
+                                    "string" => {
+                                        let text = &src[first_arg.byte_range()];
+                                        text.starts_with("f\"") || text.starts_with("f'")
+                                    }
+                                    _ => false,
+                                };
+                                if is_dynamic {
+                                    findings.push(make_finding(
+                                        self.id(),
+                                        self.severity(),
+                                        self.cwe(),
+                                        "open() called with dynamic path — validate and sanitize to prevent path traversal",
+                                        node,
+                                        src,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 6: no-weak-crypto ────────────────────────────────────────────────
+
+pub struct NoWeakCrypto;
+
+impl Rule for NoWeakCrypto {
+    fn id(&self) -> &str {
+        "py/no-weak-crypto"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-327")
+    }
+    fn description(&self) -> &str {
+        "Use of weak cryptographic hash (MD5/SHA1)"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "call" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    if func_text == "hashlib.md5" || func_text == "hashlib.sha1" {
+                        let algo = if func_text.contains("md5") { "MD5" } else { "SHA1" };
+                        findings.push(make_finding(
+                            self.id(),
+                            self.severity(),
+                            self.cwe(),
+                            &format!(
+                                "hashlib.{}() is cryptographically weak — use sha256 or stronger",
+                                algo.to_lowercase()
+                            ),
+                            node,
+                            src,
+                        ));
+                    }
+
+                    // hashlib.new('md5') / hashlib.new('sha1')
+                    if func_text == "hashlib.new" {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            if let Some(first_arg) = args.named_child(0) {
+                                if first_arg.kind() == "string" {
+                                    let val = &src[first_arg.byte_range()];
+                                    let inner = val.trim_matches(|c| c == '"' || c == '\'');
+                                    if inner == "md5" || inner == "sha1" {
+                                        findings.push(make_finding(
+                                            self.id(),
+                                            self.severity(),
+                                            self.cwe(),
+                                            &format!(
+                                                "hashlib.new('{}') is cryptographically weak — use sha256 or stronger",
+                                                inner
+                                            ),
+                                            node,
+                                            src,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 7: no-pickle ─────────────────────────────────────────────────────
+
+pub struct NoPickle;
+
+impl Rule for NoPickle {
+    fn id(&self) -> &str {
+        "py/no-pickle"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-502")
+    }
+    fn description(&self) -> &str {
+        "Deserialization of untrusted data via pickle"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        let dangerous_fns = ["pickle.loads", "pickle.load", "cPickle.loads", "cPickle.load"];
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "call" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    if dangerous_fns.contains(&func_text) {
+                        findings.push(make_finding(
+                            self.id(),
+                            self.severity(),
+                            self.cwe(),
+                            &format!(
+                                "{}() deserializes untrusted data — can execute arbitrary code",
+                                func_text
+                            ),
+                            node,
+                            src,
+                        ));
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 8: no-yaml-load ──────────────────────────────────────────────────
+
+pub struct NoYamlLoad;
+
+impl Rule for NoYamlLoad {
+    fn id(&self) -> &str {
+        "py/no-yaml-load"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-502")
+    }
+    fn description(&self) -> &str {
+        "yaml.load() without SafeLoader can execute arbitrary code"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "call" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    if func_text == "yaml.load" {
+                        // Check if SafeLoader or safe_load is used
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            let args_text = &src[args.byte_range()];
+                            if !args_text.contains("SafeLoader")
+                                && !args_text.contains("safe_load")
+                                && !args_text.contains("BaseLoader")
+                            {
+                                findings.push(make_finding(
+                                    self.id(),
+                                    self.severity(),
+                                    self.cwe(),
+                                    "yaml.load() without SafeLoader — use yaml.safe_load() or pass Loader=SafeLoader",
+                                    node,
+                                    src,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 9: no-debug-true ─────────────────────────────────────────────────
+
+pub struct NoDebugTrue;
+
+impl Rule for NoDebugTrue {
+    fn id(&self) -> &str {
+        "py/no-debug-true"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-489")
+    }
+    fn description(&self) -> &str {
+        "DEBUG = True left enabled — disable in production"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            // Detect: DEBUG = True
+            if node.kind() == "assignment" {
+                if let (Some(left), Some(right)) = (
+                    node.child_by_field_name("left"),
+                    node.child_by_field_name("right"),
+                ) {
+                    let left_text = &src[left.byte_range()];
+                    let right_text = &src[right.byte_range()];
+                    if left_text == "DEBUG" && right_text == "True" {
+                        findings.push(make_finding(
+                            self.id(),
+                            self.severity(),
+                            self.cwe(),
+                            "DEBUG = True — ensure debug mode is disabled in production",
+                            node,
+                            src,
+                        ));
+                    }
+                }
+            }
+
+            // Detect: app.run(debug=True) or similar
+            if node.kind() == "keyword_argument" {
+                if let (Some(name), Some(value)) = (
+                    node.child_by_field_name("name"),
+                    node.child_by_field_name("value"),
+                ) {
+                    let name_text = &src[name.byte_range()];
+                    let value_text = &src[value.byte_range()];
+                    if name_text == "debug" && value_text == "True" {
+                        findings.push(make_finding(
+                            self.id(),
+                            self.severity(),
+                            self.cwe(),
+                            "debug=True passed to function — disable in production",
+                            node,
+                            src,
+                        ));
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 10: no-open-redirect ──────────────────────────────────────────────
+
+pub struct NoOpenRedirect;
+
+impl Rule for NoOpenRedirect {
+    fn id(&self) -> &str {
+        "py/no-open-redirect"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-601")
+    }
+    fn description(&self) -> &str {
+        "Open redirect via redirect() with user-controlled input"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        let redirect_fns = ["redirect", "HttpResponseRedirect"];
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "call" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    let func_name = func_text.rsplit('.').next().unwrap_or(func_text);
+                    if redirect_fns.contains(&func_name) {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            if let Some(first_arg) = args.named_child(0) {
+                                // Flag if redirect target is not a string literal
+                                let is_dynamic = match first_arg.kind() {
+                                    "string" => {
+                                        let text = &src[first_arg.byte_range()];
+                                        text.starts_with("f\"") || text.starts_with("f'")
+                                    }
+                                    "identifier" | "call" | "subscript" | "attribute"
+                                    | "binary_operator" => true,
+                                    _ => false,
+                                };
+                                if is_dynamic {
+                                    findings.push(make_finding(
+                                        self.id(),
+                                        self.severity(),
+                                        self.cwe(),
+                                        &format!(
+                                            "{}() with dynamic URL — validate target to prevent open redirect",
+                                            func_name
+                                        ),
+                                        node,
+                                        src,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 11: no-cors-star ─────────────────────────────────────────────────
+
+pub struct NoCorsStar;
+
+impl Rule for NoCorsStar {
+    fn id(&self) -> &str {
+        "py/no-cors-star"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-942")
+    }
+    fn description(&self) -> &str {
+        "CORS misconfiguration allowing all origins"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            // Detect: CORS_ALLOW_ALL_ORIGINS = True or CORS_ORIGIN_ALLOW_ALL = True
+            if node.kind() == "assignment" {
+                if let (Some(left), Some(right)) = (
+                    node.child_by_field_name("left"),
+                    node.child_by_field_name("right"),
+                ) {
+                    let left_text = &src[left.byte_range()];
+                    let right_text = &src[right.byte_range()];
+                    if (left_text == "CORS_ALLOW_ALL_ORIGINS"
+                        || left_text == "CORS_ORIGIN_ALLOW_ALL")
+                        && right_text == "True"
+                    {
+                        findings.push(make_finding(
+                            self.id(),
+                            self.severity(),
+                            self.cwe(),
+                            &format!(
+                                "{} = True — restrict CORS to specific origins",
+                                left_text
+                            ),
+                            node,
+                            src,
+                        ));
+                    }
+                }
+            }
+
+            // Detect: Access-Control-Allow-Origin header set to "*"
+            if node.kind() == "call" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    if func_text.contains("header") || func_text.contains("Header") {
+                        let node_text = &src[node.byte_range()];
+                        if node_text.contains("Access-Control-Allow-Origin")
+                            && node_text.contains("*")
+                        {
+                            findings.push(make_finding(
+                                self.id(),
+                                self.severity(),
+                                self.cwe(),
+                                "Access-Control-Allow-Origin set to '*' — restrict to specific origins",
+                                node,
+                                src,
+                            ));
+                        }
+                    }
+                }
+            }
+
+            // Detect: allow_origins=["*"] in CORS middleware
+            if node.kind() == "keyword_argument" {
+                if let (Some(name), Some(value)) = (
+                    node.child_by_field_name("name"),
+                    node.child_by_field_name("value"),
+                ) {
+                    let name_text = &src[name.byte_range()];
+                    if name_text == "allow_origins" || name_text == "origins" {
+                        let value_text = &src[value.byte_range()];
+                        if value_text.contains("\"*\"") || value_text.contains("'*'") {
+                            findings.push(make_finding(
+                                self.id(),
+                                self.severity(),
+                                self.cwe(),
+                                "CORS allow_origins includes '*' — restrict to specific origins",
+                                node,
+                                src,
+                            ));
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}

@@ -1,3 +1,4 @@
+pub mod go;
 pub mod javascript;
 pub mod python;
 
@@ -28,11 +29,33 @@ impl RuleRegistry {
         registry.register(Box::new(javascript::NoSqlInjection));
         registry.register(Box::new(javascript::NoXssInnerHtml));
         registry.register(Box::new(javascript::NoCommandInjection));
+        registry.register(Box::new(javascript::NoDocumentWrite));
+        registry.register(Box::new(javascript::NoOpenRedirect));
+        registry.register(Box::new(javascript::NoWeakCrypto));
+        registry.register(Box::new(javascript::NoPathTraversal));
+        registry.register(Box::new(javascript::NoPrototypePollution));
+        registry.register(Box::new(javascript::NoUnsafeRegex));
+        registry.register(Box::new(javascript::NoCorsStar));
 
         // Register Python rules
         registry.register(Box::new(python::NoEval));
         registry.register(Box::new(python::NoHardcodedSecret));
         registry.register(Box::new(python::NoSqlInjection));
+        registry.register(Box::new(python::NoCommandInjection));
+        registry.register(Box::new(python::NoPathTraversal));
+        registry.register(Box::new(python::NoWeakCrypto));
+        registry.register(Box::new(python::NoPickle));
+        registry.register(Box::new(python::NoYamlLoad));
+        registry.register(Box::new(python::NoDebugTrue));
+        registry.register(Box::new(python::NoOpenRedirect));
+        registry.register(Box::new(python::NoCorsStar));
+
+        // Register Go rules
+        registry.register(Box::new(go::NoSqlInjection));
+        registry.register(Box::new(go::NoCommandInjection));
+        registry.register(Box::new(go::NoHardcodedSecret));
+        registry.register(Box::new(go::NoWeakCrypto));
+        registry.register(Box::new(go::NoSsrf));
 
         registry
     }

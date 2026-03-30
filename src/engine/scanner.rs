@@ -10,6 +10,7 @@ fn detect_language(path: &Path) -> Option<Language> {
     match path.extension()?.to_str()? {
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" => Some(Language::JavaScript),
         "py" | "pyw" => Some(Language::Python),
+        "go" => Some(Language::Go),
         _ => None,
     }
 }
