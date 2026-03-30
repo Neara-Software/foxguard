@@ -153,11 +153,11 @@ function severityColor(s: string) {
 
   <!-- Speed -->
   <section class="py-20 border-t border-night-lighter" id="speed">
-    <div class="max-w-5xl mx-auto px-6">
+    <div class="max-w-5xl mx-auto px-6 text-center">
       <h2 class="font-heading text-3xl font-bold text-white mb-2">Fast enough for the generation loop</h2>
       <p class="text-ash mb-10">Benchmark: scanning 10,000 files, {totalRules} rules</p>
 
-      <div class="max-w-xl flex flex-col gap-4 mb-12">
+      <div class="max-w-xl mx-auto flex flex-col gap-4 mb-12">
         <div class="flex items-center gap-4">
           <span class="font-mono text-sm text-ash w-24 text-right shrink-0">foxguard</span>
           <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
@@ -206,16 +206,16 @@ function severityColor(s: string) {
 
   <!-- Features -->
   <section class="py-20 border-t border-night-lighter" id="features">
-    <div class="max-w-5xl mx-auto px-6">
+    <div class="max-w-5xl mx-auto px-6 text-center">
       <h2 class="font-heading text-3xl font-bold text-white mb-2">Features</h2>
       <p class="text-ash mb-10">Security linting that keeps up with AI-speed development.</p>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { icon: 'FAST', title: 'In-editor speed', desc: 'Fast enough for VS Code, Cursor, pre-commit. Not just CI.' },
-          { icon: 'AI', title: 'Built for AI code', desc: 'Rules targeting what AI gets wrong: scaffold boilerplate, hardcoded secrets, missing auth.' },
-          { icon: 'YAML', title: 'Semgrep compatible', desc: 'Bring your existing YAML rules. Same syntax, Rust engine.' },
-          { icon: 'FRAME', title: 'Framework-aware', desc: 'Express, Flask, Django, Gin. Not just generic patterns.' },
+          { icon: '< 60ms', title: 'In-editor speed', desc: 'Fast enough for VS Code, Cursor, pre-commit. Not just CI.' },
+          { icon: '80%', title: 'Built for AI code', desc: 'Rules targeting what AI gets wrong: scaffold boilerplate, hardcoded secrets, missing auth.' },
+          { icon: '.yaml', title: 'Semgrep compatible', desc: 'Bring your existing YAML rules. Same syntax, Rust engine.' },
+          { icon: '4+', title: 'Framework-aware', desc: 'Express, Flask, Django, Gin. Not just generic patterns.' },
         ].map((f) => (
           <div class="group bg-night-light border border-night-lighter rounded-xl p-6 hover:border-fox/20 transition-colors">
             <div class="text-xs font-mono font-bold text-fox mb-3 tracking-wider">{f.icon}</div>
