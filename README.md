@@ -102,11 +102,12 @@ foxguard --severity high .    # Filter by severity
 
 ## Performance
 
-| Repository | Files | foxguard | Semgrep |
-|------------|-------|----------|---------|
-| express | 141 | 0.06s | 23.5s |
-| flask | 83 | 0.06s | 5.3s |
-| gin | 99 | 0.06s | 4.7s |
+| Repository | Files | foxguard | Semgrep | Speedup |
+|------------|-------|----------|---------|---------|
+| express | 141 | 0.57s | 5.3s | 9x |
+| flask | 83 | 0.06s | 5.2s | 85x |
+| gin | 99 | 0.08s | 4.7s | 60x |
+| next.js | 14,777 | 4.5s | 229s | 51x |
 
 Rust + tree-sitter + rayon. No JVM, no Python runtime, no network calls.
 

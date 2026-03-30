@@ -155,30 +155,22 @@ function severityColor(s: string) {
   <section class="py-20 border-t border-night-lighter" id="speed">
     <div class="max-w-5xl mx-auto px-6 text-center">
       <h2 class="font-heading text-3xl font-bold text-white mb-2">Fast enough for the generation loop</h2>
-      <p class="text-ash mb-10">Benchmark: scanning 10,000 files, {totalRules} rules</p>
+      <p class="text-ash mb-10">Benchmark: next.js monorepo, 14,777 files</p>
 
       <div class="max-w-xl mx-auto flex flex-col gap-4 mb-12">
         <div class="flex items-center gap-4">
           <span class="font-mono text-sm text-ash w-24 text-right shrink-0">foxguard</span>
           <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
-            <div class="h-full rounded bg-fox flex items-center justify-end px-3 min-w-[60px]" style="width: 4%">
-              <span class="font-mono text-xs font-semibold text-night">0.8s</span>
+            <div class="h-full rounded bg-fox flex items-center justify-end px-3 min-w-[60px]" style="width: 2%">
+              <span class="font-mono text-xs font-semibold text-night">4.5s</span>
             </div>
           </div>
         </div>
         <div class="flex items-center gap-4">
           <span class="font-mono text-sm text-ash w-24 text-right shrink-0">Semgrep</span>
           <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
-            <div class="h-full rounded bg-night-lighter flex items-center justify-end px-3 min-w-[60px]" style="width: 85%">
-              <span class="font-mono text-xs font-semibold text-white">82s</span>
-            </div>
-          </div>
-        </div>
-        <div class="flex items-center gap-4">
-          <span class="font-mono text-sm text-ash w-24 text-right shrink-0">ESLint</span>
-          <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
             <div class="h-full rounded bg-night-lighter flex items-center justify-end px-3 min-w-[60px]" style="width: 100%">
-              <span class="font-mono text-xs font-semibold text-white">96s</span>
+              <span class="font-mono text-xs font-semibold text-white">229s</span>
             </div>
           </div>
         </div>

@@ -945,30 +945,67 @@ impl Rule for ExpressDirectResponseWrite {
 
     fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
         let mut findings = Vec::new();
-        let user_input_pattern = Regex::new(r"req\.(params|query|body|headers)").unwrap();
+        // Match user-controlled input objects
+        let user_input_re = Regex::new(r"^req\.(params|query|body|headers)(\b|\[|\.)").unwrap();
+        // Sanitization wrappers that neutralise XSS risk
+        let sanitize_re = Regex::new(
+            r"(?i)(escapeHtml|escape|sanitize|encode|encodeURIComponent|encodeURI|htmlEncode|xss|purify|DOMPurify|validator|parseInt|parseFloat|Number|String)\s*\("
+        ).unwrap();
 
         walk_tree(tree.root_node(), source, &mut |node, src| {
             // Detect: res.send(req.query.foo), res.write(req.body.bar)
             if node.kind() == "call_expression" {
                 if let Some(func) = node.child_by_field_name("function") {
                     if func.kind() == "member_expression" {
+                        if let Some(obj) = func.child_by_field_name("object") {
+                            let obj_text = &src[obj.byte_range()];
+                            // Only flag res.send/write/end, not arbitrary objects
+                            if obj_text != "res" && !obj_text.ends_with(".res") {
+                                return;
+                            }
+                        }
                         if let Some(prop) = func.child_by_field_name("property") {
                             let prop_text = &src[prop.byte_range()];
-                            if prop_text == "send" || prop_text == "write" || prop_text == "end" {
+                            if prop_text == "send" || prop_text == "write" {
                                 if let Some(args) = node.child_by_field_name("arguments") {
                                     let args_text = &src[args.byte_range()];
-                                    if user_input_pattern.is_match(args_text) {
-                                        findings.push(make_finding(
-                                            self.id(),
-                                            self.severity(),
-                                            self.cwe(),
-                                            &format!(
-                                                "res.{}() called with user input — risk of reflected XSS, sanitize before sending",
-                                                prop_text
-                                            ),
-                                            node,
-                                            src,
-                                        ));
+                                    // Skip if any sanitization wrapper is present
+                                    if sanitize_re.is_match(args_text) {
+                                        return;
+                                    }
+                                    // Check each direct argument for user input
+                                    let mut cursor = args.walk();
+                                    for arg in args.children(&mut cursor) {
+                                        // Skip punctuation (parens, commas)
+                                        if arg.kind() == "(" || arg.kind() == ")" || arg.kind() == "," {
+                                            continue;
+                                        }
+                                        // Only flag when the argument is a direct member/subscript
+                                        // expression starting with req.params/query/body/headers.
+                                        // Binary expressions (concatenation), call expressions
+                                        // (wrapping functions), and template literals are NOT
+                                        // direct -- they mix or transform the input.
+                                        let kind = arg.kind();
+                                        if kind != "member_expression"
+                                            && kind != "identifier"
+                                        {
+                                            continue;
+                                        }
+                                        let arg_text = &src[arg.byte_range()];
+                                        if user_input_re.is_match(arg_text.trim()) {
+                                            findings.push(make_finding(
+                                                self.id(),
+                                                self.severity(),
+                                                self.cwe(),
+                                                &format!(
+                                                    "res.{}() called with user input — risk of reflected XSS, sanitize before sending",
+                                                    prop_text
+                                                ),
+                                                node,
+                                                src,
+                                            ));
+                                            break; // one finding per call
+                                        }
                                     }
                                 }
                             }
