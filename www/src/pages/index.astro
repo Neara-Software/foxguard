@@ -47,12 +47,32 @@ const goRules = [
 ];
 
 const totalRules = jsRules.length + pyRules.length + goRules.length;
+const benchmarkRows = [
+  { repo: 'express', files: 141, foxguard: 0.079, semgrep: 4.712, opengrep: 4.756 },
+  { repo: 'flask', files: 83, foxguard: 0.049, semgrep: 4.702, opengrep: 5.150 },
+  { repo: 'gin', files: 99, foxguard: 0.065, semgrep: 4.467, opengrep: 4.294 },
+];
+const benchmarkMax = Math.max(...benchmarkRows.flatMap((row) => [row.foxguard, row.semgrep, row.opengrep]));
+const compatFeatures = [
+  { label: 'Top-level rules', status: 'supported' },
+  { label: 'pattern', status: 'supported' },
+  { label: 'pattern-either', status: 'supported' },
+  { label: 'pattern-not', status: 'supported' },
+  { label: 'pattern-inside', status: 'supported' },
+  { label: 'patterns', status: 'supported' },
+  { label: 'JS/TS, Python, Go', status: 'supported' },
+  { label: 'Full Semgrep syntax', status: 'partial' },
+];
 
 function severityColor(s: string) {
   if (s === 'critical') return '#ef4444';
   if (s === 'high') return '#f97316';
   if (s === 'medium') return '#eab308';
   return '#737373';
+}
+
+function timeWidth(seconds: number) {
+  return Math.max((seconds / benchmarkMax) * 100, 2);
 }
 ---
 
@@ -153,24 +173,67 @@ function severityColor(s: string) {
 
   <!-- Speed -->
   <section class="py-20 border-t border-night-lighter" id="speed">
-    <div class="max-w-5xl mx-auto px-6 text-center">
-      <h2 class="font-heading text-3xl font-bold text-white mb-2">Benchmark the product and the engine</h2>
-      <p class="text-ash mb-10">Run two local benchmark modes instead of overreading one stale speed chart.</p>
+    <div class="max-w-5xl mx-auto px-6">
+      <div class="text-center mb-10">
+        <h2 class="font-heading text-3xl font-bold text-white mb-2">Fast by default</h2>
+        <p class="text-ash max-w-2xl mx-auto">
+          Example local default-mode benchmark: foxguard built-ins vs Semgrep and OpenGrep <code>auto</code>.
+          For same-rules engine comparisons, use <code>BENCH_MODE=compat</code>.
+        </p>
+      </div>
 
-      <div class="max-w-xl mx-auto flex flex-col gap-4 mb-12">
-        <div class="flex items-center gap-4">
-          <span class="font-mono text-sm text-ash w-24 text-right shrink-0">default</span>
-          <div class="flex-1 bg-night-light rounded-lg border border-night-lighter px-4 py-3 text-left">
-            <div class="font-mono text-xs text-white mb-1">foxguard built-ins vs Semgrep/OpenGrep auto</div>
-            <div class="text-xs text-ash">Use this to compare the products people actually run by default.</div>
-          </div>
+      <div class="bg-night-light border border-night-lighter rounded-2xl p-5 sm:p-6 mb-8">
+        <div class="hidden md:grid grid-cols-[120px_1fr_1fr_1fr] gap-3 text-[11px] font-mono uppercase tracking-wider text-ash mb-4 px-1">
+          <div>Repo</div>
+          <div>foxguard</div>
+          <div>Semgrep</div>
+          <div>OpenGrep</div>
         </div>
-        <div class="flex items-center gap-4">
-          <span class="font-mono text-sm text-ash w-24 text-right shrink-0">compat</span>
-          <div class="flex-1 bg-night-light rounded-lg border border-night-lighter px-4 py-3 text-left">
-            <div class="font-mono text-xs text-white mb-1">same Semgrep-compatible YAML rules across all three</div>
-            <div class="text-xs text-ash">Use this to compare the engines on aligned rule inputs.</div>
-          </div>
+
+        <div class="flex flex-col gap-5">
+          {benchmarkRows.map((row) => (
+            <div class="grid grid-cols-1 md:grid-cols-[120px_1fr_1fr_1fr] gap-3 items-center">
+              <div class="md:pr-3">
+                <div class="font-mono text-white text-sm">{row.repo}</div>
+                <div class="font-mono text-[11px] text-ash">{row.files} files</div>
+              </div>
+
+              {[
+                { name: 'foxguard', time: row.foxguard, className: 'bg-fox text-night' },
+                { name: 'Semgrep', time: row.semgrep, className: 'bg-[#3b82f6] text-white' },
+                { name: 'OpenGrep', time: row.opengrep, className: 'bg-[#22c55e] text-night' },
+              ].map((tool) => (
+                <div>
+                  <div class="md:hidden font-mono text-[11px] uppercase tracking-wider text-ash mb-2">{tool.name}</div>
+                  <div class="bg-night rounded-lg border border-night-lighter overflow-hidden h-10 flex items-center">
+                    <div
+                      class:list={['h-full flex items-center justify-end px-3 text-xs font-mono font-semibold min-w-[72px]', tool.className]}
+                      style={`width: ${timeWidth(tool.time)}%`}
+                    >
+                      {tool.time.toFixed(3)}s
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-12">
+        <div class="bg-night-light border border-night-lighter rounded-xl p-5">
+          <div class="text-xs font-mono font-bold text-ash mb-3 tracking-wider">DEFAULT MODE</div>
+          <h3 class="text-white font-semibold mb-2">Product comparison</h3>
+          <p class="text-sm text-ash leading-relaxed">
+            Compare foxguard built-ins against Semgrep or OpenGrep <code>auto</code> rules to measure the tools the way users actually run them by default.
+          </p>
+        </div>
+        <div class="bg-night-light border border-night-lighter rounded-xl p-5">
+          <div class="text-xs font-mono font-bold text-fox mb-3 tracking-wider">COMPAT MODE</div>
+          <h3 class="text-white font-semibold mb-2">Same-rules engine comparison</h3>
+          <p class="text-sm text-ash leading-relaxed">
+            Run the same Semgrep-compatible YAML rules across foxguard, Semgrep, and OpenGrep with <code>--no-builtins --rules</code> for a narrower compatibility check.
+          </p>
         </div>
       </div>
 
@@ -192,6 +255,34 @@ function severityColor(s: string) {
       </p>
       <p class="text-ash text-sm max-w-xl mx-auto text-center mt-3">
         Run <code>./benchmarks/run.sh</code> locally for current numbers and methodology.
+      </p>
+    </div>
+  </section>
+
+  <!-- Compatibility -->
+  <section class="py-20 border-t border-night-lighter" id="compatibility">
+    <div class="max-w-5xl mx-auto px-6 text-center">
+      <h2 class="font-heading text-3xl font-bold text-white mb-2">Compatibility, not magic</h2>
+      <p class="text-ash max-w-2xl mx-auto mb-10">
+        foxguard can load a useful Semgrep-compatible subset today. The default product path is still built-in rules. External YAML is there to help teams adopt foxguard without starting from zero.
+      </p>
+
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-4xl mx-auto mb-8">
+        {compatFeatures.map((feature) => (
+          <div class="bg-night-light border border-night-lighter rounded-xl p-4 text-left">
+            <div class:list={[
+              'font-mono text-[11px] uppercase tracking-wider mb-2',
+              feature.status === 'supported' ? 'text-fox' : 'text-[#3b82f6]'
+            ]}>
+              {feature.status}
+            </div>
+            <div class="text-sm text-white">{feature.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <p class="text-ash text-sm max-w-2xl mx-auto">
+        If you need the full Semgrep or OpenGrep rule universe, use those tools directly. If you want fast local feedback with a compatibility bridge, that is where foxguard fits.
       </p>
     </div>
   </section>

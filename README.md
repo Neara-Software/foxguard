@@ -80,6 +80,8 @@ By default, foxguard runs its built-in rules. Use `--rules` to add external rule
 
 foxguard currently supports a useful Semgrep-compatible subset for local rule loading. That makes it a good fit for teams already using Semgrep or OpenGrep-style rules, without claiming full drop-in compatibility.
 
+See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the supported subset and the intended built-ins-first workflow.
+
 ## Built-in coverage
 
 foxguard currently ships with 36 built-in rules across 3 languages:
@@ -119,6 +121,8 @@ The benchmark suite supports two modes:
 Built-ins are the default product path. `compat` exists to answer the narrower same-rules question fairly.
 
 Benchmark outputs are written locally as `benchmarks/results-default.md` and `benchmarks/results-compat.md`. Rust + tree-sitter + rayon. See [`benchmarks/README.md`](./benchmarks/README.md) for methodology and commands.
+
+For the homepage-style visual comparison, use `default` mode. For compatibility checks, use `compat`.
 
 ## License
 
