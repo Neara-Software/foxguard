@@ -56,7 +56,7 @@ function severityColor(s: string) {
 }
 ---
 
-<Base title="foxguard - Fast security linting for modern codebases">
+<Base title="foxguard - Fast local security linting in Rust">
 
   <!-- Hero -->
   <section class="relative pt-24 pb-16 sm:pt-32 sm:pb-20">
@@ -86,10 +86,10 @@ function severityColor(s: string) {
 
       <!-- Tagline -->
       <p class="fade-up fade-up-delay-3 text-lg sm:text-xl text-smoke max-w-2xl mx-auto mb-4">
-        Fast security linting <span class="text-white font-semibold">for local workflows and modern codebases.</span>
+        Fast local security linting.
       </p>
       <p class="fade-up fade-up-delay-3 text-sm sm:text-base text-ash max-w-xl mx-auto mb-10">
-        Scan JS/TS, Python, and Go with built-in rules by default, JSON or SARIF output, and Semgrep-compatible rule loading on a Rust engine.
+        Rust-native. 36 built-in rules. Semgrep-compatible. Single binary.
       </p>
 
       <!-- npx copy button -->
@@ -200,11 +200,11 @@ function severityColor(s: string) {
   <section class="py-20 border-t border-night-lighter" id="features">
     <div class="max-w-5xl mx-auto px-6 text-center">
       <h2 class="font-heading text-3xl font-bold text-white mb-2">Features</h2>
-      <p class="text-ash mb-10">Security linting built for local feedback and existing workflows.</p>
+      <p class="text-ash mb-10">Local-first security linting for the edit-save-commit loop.</p>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { icon: '< 60ms', title: 'Local-first speed', desc: 'Fast enough for edit-save-commit loops, hooks, and scripts.' },
+          { icon: '< 60ms', title: 'Single binary, local-first', desc: 'No JVM, no Python runtime, no network calls. Fast enough for edit-save-commit loops, hooks, and scripts.' },
           { icon: '.yaml', title: 'Bring your own rules', desc: 'Built-ins are the default. Add a useful Semgrep-compatible YAML subset from a file or directory when needed.' },
           { icon: '36', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including framework-specific rules.' },
           { icon: 'SARIF', title: 'CI-friendly output', desc: 'Use terminal output locally or JSON and SARIF in automation.' },
