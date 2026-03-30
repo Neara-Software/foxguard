@@ -1,0 +1,8 @@
+rules:
+  - id: js-hello-world-send
+    pattern: res.send('Hello World')
+    message: Exact Express response send call
+    severity: WARNING
+    languages: [javascript, typescript]
+    metadata:
+      cwe: "CWE-200"

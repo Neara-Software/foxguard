@@ -1,0 +1,8 @@
+rules:
+  - id: py-threaded-default
+    pattern: options.setdefault("threaded", True)
+    message: Flask threaded default option
+    severity: WARNING
+    languages: [python]
+    metadata:
+      cwe: "CWE-693"

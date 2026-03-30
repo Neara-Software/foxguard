@@ -37,6 +37,10 @@ pub struct Cli {
     /// Path to Semgrep YAML rule file or directory
     #[arg(short, long)]
     pub rules: Option<String>,
+
+    /// Disable built-in rules and run only external rules loaded via --rules
+    #[arg(long, default_value_t = false)]
+    pub no_builtins: bool,
 }
 
 impl SeverityFilter {

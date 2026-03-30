@@ -1,2 +1,4 @@
 repos/
-results.md
+results*.md
+results.tmp.*
+.benchmark-lock/

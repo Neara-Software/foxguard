@@ -4,7 +4,9 @@ Fast security linting for modern codebases. Written in Rust.
 
 This is the npm wrapper for foxguard. It downloads the correct prebuilt binary for your platform from GitHub Releases.
 
-foxguard scans JS/TS, Python, and Go with built-in security rules and can load a useful Semgrep-compatible YAML subset with `--rules`.
+foxguard scans JS/TS, Python, and Go with built-in security rules by default and can load a useful Semgrep-compatible YAML subset with `--rules`.
+
+Use `--rules` to add external rules on top of the built-ins. Use `--no-builtins --rules ...` for an external-rules-only compatibility run.
 
 ## Usage
 

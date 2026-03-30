@@ -1,0 +1,8 @@
+rules:
+  - id: go-server-listen-and-serve
+    pattern: server.ListenAndServe()
+    message: Exact server ListenAndServe call
+    severity: WARNING
+    languages: [go]
+    metadata:
+      cwe: "CWE-400"

@@ -27,6 +27,10 @@ impl Default for RuleRegistry {
 }
 
 impl RuleRegistry {
+    pub fn empty() -> Self {
+        Self { rules: Vec::new() }
+    }
+
     pub fn new() -> Self {
         let mut registry = Self { rules: Vec::new() };
 

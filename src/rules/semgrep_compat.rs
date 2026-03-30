@@ -620,17 +620,24 @@ pub fn parse_semgrep_file(path: &Path) -> Result<Vec<Box<dyn Rule>>, String> {
         let severity = map_severity(&yaml_rule.severity);
         let matcher = build_matcher(&yaml_rule);
 
+        let mut mapped_languages = Vec::new();
         for lang_str in &yaml_rule.languages {
             if let Some(lang) = map_language(lang_str) {
-                rules.push(Box::new(SemgrepRule {
-                    id: format!("semgrep/{}", yaml_rule.id),
-                    message: yaml_rule.message.clone(),
-                    severity,
-                    lang,
-                    cwe: cwe.clone(),
-                    matcher: matcher.clone(),
-                }));
+                if !mapped_languages.contains(&lang) {
+                    mapped_languages.push(lang);
+                }
             }
+        }
+
+        for lang in mapped_languages {
+            rules.push(Box::new(SemgrepRule {
+                id: format!("semgrep/{}", yaml_rule.id),
+                message: yaml_rule.message.clone(),
+                severity,
+                lang,
+                cwe: cwe.clone(),
+                matcher: matcher.clone(),
+            }));
         }
     }
 
@@ -713,6 +720,22 @@ rules:
         let f = make_yaml(yaml);
         let rules = parse_semgrep_file(f.path()).unwrap();
         assert_eq!(rules.len(), 1);
+    }
+
+    #[test]
+    fn test_dedup_mapped_languages() {
+        let yaml = r#"
+rules:
+  - id: js-send
+    pattern: res.send("Hello World")
+    message: Exact Express response send call
+    severity: WARNING
+    languages: [javascript, typescript]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].language(), Language::JavaScript);
     }
 
     #[test]
