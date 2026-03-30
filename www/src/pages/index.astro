@@ -56,7 +56,7 @@ function severityColor(s: string) {
 }
 ---
 
-<Base title="foxguard - The security linter for AI-generated code">
+<Base title="foxguard - Fast security linting for modern codebases">
 
   <!-- Hero -->
   <section class="relative pt-24 pb-16 sm:pt-32 sm:pb-20">
@@ -86,10 +86,10 @@ function severityColor(s: string) {
 
       <!-- Tagline -->
       <p class="fade-up fade-up-delay-3 text-lg sm:text-xl text-smoke max-w-2xl mx-auto mb-4">
-        The security linter <span class="text-white font-semibold">fast enough to sit between your AI and your codebase.</span>
+        Fast security linting <span class="text-white font-semibold">for local workflows and modern codebases.</span>
       </p>
       <p class="fade-up fade-up-delay-3 text-sm sm:text-base text-ash max-w-xl mx-auto mb-10">
-        Your AI writes code. foxguard catches what it gets wrong. {totalRules} rules for JS/TS, Python, Go. Semgrep-compatible. Rust-fast.
+        Scan JS/TS, Python, and Go with built-in rules, JSON or SARIF output, and Semgrep-compatible rule loading on a Rust engine.
       </p>
 
       <!-- npx copy button -->
@@ -99,7 +99,7 @@ function severityColor(s: string) {
           class="group relative flex items-center gap-3 bg-night-light border border-night-lighter hover:border-fox/30 rounded-lg px-5 py-3 font-mono text-sm text-fox transition-all duration-200 cursor-pointer"
         >
           <span class="text-ash">$</span>
-          <span>npx foxguard</span>
+          <span>npx foxguard .</span>
           <svg class="w-4 h-4 text-ash group-hover:text-fox transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
 
@@ -154,15 +154,15 @@ function severityColor(s: string) {
   <!-- Speed -->
   <section class="py-20 border-t border-night-lighter" id="speed">
     <div class="max-w-5xl mx-auto px-6 text-center">
-      <h2 class="font-heading text-3xl font-bold text-white mb-2">Fast enough for the generation loop</h2>
-      <p class="text-ash mb-10">Benchmark: next.js monorepo, 14,777 files</p>
+      <h2 class="font-heading text-3xl font-bold text-white mb-2">Fast enough for local workflows</h2>
+      <p class="text-ash mb-10">Checked-in benchmark suite: express repository, 141 files</p>
 
       <div class="max-w-xl mx-auto flex flex-col gap-4 mb-12">
         <div class="flex items-center gap-4">
           <span class="font-mono text-sm text-ash w-24 text-right shrink-0">foxguard</span>
           <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
             <div class="h-full rounded bg-fox flex items-center justify-end px-3 min-w-[60px]" style="width: 2%">
-              <span class="font-mono text-xs font-semibold text-night">4.5s</span>
+              <span class="font-mono text-xs font-semibold text-night">0.077s</span>
             </div>
           </div>
         </div>
@@ -170,18 +170,18 @@ function severityColor(s: string) {
           <span class="font-mono text-sm text-ash w-24 text-right shrink-0">Semgrep</span>
           <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
             <div class="h-full rounded bg-night-lighter flex items-center justify-end px-3 min-w-[60px]" style="width: 100%">
-              <span class="font-mono text-xs font-semibold text-white">229s</span>
+              <span class="font-mono text-xs font-semibold text-white">4.902s</span>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Generation loop diagram -->
+      <!-- Local workflow diagram -->
       <div class="max-w-2xl mx-auto mb-10">
         <div class="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-0 font-mono text-sm">
-          <div class="bg-night-light border border-night-lighter rounded-lg px-4 py-3 text-ash">AI writes code</div>
+          <div class="bg-night-light border border-night-lighter rounded-lg px-4 py-3 text-ash">edit</div>
           <svg class="w-6 h-6 text-fox shrink-0 rotate-90 sm:rotate-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
-          <div class="bg-fox/10 border border-fox/30 rounded-lg px-4 py-3 text-fox font-semibold">foxguard checks <span class="text-fox/70">(60ms)</span></div>
+          <div class="bg-fox/10 border border-fox/30 rounded-lg px-4 py-3 text-fox font-semibold">foxguard checks <span class="text-fox/70">(77ms)</span></div>
           <svg class="w-6 h-6 text-fox shrink-0 rotate-90 sm:rotate-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
           <div class="bg-night-light border border-night-lighter rounded-lg px-4 py-3 text-ash">fix</div>
           <svg class="w-6 h-6 text-fox shrink-0 rotate-90 sm:rotate-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
@@ -190,8 +190,8 @@ function severityColor(s: string) {
       </div>
 
       <p class="text-ash text-sm max-w-lg mx-auto text-center">
-        <span class="text-white font-semibold">Semgrep:</span> great for CI.
-        <span class="text-fox font-semibold">foxguard:</span> fast enough for your editor.
+        <span class="text-white font-semibold">Semgrep / OpenGrep:</span> broad rule ecosystems.
+        <span class="text-fox font-semibold">foxguard:</span> fast local feedback on a Rust engine.
       </p>
     </div>
   </section>
@@ -200,14 +200,14 @@ function severityColor(s: string) {
   <section class="py-20 border-t border-night-lighter" id="features">
     <div class="max-w-5xl mx-auto px-6 text-center">
       <h2 class="font-heading text-3xl font-bold text-white mb-2">Features</h2>
-      <p class="text-ash mb-10">Security linting that keeps up with AI-speed development.</p>
+      <p class="text-ash mb-10">Security linting built for local feedback and existing workflows.</p>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { icon: '< 60ms', title: 'In-editor speed', desc: 'Fast enough for VS Code, Cursor, pre-commit. Not just CI.' },
-          { icon: '80%', title: 'Built for AI code', desc: 'Rules targeting what AI gets wrong: scaffold boilerplate, hardcoded secrets, missing auth.' },
-          { icon: '.yaml', title: 'Semgrep compatible', desc: 'Bring your existing YAML rules. Same syntax, Rust engine.' },
-          { icon: '4+', title: 'Framework-aware', desc: 'Express, Flask, Django, Gin. Not just generic patterns.' },
+          { icon: '< 60ms', title: 'Local-first speed', desc: 'Fast enough for edit-save-commit loops, hooks, and scripts.' },
+          { icon: '.yaml', title: 'Custom rules', desc: 'Load a useful Semgrep-compatible YAML subset from a file or directory.' },
+          { icon: '36', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including framework-specific rules.' },
+          { icon: 'SARIF', title: 'CI-friendly output', desc: 'Use terminal output locally or JSON and SARIF in automation.' },
         ].map((f) => (
           <div class="group bg-night-light border border-night-lighter rounded-xl p-6 hover:border-fox/20 transition-colors">
             <div class="text-xs font-mono font-bold text-fox mb-3 tracking-wider">{f.icon}</div>
@@ -215,6 +215,37 @@ function severityColor(s: string) {
             <p class="text-sm text-ash leading-relaxed">{f.desc}</p>
           </div>
         ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Positioning -->
+  <section class="py-20 border-t border-night-lighter" id="positioning">
+    <div class="max-w-5xl mx-auto px-6">
+      <div class="text-center mb-10">
+        <h2 class="font-heading text-3xl font-bold text-white mb-2">Where It Fits</h2>
+        <p class="text-ash">foxguard is best positioned as a local-first complement, not a claim of full tool replacement.</p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="bg-night-light border border-night-lighter rounded-xl p-6">
+          <div class="text-xs font-mono font-bold text-ash mb-3 tracking-wider">SEMGREP / OPENGREP</div>
+          <h3 class="text-white font-semibold mb-3">Broad ecosystem coverage</h3>
+          <div class="flex flex-col gap-2 text-sm text-ash">
+            <div>Large existing rule ecosystems</div>
+            <div>Strong CI and platform fit</div>
+            <div>Broader language and analysis scope</div>
+          </div>
+        </div>
+        <div class="bg-night-light border border-fox/25 rounded-xl p-6 shadow-[0_0_0_1px_rgba(245,158,11,0.06)]">
+          <div class="text-xs font-mono font-bold text-fox mb-3 tracking-wider">FOXGUARD</div>
+          <h3 class="text-white font-semibold mb-3">Fast local feedback on a Rust engine</h3>
+          <div class="flex flex-col gap-2 text-sm text-ash">
+            <div>Useful built-in rules out of the box</div>
+            <div>Terminal, JSON, and SARIF output</div>
+            <div>Semgrep-compatible YAML subset loading with <code>--rules</code></div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -238,8 +269,8 @@ function severityColor(s: string) {
         <div class="bg-night-light border border-night-lighter rounded-xl p-5">
           <div class="text-xs font-semibold text-ash uppercase tracking-wider mb-3">npm / npx</div>
           <div class="flex items-center justify-between bg-night border border-night-lighter rounded-lg px-4 py-3 font-mono text-sm text-fox">
-            <code>npx foxguard</code>
-            <button class="copy-btn text-ash hover:text-white transition-colors cursor-pointer" data-copy="npx foxguard" aria-label="Copy">
+            <code>npx foxguard .</code>
+            <button class="copy-btn text-ash hover:text-white transition-colors cursor-pointer" data-copy="npx foxguard ." aria-label="Copy">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
           </div>

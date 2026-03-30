@@ -1,10 +1,10 @@
 # foxguard
 
-Blazing fast security linter for modern codebases. Written in Rust.
-
-> The Ruff of security.
+Fast security linting for modern codebases. Written in Rust.
 
 This is the npm wrapper for foxguard. It downloads the correct prebuilt binary for your platform from GitHub Releases.
+
+foxguard scans JS/TS, Python, and Go with built-in security rules and can load a useful Semgrep-compatible YAML subset with `--rules`.
 
 ## Usage
 

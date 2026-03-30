@@ -1,5 +1,5 @@
 name: "Foxguard Security Scan"
-description: "Blazing fast security linter for modern codebases"
+description: "Fast security linting for modern codebases"
 author: "peaktwilight"
 
 branding:

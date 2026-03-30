@@ -9,6 +9,12 @@ fn main() {
     let cli = Cli::parse();
     let mut registry = RuleRegistry::new();
 
+    let scan_path = Path::new(&cli.path);
+    if !scan_path.exists() {
+        eprintln!("Error: path '{}' does not exist", cli.path);
+        std::process::exit(2);
+    }
+
     // Load external Semgrep YAML rules if --rules is provided
     if let Some(ref rules_path) = cli.rules {
         let path = Path::new(rules_path);

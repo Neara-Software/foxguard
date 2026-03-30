@@ -100,7 +100,7 @@ for entry in "${REPOS[@]}"; do
   fox_output=$($FOXGUARD "$repo_path" --format json 2>/dev/null || true)
   fox_end=$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time')
   fox_time=$(perl -e "printf '%.3f', $fox_end - $fox_start")
-  fox_findings=$(echo "$fox_output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total_findings', len(d.get('findings', []))))" 2>/dev/null || echo "0")
+  fox_findings=$(echo "$fox_output" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d) if isinstance(d, list) else d.get('total_findings', len(d.get('findings', []))))" 2>/dev/null || echo "0")
   echo "${fox_time}s, ${fox_findings} findings"
 
   # semgrep

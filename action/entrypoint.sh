@@ -21,6 +21,7 @@ ARCH=$(uname -m)
 case "${OS}" in
     linux)  PLATFORM="linux" ;;
     darwin) PLATFORM="macos" ;;
+    mingw*|msys*|cygwin*) PLATFORM="windows" ;;
     *)      echo "::error::Unsupported OS: ${OS}"; exit 1 ;;
 esac
 
@@ -30,7 +31,13 @@ case "${ARCH}" in
     *)             echo "::error::Unsupported architecture: ${ARCH}"; exit 1 ;;
 esac
 
-BINARY_NAME="foxguard-${PLATFORM}-${ARCH_SUFFIX}"
+if [ "${PLATFORM}" = "windows" ]; then
+    BINARY_NAME="foxguard-${PLATFORM}-${ARCH_SUFFIX}.exe"
+    EXECUTABLE_NAME="foxguard.exe"
+else
+    BINARY_NAME="foxguard-${PLATFORM}-${ARCH_SUFFIX}"
+    EXECUTABLE_NAME="foxguard"
+fi
 
 # ─── Download binary ────────────────────────────────────────────────────────
 
@@ -41,8 +48,10 @@ echo "URL: ${DOWNLOAD_URL}"
 INSTALL_DIR="${RUNNER_TEMP:-/tmp}/foxguard"
 mkdir -p "${INSTALL_DIR}"
 
-curl -sL "${DOWNLOAD_URL}" -o "${INSTALL_DIR}/foxguard"
-chmod +x "${INSTALL_DIR}/foxguard"
+curl -sL "${DOWNLOAD_URL}" -o "${INSTALL_DIR}/${EXECUTABLE_NAME}"
+if [ "${PLATFORM}" != "windows" ]; then
+    chmod +x "${INSTALL_DIR}/${EXECUTABLE_NAME}"
+fi
 echo "::endgroup::"
 
 # ─── Build arguments ────────────────────────────────────────────────────────
@@ -61,14 +70,15 @@ fi
 
 # ─── Run scan ────────────────────────────────────────────────────────────────
 
-echo "::group::Running foxguard scan"
+echo "::group::Running foxguard"
 echo "foxguard ${ARGS[*]}"
 
 SARIF_FILE="${RUNNER_TEMP:-/tmp}/foxguard-results.sarif"
 EXIT_CODE=0
+EXECUTABLE_PATH="${INSTALL_DIR}/${EXECUTABLE_NAME}"
 
 if [ "${FORMAT}" = "sarif" ]; then
-    "${INSTALL_DIR}/foxguard" "${ARGS[@]}" > "${SARIF_FILE}" || EXIT_CODE=$?
+    "${EXECUTABLE_PATH}" "${ARGS[@]}" > "${SARIF_FILE}" || EXIT_CODE=$?
     FINDINGS_COUNT=$(python3 -c "
 import json, sys
 try:
@@ -79,7 +89,7 @@ except:
     print(0)
 " 2>/dev/null || echo "0")
 else
-    OUTPUT=$("${INSTALL_DIR}/foxguard" "${ARGS[@]}" 2>&1) || EXIT_CODE=$?
+    OUTPUT=$("${EXECUTABLE_PATH}" "${ARGS[@]}" 2>&1) || EXIT_CODE=$?
     echo "${OUTPUT}"
     if [ "${FORMAT}" = "json" ]; then
         FINDINGS_COUNT=$(echo "${OUTPUT}" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")

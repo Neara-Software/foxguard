@@ -110,26 +110,24 @@ async function downloadBinary() {
     }
   }
 
-  const ext = os.platform() === "win32" ? ".zip" : ".tar.gz";
-  const assetName = `foxguard-v${VERSION}-${target}${ext}`;
+  const [arch, vendor, osPart] = target.split("-");
+  let assetName;
+  if (osPart === "darwin") {
+    assetName = `foxguard-macos-${arch}`;
+  } else if (osPart === "linux") {
+    assetName = `foxguard-linux-${arch}`;
+  } else if (osPart === "windows") {
+    assetName = `foxguard-windows-${arch}.exe`;
+  } else {
+    throw new Error(`unsupported release target: ${target}`);
+  }
   const url = `https://github.com/${REPO}/releases/download/v${VERSION}/${assetName}`;
 
   console.error(`foxguard: downloading v${VERSION} for ${target}...`);
 
   try {
     const data = await download(url);
-    const archivePath = path.join(cacheDir, assetName);
-    fs.writeFileSync(archivePath, data);
-
-    // Extract
-    if (ext === ".tar.gz") {
-      execSync(`tar -xzf "${archivePath}" -C "${cacheDir}"`, { stdio: "pipe" });
-    } else {
-      execSync(`unzip -o "${archivePath}" -d "${cacheDir}"`, { stdio: "pipe" });
-    }
-
-    // Clean up archive
-    fs.unlinkSync(archivePath);
+    fs.writeFileSync(cachedBin, data);
 
     // Make executable
     if (os.platform() !== "win32") {

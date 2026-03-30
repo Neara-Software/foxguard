@@ -5,18 +5,25 @@
 <h1 align="center">foxguard</h1>
 
 <p align="center">
-  The security linter fast enough to sit between your AI and your codebase.
+  Fast security linting for modern codebases.
   <br/>
   <a href="https://foxguard.dev">foxguard.dev</a> | <a href="https://crates.io/crates/foxguard">crates.io</a> | <a href="https://www.npmjs.com/package/foxguard">npm</a>
 </p>
 
-> Your AI writes code. foxguard catches what it gets wrong.
+> Fast local security scanning for JS/TS, Python, and Go.
 
-## The Problem
+## What foxguard is
 
-80% of AI-generated code that passes functional tests still has security bugs ([SusVibes, 2025](https://arxiv.org/abs/2512.03559)). Existing SAST tools were built for human-written code -- they miss the patterns AI gets wrong: scaffold boilerplate with hardcoded secrets, over-permissive defaults, missing auth middleware, BaaS misconfigurations.
+foxguard is a Rust security linter built for the edit-save-commit loop. It runs locally, scans quickly, emits terminal/JSON/SARIF output, and can load Semgrep-compatible YAML rules with `--rules`.
 
-foxguard is purpose-built for the vibe coding era.
+The point of the product is not "our opinionated rules vs everyone else's". The point is fast security feedback in a form teams can actually drop into existing workflows.
+
+Use it:
+
+- on a repo before commit
+- in scripts and CI
+- with the built-in rules
+- with your own Semgrep-style or OpenGrep-style rules
 
 ## Install
 
@@ -25,7 +32,7 @@ cargo install foxguard
 ```
 
 ```sh
-npx foxguard
+npx foxguard .
 ```
 
 ## Usage
@@ -34,7 +41,14 @@ npx foxguard
 foxguard .
 ```
 
+```sh
+foxguard --severity high .
+foxguard --format json .
+foxguard --format sarif .
+foxguard --rules ./rules .
 ```
+
+```text
 src/app.js
   12:5  CRITICAL  js/express-no-hardcoded-session-secret (CWE-798)
         Hardcoded session secret -- use environment variables
@@ -44,37 +58,29 @@ src/app.js
 WARNING 2 issues found: 1 critical, 1 high, 0 medium, 0 low
 ```
 
-## What It Catches
+## Why foxguard
 
-36 security rules across 3 languages, focused on what AI gets wrong:
+- Fast enough to run locally without becoming background noise
+- Single binary, no JVM, no Python runtime, no network calls
+- Semgrep-compatible rule loading via `--rules`
+- Built-in security coverage out of the box
+- SARIF output for code scanning and CI systems
 
-**AI scaffold patterns**
-- Hardcoded secrets and placeholder credentials (CWE-798)
-- Debug mode left enabled (CWE-489)
-- Missing cookie security flags (CWE-614, CWE-1004)
-- CORS allow-all origins (CWE-942)
+foxguard is best thought of as a fast security engine you can slot into your workflow, not as a closed rules product.
 
-**Injection**
-- SQL injection via string concatenation (CWE-89)
-- Command injection via exec/spawn (CWE-78)
-- XSS via innerHTML, document.write, res.send (CWE-79)
-- Path traversal (CWE-22)
+## Bring your own rules
 
-**Framework-specific (Express, Flask, Django, Gin)**
-- Express hardcoded session secrets
-- Express direct response write with user input
-- Flask debug mode enabled
-- Django SECRET_KEY hardcoded
-- Gin missing trusted proxies
-- net/http missing timeouts
+foxguard can load Semgrep-compatible YAML rules from a file or directory:
 
-**Crypto and data safety**
-- Weak crypto (MD5, SHA1) (CWE-327)
-- Unsafe deserialization: pickle, yaml.load (CWE-502)
-- Prototype pollution (CWE-1321)
-- SSRF via dynamic URLs (CWE-918)
+```sh
+foxguard --rules ./semgrep-rules .
+```
 
-## Languages
+foxguard currently supports a useful Semgrep-compatible subset for local rule loading. That makes it a good fit for teams already using Semgrep or OpenGrep-style rules, without claiming full drop-in compatibility.
+
+## Built-in coverage
+
+foxguard currently ships with 36 built-in rules across 3 languages:
 
 | Language | Rules | Frameworks |
 |----------|-------|------------|
@@ -82,19 +88,20 @@ WARNING 2 issues found: 1 critical, 1 high, 0 medium, 0 low
 | Python | 13 | Flask, Django |
 | Go | 7 | Gin, net/http |
 
-## Output Formats
+Examples of included checks:
 
-```sh
-foxguard .                    # Colored terminal output
-foxguard --format json .      # JSON
-foxguard --format sarif .     # SARIF (GitHub Code Scanning)
-foxguard --severity high .    # Filter by severity
-```
+- Hardcoded secrets and placeholder credentials
+- SQL injection via string interpolation
+- Command injection via exec/spawn
+- XSS via unsafe response or DOM writes
+- Weak crypto such as MD5 and SHA1
+- Unsafe deserialization
+- Framework misconfigurations
 
 ## GitHub Action
 
 ```yaml
-- uses: peaktwilight/foxguard-action@v1
+- uses: peaktwilight/foxguard/action@v1
   with:
     path: .
     severity: medium
@@ -104,12 +111,11 @@ foxguard --severity high .    # Filter by severity
 
 | Repository | Files | foxguard | Semgrep | Speedup |
 |------------|-------|----------|---------|---------|
-| express | 141 | 0.57s | 5.3s | 9x |
-| flask | 83 | 0.06s | 5.2s | 85x |
-| gin | 99 | 0.08s | 4.7s | 60x |
-| next.js | 14,777 | 4.5s | 229s | 51x |
+| express | 141 | 0.077s | 4.902s | 64x |
+| flask | 83 | 0.049s | 4.805s | 98x |
+| gin | 99 | 0.062s | 4.302s | 69x |
 
-Rust + tree-sitter + rayon. No JVM, no Python runtime, no network calls.
+Rust + tree-sitter + rayon.
 
 ## License
 

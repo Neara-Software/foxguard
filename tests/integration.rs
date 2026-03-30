@@ -188,6 +188,26 @@ fn test_safe_go_no_findings() {
     assert_eq!(findings.len(), 0, "safe.go should have 0 findings");
 }
 
+#[test]
+fn test_invalid_path_exits_nonzero() {
+    let output = foxguard_cmd()
+        .args(["not_a_real_path_foxguard_test", "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(
+        !output.status.success(),
+        "invalid paths should exit non-zero"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not exist"),
+        "expected missing path error, got: {}",
+        stderr
+    );
+}
+
 // ─── Severity filtering ─────────────────────────────────────────────────────
 
 #[test]

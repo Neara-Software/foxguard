@@ -18,7 +18,7 @@ pub enum SeverityFilter {
 #[derive(Parser, Debug)]
 #[command(
     name = "foxguard",
-    about = "Blazing fast security linter for modern codebases",
+    about = "Fast security linting for modern codebases",
     version
 )]
 pub struct Cli {
