@@ -76,6 +76,8 @@ foxguard can load Semgrep-compatible YAML rules from a file or directory:
 foxguard --rules ./semgrep-rules .
 ```
 
+By default, foxguard runs its built-in rules. Use `--rules` to add external rules on top. Use `--no-builtins --rules ...` when you want an external-rules-only compatibility run.
+
 foxguard currently supports a useful Semgrep-compatible subset for local rule loading. That makes it a good fit for teams already using Semgrep or OpenGrep-style rules, without claiming full drop-in compatibility.
 
 ## Built-in coverage
@@ -109,13 +111,14 @@ Examples of included checks:
 
 ## Performance
 
-| Repository | Files | foxguard | Semgrep | Speedup |
-|------------|-------|----------|---------|---------|
-| express | 141 | 0.077s | 4.902s | 64x |
-| flask | 83 | 0.049s | 4.805s | 98x |
-| gin | 99 | 0.062s | 4.302s | 69x |
+The benchmark suite supports two modes:
 
-Rust + tree-sitter + rayon.
+- `default`: foxguard built-ins vs Semgrep/OpenGrep `auto`
+- `compat`: the same Semgrep-compatible YAML rules across foxguard, Semgrep, and OpenGrep
+
+Built-ins are the default product path. `compat` exists to answer the narrower same-rules question fairly.
+
+Benchmark outputs are written locally as `benchmarks/results-default.md` and `benchmarks/results-compat.md`. Rust + tree-sitter + rayon. See [`benchmarks/README.md`](./benchmarks/README.md) for methodology and commands.
 
 ## License
 

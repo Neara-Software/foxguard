@@ -7,7 +7,11 @@ use std::path::Path;
 
 fn main() {
     let cli = Cli::parse();
-    let mut registry = RuleRegistry::new();
+    let mut registry = if cli.no_builtins {
+        RuleRegistry::empty()
+    } else {
+        RuleRegistry::new()
+    };
 
     let scan_path = Path::new(&cli.path);
     if !scan_path.exists() {

@@ -89,7 +89,7 @@ function severityColor(s: string) {
         Fast security linting <span class="text-white font-semibold">for local workflows and modern codebases.</span>
       </p>
       <p class="fade-up fade-up-delay-3 text-sm sm:text-base text-ash max-w-xl mx-auto mb-10">
-        Scan JS/TS, Python, and Go with built-in rules, JSON or SARIF output, and Semgrep-compatible rule loading on a Rust engine.
+        Scan JS/TS, Python, and Go with built-in rules by default, JSON or SARIF output, and Semgrep-compatible rule loading on a Rust engine.
       </p>
 
       <!-- npx copy button -->
@@ -154,24 +154,22 @@ function severityColor(s: string) {
   <!-- Speed -->
   <section class="py-20 border-t border-night-lighter" id="speed">
     <div class="max-w-5xl mx-auto px-6 text-center">
-      <h2 class="font-heading text-3xl font-bold text-white mb-2">Fast enough for local workflows</h2>
-      <p class="text-ash mb-10">Checked-in benchmark suite: express repository, 141 files</p>
+      <h2 class="font-heading text-3xl font-bold text-white mb-2">Benchmark the product and the engine</h2>
+      <p class="text-ash mb-10">Run two local benchmark modes instead of overreading one stale speed chart.</p>
 
       <div class="max-w-xl mx-auto flex flex-col gap-4 mb-12">
         <div class="flex items-center gap-4">
-          <span class="font-mono text-sm text-ash w-24 text-right shrink-0">foxguard</span>
-          <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
-            <div class="h-full rounded bg-fox flex items-center justify-end px-3 min-w-[60px]" style="width: 2%">
-              <span class="font-mono text-xs font-semibold text-night">0.077s</span>
-            </div>
+          <span class="font-mono text-sm text-ash w-24 text-right shrink-0">default</span>
+          <div class="flex-1 bg-night-light rounded-lg border border-night-lighter px-4 py-3 text-left">
+            <div class="font-mono text-xs text-white mb-1">foxguard built-ins vs Semgrep/OpenGrep auto</div>
+            <div class="text-xs text-ash">Use this to compare the products people actually run by default.</div>
           </div>
         </div>
         <div class="flex items-center gap-4">
-          <span class="font-mono text-sm text-ash w-24 text-right shrink-0">Semgrep</span>
-          <div class="flex-1 bg-night-light rounded h-9 overflow-hidden">
-            <div class="h-full rounded bg-night-lighter flex items-center justify-end px-3 min-w-[60px]" style="width: 100%">
-              <span class="font-mono text-xs font-semibold text-white">4.902s</span>
-            </div>
+          <span class="font-mono text-sm text-ash w-24 text-right shrink-0">compat</span>
+          <div class="flex-1 bg-night-light rounded-lg border border-night-lighter px-4 py-3 text-left">
+            <div class="font-mono text-xs text-white mb-1">same Semgrep-compatible YAML rules across all three</div>
+            <div class="text-xs text-ash">Use this to compare the engines on aligned rule inputs.</div>
           </div>
         </div>
       </div>
@@ -181,7 +179,7 @@ function severityColor(s: string) {
         <div class="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-0 font-mono text-sm">
           <div class="bg-night-light border border-night-lighter rounded-lg px-4 py-3 text-ash">edit</div>
           <svg class="w-6 h-6 text-fox shrink-0 rotate-90 sm:rotate-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
-          <div class="bg-fox/10 border border-fox/30 rounded-lg px-4 py-3 text-fox font-semibold">foxguard checks <span class="text-fox/70">(77ms)</span></div>
+          <div class="bg-fox/10 border border-fox/30 rounded-lg px-4 py-3 text-fox font-semibold">foxguard checks <span class="text-fox/70">(local-first)</span></div>
           <svg class="w-6 h-6 text-fox shrink-0 rotate-90 sm:rotate-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
           <div class="bg-night-light border border-night-lighter rounded-lg px-4 py-3 text-ash">fix</div>
           <svg class="w-6 h-6 text-fox shrink-0 rotate-90 sm:rotate-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
@@ -189,9 +187,11 @@ function severityColor(s: string) {
         </div>
       </div>
 
-      <p class="text-ash text-sm max-w-lg mx-auto text-center">
-        <span class="text-white font-semibold">Semgrep / OpenGrep:</span> broad rule ecosystems.
-        <span class="text-fox font-semibold">foxguard:</span> fast local feedback on a Rust engine.
+      <p class="text-ash text-sm max-w-xl mx-auto text-center">
+        The default story is built-ins-first. The compatibility story is bring-your-own YAML when you need to align with existing Semgrep or OpenGrep workflows.
+      </p>
+      <p class="text-ash text-sm max-w-xl mx-auto text-center mt-3">
+        Run <code>./benchmarks/run.sh</code> locally for current numbers and methodology.
       </p>
     </div>
   </section>
@@ -205,7 +205,7 @@ function severityColor(s: string) {
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { icon: '< 60ms', title: 'Local-first speed', desc: 'Fast enough for edit-save-commit loops, hooks, and scripts.' },
-          { icon: '.yaml', title: 'Custom rules', desc: 'Load a useful Semgrep-compatible YAML subset from a file or directory.' },
+          { icon: '.yaml', title: 'Bring your own rules', desc: 'Built-ins are the default. Add a useful Semgrep-compatible YAML subset from a file or directory when needed.' },
           { icon: '36', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including framework-specific rules.' },
           { icon: 'SARIF', title: 'CI-friendly output', desc: 'Use terminal output locally or JSON and SARIF in automation.' },
         ].map((f) => (
@@ -358,11 +358,11 @@ function severityColor(s: string) {
     const npxBtn = document.getElementById('npx-btn');
     if (npxBtn) {
       npxBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText('npx foxguard');
+        navigator.clipboard.writeText('npx foxguard .');
         const original = npxBtn.innerHTML;
         npxBtn.querySelector('span:nth-child(2)')!.textContent = 'Copied!';
         setTimeout(() => {
-          npxBtn.querySelector('span:nth-child(2)')!.textContent = 'npx foxguard';
+          npxBtn.querySelector('span:nth-child(2)')!.textContent = 'npx foxguard .';
         }, 1500);
       });
     }

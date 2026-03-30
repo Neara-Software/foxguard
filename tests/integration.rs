@@ -208,6 +208,57 @@ fn test_invalid_path_exits_nonzero() {
     );
 }
 
+#[test]
+fn test_no_builtins_without_external_rules_finds_nothing() {
+    let output = foxguard_cmd()
+        .args([
+            "tests/fixtures/vulnerable.js",
+            "-f",
+            "json",
+            "--no-builtins",
+        ])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(
+        output.status.success(),
+        "no built-ins and no external rules should exit zero"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert_eq!(findings.len(), 0, "expected no findings without any rules");
+}
+
+#[test]
+fn test_no_builtins_with_external_rules_still_finds_matches() {
+    let output = foxguard_cmd()
+        .args([
+            "tests/fixtures/vulnerable.py",
+            "-f",
+            "json",
+            "--no-builtins",
+            "--rules",
+            "tests/semgrep_rules",
+        ])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(
+        !output.status.success(),
+        "external rules should still report findings"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert!(
+        !findings.is_empty(),
+        "expected findings from external rules when built-ins are disabled"
+    );
+}
+
 // ─── Severity filtering ─────────────────────────────────────────────────────
 
 #[test]
