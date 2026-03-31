@@ -42,6 +42,16 @@ fn write_binary_secrets_fixture(dir: &Path) -> PathBuf {
     path
 }
 
+fn write_secret_file(dir: &Path, relative_path: &str) -> PathBuf {
+    let github = ["ghp_", "abcdefghijklmnopqrstuvwxyz1234567890"].concat();
+    let path = dir.join(relative_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("failed to create secret fixture directory");
+    }
+    fs::write(&path, format!("GITHUB_TOKEN={github}\n")).expect("failed to write secret file");
+    path
+}
+
 fn setup_git_repo(files: &[&str]) -> TempDir {
     let repo = TempDir::new().expect("failed to create temp repo");
 
@@ -669,6 +679,110 @@ fn test_secrets_mode_redacts_snippets() {
             "secrets snippet should not contain raw secrets"
         );
     }
+}
+
+#[test]
+fn test_secrets_mode_exclude_path_skips_matching_files() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    write_secret_file(repo.path(), "included.txt");
+    write_secret_file(repo.path(), "fixtures/ignored.txt");
+
+    let output = foxguard_cmd()
+        .args([
+            "secrets",
+            "--exclude-path",
+            "fixtures",
+            repo.path().to_str().expect("non-utf8 path"),
+            "-f",
+            "json",
+        ])
+        .output()
+        .expect("failed to execute foxguard secrets");
+
+    assert!(
+        !output.status.success(),
+        "non-excluded secrets should still produce findings"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert_eq!(findings.len(), 1, "expected only one non-excluded finding");
+    assert!(
+        findings[0]["file"]
+            .as_str()
+            .is_some_and(|file| file.ends_with("included.txt")),
+        "expected only the included file to be scanned"
+    );
+}
+
+#[test]
+fn test_secrets_mode_exclude_path_file_skips_matching_files() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    write_secret_file(repo.path(), "fixtures/ignored.txt");
+    let ignore_file = repo.path().join(".foxguard").join("secrets.ignore");
+    fs::create_dir_all(ignore_file.parent().expect("missing ignore directory"))
+        .expect("failed to create ignore directory");
+    fs::write(&ignore_file, "# comment\nfixtures\n").expect("failed to write ignore file");
+
+    let output = foxguard_cmd()
+        .args([
+            "secrets",
+            "--exclude-path-file",
+            ignore_file.to_str().expect("non-utf8 path"),
+            repo.path().to_str().expect("non-utf8 path"),
+            "-f",
+            "json",
+        ])
+        .output()
+        .expect("failed to execute foxguard secrets");
+
+    assert!(
+        output.status.success(),
+        "excluded secrets should not produce findings"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+    assert!(findings.is_empty(), "expected excluded file to be skipped");
+}
+
+#[test]
+fn test_secrets_mode_ignore_rule_skips_specific_patterns() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    write_secrets_fixture(repo.path());
+
+    let output = foxguard_cmd()
+        .args([
+            "secrets",
+            "--ignore-rule",
+            "secret/github-token",
+            repo.path().to_str().expect("non-utf8 path"),
+            "-f",
+            "json",
+        ])
+        .output()
+        .expect("failed to execute foxguard secrets");
+
+    assert!(
+        !output.status.success(),
+        "remaining secrets should still produce findings"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert_eq!(
+        findings.len(),
+        7,
+        "expected github token finding to be ignored"
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding["rule_id"].as_str() != Some("secret/github-token")),
+        "ignored rule should be absent from findings"
+    );
 }
 
 #[test]

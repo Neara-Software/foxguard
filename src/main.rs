@@ -6,7 +6,8 @@ use foxguard::git::changed_files;
 use foxguard::rules::semgrep_compat::load_semgrep_rules;
 use foxguard::rules::RuleRegistry;
 use foxguard::secrets::{
-    scan_directory as scan_secrets_directory, scan_paths as scan_secrets_paths,
+    scan_directory_with_config as scan_secrets_directory,
+    scan_paths_with_config as scan_secrets_paths, SecretScanConfig,
 };
 use std::path::{Path, PathBuf};
 
@@ -167,15 +168,28 @@ fn run_secrets(args: &SecretsArgs) -> i32 {
         return 2;
     }
 
+    let config = match SecretScanConfig::from_inputs(
+        scan_path,
+        &args.exclude_paths,
+        args.exclude_path_file.as_deref().map(Path::new),
+        &args.ignored_rules,
+    ) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 2;
+        }
+    };
+
     let targets = match collect_changed_targets(&args.path, args.changed) {
         Ok(targets) => targets,
         Err(code) => return code,
     };
 
     let mut findings = if let Some(files) = targets {
-        scan_secrets_paths(&files)
+        scan_secrets_paths(scan_path, &files, &config)
     } else {
-        scan_secrets_directory(&args.path)
+        scan_secrets_directory(&args.path, &config)
     };
 
     if let Some(ref path) = args.write_baseline {
@@ -309,6 +323,9 @@ fn run_init(args: &InitArgs) -> i32 {
             changed: false,
             baseline: None,
             write_baseline: Some(repo_root.join(&args.secrets_baseline).display().to_string()),
+            exclude_paths: Vec::new(),
+            exclude_path_file: None,
+            ignored_rules: Vec::new(),
         };
 
         let code = run_secrets(&secrets_args);

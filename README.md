@@ -51,6 +51,7 @@ foxguard --changed .
 foxguard secrets --changed .
 foxguard baseline --output .foxguard/baseline.json
 foxguard init
+foxguard secrets --exclude-path fixtures --ignore-rule secret/github-token .
 ```
 
 ```text
@@ -100,10 +101,13 @@ foxguard secrets .
 foxguard secrets --changed .
 foxguard secrets --write-baseline .foxguard/secrets-baseline.json .
 foxguard secrets --baseline .foxguard/secrets-baseline.json .
+foxguard secrets --exclude-path fixtures --exclude-path-file .foxguard/secrets.ignore .
+foxguard secrets --ignore-rule secret/github-token .
 ```
 
 Current patterns include AWS access keys and secret access keys, GitHub, GitLab, npm, Slack, and Stripe tokens plus private key headers.
 Secrets findings are redacted in output, secrets baselines store suppression fingerprints rather than raw secret values, and binary files are skipped.
+Use `--exclude-path` for repo-relative file or directory prefixes, `--exclude-path-file` for a newline-delimited ignore list, and `--ignore-rule` when a specific secret pattern is intentionally present in test fixtures or examples.
 
 ## Bring your own rules
 

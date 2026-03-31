@@ -1,6 +1,7 @@
 use crate::{Finding, Severity};
 use ignore::WalkBuilder;
 use regex::Regex;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -10,6 +11,67 @@ struct SecretPattern {
     cwe: Option<&'static str>,
     description: &'static str,
     regex: Regex,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SecretScanConfig {
+    excluded_paths: Vec<PathBuf>,
+    ignored_rules: HashSet<String>,
+}
+
+impl SecretScanConfig {
+    pub fn from_inputs(
+        root: &Path,
+        excluded_paths: &[String],
+        exclude_path_file: Option<&Path>,
+        ignored_rules: &[String],
+    ) -> Result<Self, String> {
+        let mut all_excluded_paths = excluded_paths.to_vec();
+
+        if let Some(path) = exclude_path_file {
+            let content = std::fs::read_to_string(path).map_err(|e| {
+                format!("Failed to read exclude path file {}: {}", path.display(), e)
+            })?;
+
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                all_excluded_paths.push(trimmed.to_string());
+            }
+        }
+
+        let base = if root.is_file() {
+            root.parent().unwrap_or_else(|| Path::new("."))
+        } else {
+            root
+        };
+
+        Ok(Self {
+            excluded_paths: all_excluded_paths
+                .into_iter()
+                .map(|value| normalize_prefix(base, &value))
+                .collect(),
+            ignored_rules: ignored_rules.iter().cloned().collect(),
+        })
+    }
+
+    fn should_skip_path(&self, root: &Path, path: &Path) -> bool {
+        if self.excluded_paths.is_empty() {
+            return false;
+        }
+
+        let relative = relative_path(root, path);
+        self.excluded_paths.iter().any(|prefix| {
+            !prefix.as_os_str().is_empty()
+                && (relative == prefix.as_path() || relative.starts_with(prefix))
+        })
+    }
+
+    fn should_skip_rule(&self, rule_id: &str) -> bool {
+        self.ignored_rules.contains(rule_id)
+    }
 }
 
 fn patterns() -> &'static [SecretPattern] {
@@ -90,6 +152,10 @@ fn redact_match(line: &str, start: usize, end: usize) -> String {
 }
 
 pub fn scan_directory(root: &str) -> Vec<Finding> {
+    scan_directory_with_config(root, &SecretScanConfig::default())
+}
+
+pub fn scan_directory_with_config(root: &str, config: &SecretScanConfig) -> Vec<Finding> {
     let root_path = Path::new(root);
     let files: Vec<PathBuf> = if root_path.is_file() {
         vec![root_path.to_path_buf()]
@@ -104,20 +170,36 @@ pub fn scan_directory(root: &str) -> Vec<Finding> {
             .collect()
     };
 
-    scan_paths(&files)
+    scan_paths_with_config(root_path, &files, config)
 }
 
 pub fn scan_paths(paths: &[PathBuf]) -> Vec<Finding> {
+    scan_paths_with_config(Path::new("."), paths, &SecretScanConfig::default())
+}
+
+pub fn scan_paths_with_config(
+    root: &Path,
+    paths: &[PathBuf],
+    config: &SecretScanConfig,
+) -> Vec<Finding> {
     let patterns = patterns();
     let mut findings = Vec::new();
 
     for path in paths {
+        if config.should_skip_path(root, path) {
+            continue;
+        }
+
         let Some(source) = read_scannable_text(path) else {
             continue;
         };
 
         for (line_idx, line) in source.lines().enumerate() {
             for pattern in patterns {
+                if config.should_skip_rule(pattern.rule_id) {
+                    continue;
+                }
+
                 for matched in pattern.regex.find_iter(line) {
                     findings.push(Finding {
                         rule_id: pattern.rule_id.to_string(),
@@ -143,6 +225,35 @@ pub fn scan_paths(paths: &[PathBuf]) -> Vec<Finding> {
             .then(a.column.cmp(&b.column))
     });
     findings
+}
+
+fn normalize_prefix(base: &Path, value: &str) -> PathBuf {
+    let trimmed = value.trim().trim_matches('/');
+    if trimmed.is_empty() {
+        return PathBuf::new();
+    }
+
+    let candidate = Path::new(trimmed);
+    let relative = if candidate.is_absolute() {
+        candidate
+            .strip_prefix(base)
+            .or_else(|_| candidate.strip_prefix("/"))
+            .unwrap_or(candidate)
+            .to_path_buf()
+    } else {
+        candidate.to_path_buf()
+    };
+
+    relative.components().collect()
+}
+
+fn relative_path<'a>(root: &'a Path, path: &'a Path) -> &'a Path {
+    let base = if root.is_file() {
+        root.parent().unwrap_or_else(|| Path::new("."))
+    } else {
+        root
+    };
+    path.strip_prefix(base).unwrap_or(path)
 }
 
 fn read_scannable_text(path: &Path) -> Option<String> {

@@ -108,6 +108,18 @@ pub struct SecretsArgs {
     /// Write the current findings to a baseline file
     #[arg(long)]
     pub write_baseline: Option<String>,
+
+    /// Exclude a file or directory prefix from secrets scanning (repeatable)
+    #[arg(long = "exclude-path")]
+    pub exclude_paths: Vec<String>,
+
+    /// Load excluded file or directory prefixes from a newline-delimited file
+    #[arg(long)]
+    pub exclude_path_file: Option<String>,
+
+    /// Ignore a specific built-in secrets rule ID (repeatable)
+    #[arg(long = "ignore-rule")]
+    pub ignored_rules: Vec<String>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
