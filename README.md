@@ -127,7 +127,7 @@ foxguard currently ships with 43 built-in code rules across 3 languages:
 |----------|-------|------------|
 | JavaScript/TypeScript | 19 | Express, outbound request checks, JWT flows |
 | Python | 16 | Flask, Django, outbound request checks |
-| Go | 8 | Gin, net/http, TLS transport checks |
+| Go | 8 | Gin, net/http request flows, TLS transport checks |
 
 Examples of included checks:
 
@@ -136,7 +136,8 @@ Examples of included checks:
 - Command injection via exec/spawn
 - XSS via unsafe response or DOM writes
 - Weak crypto such as MD5 and SHA1
-- SSRF via dynamic outbound requests
+- SSRF via dynamic outbound requests and common client variants
+- Path traversal across file and response-file operations
 - Unsafe deserialization
 - Auth, session, and framework misconfigurations
 

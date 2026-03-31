@@ -29,10 +29,13 @@ func vulnerable() {
 	// 6. go/no-ssrf (High)
 	http.Get(userInput)
 
-	// 7. go/net-http-no-timeout (Medium)
+	// 7. go/no-ssrf (High) via NewRequest
+	http.NewRequest("GET", userInput, nil)
+
+	// 8. go/net-http-no-timeout (Medium)
 	http.ListenAndServe(":8080", nil)
 
-	// 8. go/insecure-tls-skip-verify (High)
+	// 9. go/insecure-tls-skip-verify (High)
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}

@@ -22,6 +22,9 @@ SESSION_COOKIE_SECURE = False
 # py/no-ssrf
 requests.get(request.args["url"])
 
+# py/no-path-traversal
+os.remove(user_path)
+
 # py/no-sql-injection (string concat with cursor.execute)
 def run_query(user_input):
     conn = sqlite3.connect("test.db")

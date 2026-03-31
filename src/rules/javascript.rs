@@ -586,6 +586,10 @@ impl Rule for NoPathTraversal {
             "readFileSync",
             "writeFile",
             "writeFileSync",
+            "appendFile",
+            "appendFileSync",
+            "createReadStream",
+            "createWriteStream",
             "readdir",
             "readdirSync",
             "unlink",
@@ -607,6 +611,35 @@ impl Rule for NoPathTraversal {
                                 // Flag if path argument uses concatenation or template
                                 let kind = first_arg.kind();
                                 if kind == "binary_expression" || kind == "template_string" {
+                                    findings.push(make_finding(
+                                        self.id(),
+                                        self.severity(),
+                                        self.cwe(),
+                                        &format!(
+                                            "{}() called with dynamic path — validate and sanitize to prevent path traversal",
+                                            func_name
+                                        ),
+                                        node,
+                                        src,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    if func_name == "sendFile" || func_name == "download" {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            if let Some(first_arg) = args.named_child(0) {
+                                let is_dynamic = matches!(
+                                    first_arg.kind(),
+                                    "binary_expression"
+                                        | "template_string"
+                                        | "identifier"
+                                        | "member_expression"
+                                        | "subscript_expression"
+                                        | "call_expression"
+                                );
+                                if is_dynamic {
                                     findings.push(make_finding(
                                         self.id(),
                                         self.severity(),
@@ -660,6 +693,13 @@ impl Rule for NoSsrf {
             "axios.put",
             "axios.delete",
             "axios.request",
+            "got",
+            "got.get",
+            "got.post",
+            "got.put",
+            "got.delete",
+            "superagent.get",
+            "superagent.post",
             "http.get",
             "http.request",
             "https.get",

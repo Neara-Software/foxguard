@@ -67,8 +67,8 @@ fn test_vulnerable_js_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        23,
-        "vulnerable.js should have 23 findings, got {}",
+        24,
+        "vulnerable.js should have 24 findings, got {}",
         findings.len()
     );
 
@@ -119,8 +119,8 @@ fn test_vulnerable_py_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        19,
-        "vulnerable.py should have 19 findings, got {}",
+        20,
+        "vulnerable.py should have 20 findings, got {}",
         findings.len()
     );
 
@@ -167,8 +167,8 @@ fn test_vulnerable_go_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        9,
-        "vulnerable.go should have 9 findings, got {}",
+        10,
+        "vulnerable.go should have 10 findings, got {}",
         findings.len()
     );
 
@@ -437,8 +437,8 @@ fn test_severity_filter_high() {
     // High and Critical only
     assert_eq!(
         findings.len(),
-        13,
-        "high severity filter on vulnerable.js should yield 13 findings, got {}",
+        14,
+        "high severity filter on vulnerable.js should yield 14 findings, got {}",
         findings.len()
     );
 

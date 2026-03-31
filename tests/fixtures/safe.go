@@ -22,6 +22,7 @@ func safeOperations(db *sql.DB) {
 
 	// Safe: static URL
 	http.Get("https://api.example.com/health")
+	http.NewRequest("GET", "https://api.example.com/health", nil)
 
 	// Safe: TLS verification remains enabled
 	_ = &tls.Config{MinVersion: tls.VersionTLS12}

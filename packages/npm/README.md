@@ -5,7 +5,7 @@ Fast local security guard for changed files, built-in rules, and Semgrep-compati
 This is the npm wrapper for foxguard. It downloads the correct prebuilt binary for your platform from GitHub Releases.
 
 foxguard scans JS/TS, Python, and Go with built-in security rules by default and can load a useful Semgrep-compatible YAML subset with `--rules`.
-Built-ins now cover local code risks like SSRF, session/cookie misconfig, transport misconfig, and framework-specific auth issues.
+Built-ins now cover local code risks like SSRF client variants, file/path traversal sinks, session/cookie misconfig, transport misconfig, and framework-specific auth issues.
 
 Use `--rules` to add external rules on top of the built-ins. Use `--no-builtins --rules ...` for an external-rules-only compatibility run.
 

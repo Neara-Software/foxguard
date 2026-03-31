@@ -385,7 +385,8 @@ impl Rule for NoPathTraversal {
             if node.kind() == "call" {
                 if let Some(func) = node.child_by_field_name("function") {
                     let func_text = &src[func.byte_range()];
-                    if func_text == "open" {
+                    let sink_fns = ["open", "os.remove", "os.unlink", "os.listdir", "os.scandir"];
+                    if sink_fns.contains(&func_text) {
                         if let Some(args) = node.child_by_field_name("arguments") {
                             if let Some(first_arg) = args.named_child(0) {
                                 // Flag if path uses concatenation or f-string
@@ -404,7 +405,10 @@ impl Rule for NoPathTraversal {
                                         self.id(),
                                         self.severity(),
                                         self.cwe(),
-                                        "open() called with dynamic path — validate and sanitize to prevent path traversal",
+                                        &format!(
+                                            "{}() called with dynamic path — validate and sanitize to prevent path traversal",
+                                            func_text
+                                        ),
                                         node,
                                         src,
                                     ));
@@ -450,6 +454,11 @@ impl Rule for NoSsrf {
             "requests.head",
             "requests.patch",
             "requests.request",
+            "httpx.get",
+            "httpx.post",
+            "httpx.put",
+            "httpx.delete",
+            "httpx.request",
             "urllib.request.urlopen",
         ];
 
@@ -470,7 +479,7 @@ impl Rule for NoSsrf {
                 return;
             };
 
-            let url_arg = if func_text == "requests.request" {
+            let url_arg = if func_text == "requests.request" || func_text == "httpx.request" {
                 args.named_child(1)
             } else {
                 args.named_child(0)

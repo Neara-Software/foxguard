@@ -560,9 +560,20 @@ impl Rule for NoSsrf {
                     if func_text == "http.Get"
                         || func_text == "http.Post"
                         || func_text == "http.Head"
+                        || func_text == "http.PostForm"
+                        || func_text == "http.NewRequest"
+                        || func_text == "http.NewRequestWithContext"
                     {
                         if let Some(args) = node.child_by_field_name("arguments") {
-                            if let Some(first_arg) = args.named_child(0) {
+                            let url_arg = if func_text == "http.NewRequest" {
+                                args.named_child(1)
+                            } else if func_text == "http.NewRequestWithContext" {
+                                args.named_child(2)
+                            } else {
+                                args.named_child(0)
+                            };
+
+                            if let Some(first_arg) = url_arg {
                                 // Flag if URL arg is not a string literal
                                 if first_arg.kind() != "interpreted_string_literal"
                                     && first_arg.kind() != "raw_string_literal"

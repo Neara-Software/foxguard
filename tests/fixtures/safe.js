@@ -41,6 +41,9 @@ const token = jwt.sign({ sub: "123" }, process.env.JWT_SECRET);
 // Safe: static outbound request
 fetch("https://api.example.com/health");
 
+// Safe: static response file path
+res.sendFile("/srv/app/public/logo.svg");
+
 // Safe: safe regex
 const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
