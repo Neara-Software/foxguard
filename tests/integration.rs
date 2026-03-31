@@ -51,8 +51,8 @@ fn test_vulnerable_js_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        18,
-        "vulnerable.js should have 18 findings, got {}",
+        22,
+        "vulnerable.js should have 22 findings, got {}",
         findings.len()
     );
 
@@ -78,7 +78,9 @@ fn test_vulnerable_js_finds_all_rules() {
         "js/express-no-hardcoded-session-secret",
         "js/express-cookie-no-secure",
         "js/express-cookie-no-httponly",
+        "js/express-cookie-no-samesite",
         "js/express-direct-response-write",
+        "js/jwt-hardcoded-secret",
     ];
 
     for rule in &expected_rules {
@@ -100,8 +102,8 @@ fn test_vulnerable_py_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        16,
-        "vulnerable.py should have 16 findings, got {}",
+        18,
+        "vulnerable.py should have 18 findings, got {}",
         findings.len()
     );
 
@@ -124,6 +126,8 @@ fn test_vulnerable_py_finds_all_rules() {
         "py/no-cors-star",
         "py/flask-debug-mode",
         "py/django-secret-key-hardcoded",
+        "py/flask-secret-key-hardcoded",
+        "py/session-cookie-secure-disabled",
     ];
 
     for rule in &expected_rules {
@@ -384,6 +388,17 @@ fn test_init_installs_hook_and_baseline() {
         repo.path().join(".foxguard/baseline.json").exists(),
         "baseline should be created by default"
     );
+    assert!(
+        repo.path().join(".foxguard/secrets-baseline.json").exists(),
+        "secrets baseline should be created by default"
+    );
+
+    let hook = fs::read_to_string(repo.path().join(".git/hooks/pre-commit"))
+        .expect("failed to read pre-commit hook");
+    assert!(
+        hook.contains("foxguard secrets --changed"),
+        "hook should run the secrets scanner"
+    );
 }
 
 // ─── Severity filtering ─────────────────────────────────────────────────────
@@ -403,8 +418,8 @@ fn test_severity_filter_high() {
     // High and Critical only
     assert_eq!(
         findings.len(),
-        11,
-        "high severity filter on vulnerable.js should yield 11 findings, got {}",
+        12,
+        "high severity filter on vulnerable.js should yield 12 findings, got {}",
         findings.len()
     );
 
@@ -415,6 +430,164 @@ fn test_severity_filter_high() {
             severity == "high" || severity == "critical",
             "expected high or critical, got: {}",
             severity
+        );
+    }
+}
+
+#[test]
+fn test_secrets_mode_finds_common_credentials() {
+    let output = foxguard_cmd()
+        .args(["secrets", "tests/fixtures/secrets.txt", "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard secrets");
+
+    assert!(
+        !output.status.success(),
+        "secrets mode should exit non-zero when findings exist"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert_eq!(
+        findings.len(),
+        5,
+        "secrets fixture should yield 5 findings, got {}",
+        findings.len()
+    );
+
+    let rule_ids: std::collections::HashSet<&str> = findings
+        .iter()
+        .filter_map(|f| f["rule_id"].as_str())
+        .collect();
+
+    let expected_rules = [
+        "secret/aws-access-key-id",
+        "secret/github-token",
+        "secret/slack-token",
+        "secret/stripe-live-key",
+        "secret/private-key",
+    ];
+
+    for rule in &expected_rules {
+        assert!(rule_ids.contains(rule), "missing expected secret rule: {}", rule);
+    }
+}
+
+#[test]
+fn test_secrets_mode_changed_scans_only_staged_files() {
+    let repo = setup_git_repo(&["secrets.txt", "safe.py"]);
+
+    Command::new("git")
+        .args(["add", "secrets.txt"])
+        .current_dir(repo.path())
+        .output()
+        .expect("failed to stage secrets fixture");
+
+    let output = foxguard_cmd()
+        .args(["secrets", "--changed", "-f", "json", "."])
+        .current_dir(repo.path())
+        .output()
+        .expect("failed to execute foxguard secrets --changed");
+
+    assert!(
+        !output.status.success(),
+        "changed secrets scan should report staged secrets"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+    assert!(
+        findings.iter().all(|finding| finding["file"]
+            .as_str()
+            .unwrap_or_default()
+            .ends_with("secrets.txt")),
+        "changed secrets scan should only scan the staged secret fixture"
+    );
+}
+
+#[test]
+fn test_write_and_apply_secrets_baseline() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    let source = fixture_path("secrets.txt");
+    let target = repo.path().join("secrets.txt");
+    fs::copy(source, &target).expect("failed to copy secrets fixture");
+    let baseline = repo.path().join("secrets-baseline.json");
+
+    let initial = foxguard_cmd()
+        .args([
+            "secrets",
+            target.to_str().expect("non-utf8 path"),
+            "-f",
+            "json",
+            "--write-baseline",
+            baseline.to_str().expect("non-utf8 path"),
+        ])
+        .output()
+        .expect("failed to execute foxguard secrets");
+
+    assert!(
+        !initial.status.success(),
+        "writing a secrets baseline should still report current findings"
+    );
+    assert!(baseline.exists(), "secrets baseline file should be created");
+
+    let suppressed = foxguard_cmd()
+        .args([
+            "secrets",
+            target.to_str().expect("non-utf8 path"),
+            "-f",
+            "json",
+            "--baseline",
+            baseline.to_str().expect("non-utf8 path"),
+        ])
+        .output()
+        .expect("failed to execute foxguard secrets with baseline");
+
+    assert!(
+        suppressed.status.success(),
+        "secrets baseline should suppress the existing findings"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&suppressed.stdout).expect("invalid JSON output");
+    assert_eq!(
+        findings.len(),
+        0,
+        "expected no findings after applying the secrets baseline"
+    );
+
+    let baseline_content = fs::read_to_string(&baseline).expect("failed to read secrets baseline");
+    assert!(
+        !baseline_content.contains("AKIA1234567890ABCDEF"),
+        "secrets baseline should not persist raw secret values"
+    );
+    assert!(
+        !baseline_content.contains("ghp_abcdefghijklmnopqrstuvwxyz1234567890"),
+        "secrets baseline should not persist raw token values"
+    );
+}
+
+#[test]
+fn test_secrets_mode_redacts_snippets() {
+    let output = foxguard_cmd()
+        .args(["secrets", "tests/fixtures/secrets.txt", "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard secrets");
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    for finding in findings {
+        let snippet = finding["snippet"].as_str().expect("missing snippet");
+        assert!(
+            snippet.contains("[REDACTED]"),
+            "secrets snippet should be redacted"
+        );
+        assert!(
+            !snippet.contains("AKIA1234567890ABCDEF")
+                && !snippet.contains("ghp_abcdefghijklmnopqrstuvwxyz1234567890"),
+            "secrets snippet should not contain raw secrets"
         );
     }
 }

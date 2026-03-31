@@ -1,6 +1,6 @@
 # foxguard
 
-Fast security linting for modern codebases. Written in Rust.
+Fast local security guard for changed files, built-in rules, and Semgrep-compatible YAML. Written in Rust.
 
 This is the npm wrapper for foxguard. It downloads the correct prebuilt binary for your platform from GitHub Releases.
 
@@ -8,10 +8,13 @@ foxguard scans JS/TS, Python, and Go with built-in security rules by default and
 
 Use `--rules` to add external rules on top of the built-ins. Use `--no-builtins --rules ...` for an external-rules-only compatibility run.
 
+It also includes a dedicated `secrets` mode for common leaked credentials and private key material, with redacted output and baseline-safe suppression data.
+
 Local-first workflow:
 
 ```sh
 npx foxguard --changed .
+npx foxguard secrets --changed .
 npx foxguard baseline --output .foxguard/baseline.json
 npx foxguard init
 ```

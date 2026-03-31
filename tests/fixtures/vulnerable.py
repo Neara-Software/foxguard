@@ -11,6 +11,13 @@ password = "supersecret123"
 # py/django-secret-key-hardcoded
 SECRET_KEY = "my-super-secret-django-key"
 
+# py/flask-secret-key-hardcoded
+app = Flask(__name__)
+app.secret_key = "my-hardcoded-flask-secret"
+
+# py/session-cookie-secure-disabled
+SESSION_COOKIE_SECURE = False
+
 # py/no-sql-injection (string concat with cursor.execute)
 def run_query(user_input):
     conn = sqlite3.connect("test.db")
@@ -55,5 +62,4 @@ def do_redirect(url):
 CORS_ALLOW_ALL_ORIGINS = True
 
 # py/flask-debug-mode
-app = Flask(__name__)
 app.run(debug=True)

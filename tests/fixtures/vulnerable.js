@@ -1,4 +1,4 @@
-// Vulnerable JavaScript file — triggers all 12 foxguard JS rules
+// Vulnerable JavaScript file — triggers the built-in JS rules
 
 const crypto = require("crypto");
 const fs = require("fs");
@@ -58,7 +58,13 @@ const cookieOpts = { cookie: { maxAge: 86400 } };
 // 16. js/express-cookie-no-httponly (Medium)
 const cookieOpts2 = { cookie: { secure: true } };
 
-// 17. js/express-direct-response-write (High)
+// 17. js/express-cookie-no-samesite (Medium)
+const cookieOpts3 = { cookie: { secure: true, httpOnly: true } };
+
+// 18. js/jwt-hardcoded-secret (High)
+const token = jwt.sign({ sub: userId }, "hardcoded-jwt-secret");
+
+// 19. js/express-direct-response-write (High)
 function handler(req, res) {
   res.send(req.query.name);
 }

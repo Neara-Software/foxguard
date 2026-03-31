@@ -1,10 +1,13 @@
 use clap::Parser;
 use foxguard::baseline::{load_baseline, suppress_with_baseline, write_baseline};
-use foxguard::cli::{BaselineArgs, Cli, Command, InitArgs, OutputFormat, ScanArgs};
+use foxguard::cli::{
+    BaselineArgs, Cli, Command, InitArgs, OutputFormat, ScanArgs, SecretsArgs,
+};
 use foxguard::engine::{scan_directory, scan_paths};
 use foxguard::git::changed_files;
 use foxguard::rules::semgrep_compat::load_semgrep_rules;
 use foxguard::rules::RuleRegistry;
+use foxguard::secrets::{scan_directory as scan_secrets_directory, scan_paths as scan_secrets_paths};
 use std::path::{Path, PathBuf};
 
 fn main() {
@@ -12,6 +15,7 @@ fn main() {
     let exit_code = match cli.command {
         Some(Command::Init(args)) => run_init(&args),
         Some(Command::Baseline(args)) => run_baseline(&args),
+        Some(Command::Secrets(args)) => run_secrets(&args),
         None => run_scan(&cli.scan),
     };
 
@@ -58,12 +62,12 @@ fn validate_scan_inputs(scan: &ScanArgs) -> Result<(), i32> {
     Ok(())
 }
 
-fn collect_scan_targets(scan: &ScanArgs) -> Result<Option<Vec<PathBuf>>, i32> {
-    if !scan.changed {
+fn collect_changed_targets(path: &str, changed: bool) -> Result<Option<Vec<PathBuf>>, i32> {
+    if !changed {
         return Ok(None);
     }
 
-    let scan_root = Path::new(&scan.path);
+    let scan_root = Path::new(path);
     let files = changed_files(scan_root).map_err(|e| {
         eprintln!("Error: failed to resolve changed files: {}", e);
         2
@@ -76,7 +80,7 @@ fn scan_findings(scan: &ScanArgs) -> Result<Vec<foxguard::Finding>, i32> {
     validate_scan_inputs(scan)?;
 
     let registry = build_registry(scan);
-    let targets = collect_scan_targets(scan)?;
+    let targets = collect_changed_targets(&scan.path, scan.changed)?;
 
     let mut findings = if let Some(files) = targets {
         scan_paths(&files, &registry)
@@ -156,6 +160,58 @@ fn run_baseline(args: &BaselineArgs) -> i32 {
     0
 }
 
+fn run_secrets(args: &SecretsArgs) -> i32 {
+    let scan_path = Path::new(&args.path);
+    if !scan_path.exists() {
+        eprintln!("Error: path '{}' does not exist", args.path);
+        return 2;
+    }
+
+    let targets = match collect_changed_targets(&args.path, args.changed) {
+        Ok(targets) => targets,
+        Err(code) => return code,
+    };
+
+    let mut findings = if let Some(files) = targets {
+        scan_secrets_paths(&files)
+    } else {
+        scan_secrets_directory(&args.path)
+    };
+
+    if let Some(ref path) = args.write_baseline {
+        if let Err(e) = write_baseline(Path::new(path), &findings) {
+            eprintln!("Error: {}", e);
+            return 2;
+        }
+        eprintln!("Wrote secrets baseline to {}", path);
+    }
+
+    let baseline = match args.baseline.as_ref() {
+        Some(path) => match load_baseline(Path::new(path)) {
+            Ok(baseline) => baseline,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return 2;
+            }
+        },
+        None => None,
+    };
+
+    findings = suppress_with_baseline(findings, baseline.as_ref());
+
+    match args.format {
+        OutputFormat::Terminal => foxguard::report::terminal::print_findings(&findings),
+        OutputFormat::Json => foxguard::report::json::print_json(&findings),
+        OutputFormat::Sarif => foxguard::report::sarif::print_sarif(&findings),
+    }
+
+    if !findings.is_empty() {
+        return 1;
+    }
+
+    0
+}
+
 fn run_init(args: &InitArgs) -> i32 {
     let repo_root = Path::new(&args.path);
     if !repo_root.exists() {
@@ -184,11 +240,12 @@ fn run_init(args: &InitArgs) -> i32 {
     }
 
     let hook_contents = if args.no_baseline {
-        "#!/usr/bin/env sh\nset -eu\nexec foxguard --changed\n".to_string()
+        "#!/usr/bin/env sh\nset -eu\nfoxguard --changed\nfoxguard secrets --changed\n".to_string()
     } else {
         format!(
-            "#!/usr/bin/env sh\nset -eu\nexec foxguard --changed --baseline \"{}\"\n",
-            args.baseline
+            "#!/usr/bin/env sh\nset -eu\nfoxguard --changed --baseline \"{}\"\nfoxguard secrets --changed --baseline \"{}\"\n",
+            args.baseline,
+            args.secrets_baseline
         )
     };
 
@@ -243,6 +300,19 @@ fn run_init(args: &InitArgs) -> i32 {
 
         let code = run_baseline(&baseline_args);
         if code != 0 {
+            return code;
+        }
+
+        let secrets_args = SecretsArgs {
+            path: args.path.clone(),
+            format: OutputFormat::Json,
+            changed: false,
+            baseline: None,
+            write_baseline: Some(repo_root.join(&args.secrets_baseline).display().to_string()),
+        };
+
+        let code = run_secrets(&secrets_args);
+        if code != 0 && code != 1 {
             return code;
         }
     }

@@ -15,7 +15,6 @@ pub struct BaselineEntry {
     pub rule_id: String,
     pub file: String,
     pub line: usize,
-    pub snippet: String,
 }
 
 impl BaselineFile {
@@ -35,7 +34,6 @@ impl BaselineEntry {
             rule_id: finding.rule_id.clone(),
             file: finding.file.clone(),
             line: finding.line,
-            snippet: finding.snippet.clone(),
         }
     }
 }
@@ -46,9 +44,15 @@ pub fn fingerprint_finding(finding: &Finding) -> String {
     hasher.update([0]);
     hasher.update(finding.file.as_bytes());
     hasher.update([0]);
-    hasher.update(finding.snippet.as_bytes());
-    hasher.update([0]);
     hasher.update(finding.line.to_string().as_bytes());
+    hasher.update([0]);
+    hasher.update(finding.column.to_string().as_bytes());
+    hasher.update([0]);
+    hasher.update(finding.end_line.to_string().as_bytes());
+    hasher.update([0]);
+    hasher.update(finding.end_column.to_string().as_bytes());
+    hasher.update([0]);
+    hasher.update(finding.description.as_bytes());
     let digest = hasher.finalize();
     digest.iter().map(|b| format!("{:02x}", b)).collect()
 }

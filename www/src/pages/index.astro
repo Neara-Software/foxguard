@@ -17,7 +17,9 @@ const jsRules = [
   { id: 'js/express-no-hardcoded-session-secret', cwe: 'CWE-798', desc: 'Hardcoded session secret in express-session config', severity: 'high' },
   { id: 'js/express-cookie-no-secure', cwe: 'CWE-614', desc: 'Cookie config missing secure flag', severity: 'medium' },
   { id: 'js/express-cookie-no-httponly', cwe: 'CWE-1004', desc: 'Cookie config missing httpOnly flag', severity: 'medium' },
+  { id: 'js/express-cookie-no-samesite', cwe: 'CWE-352', desc: 'Cookie config missing a safe sameSite setting', severity: 'medium' },
   { id: 'js/express-direct-response-write', cwe: 'CWE-79', desc: 'XSS via res.send/res.write with user input', severity: 'high' },
+  { id: 'js/jwt-hardcoded-secret', cwe: 'CWE-798', desc: 'JWT signing or verification with a hardcoded secret', severity: 'high' },
 ];
 
 const pyRules = [
@@ -34,6 +36,8 @@ const pyRules = [
   { id: 'py/no-cors-star', cwe: 'CWE-942', desc: 'Permissive CORS policy (CORS_ALLOW_ALL_ORIGINS)', severity: 'medium' },
   { id: 'py/flask-debug-mode', cwe: 'CWE-489', desc: 'Flask app.run(debug=True) exposes debugger in production', severity: 'high' },
   { id: 'py/django-secret-key-hardcoded', cwe: 'CWE-798', desc: 'Django SECRET_KEY hardcoded in source', severity: 'high' },
+  { id: 'py/flask-secret-key-hardcoded', cwe: 'CWE-798', desc: 'Flask SECRET_KEY hardcoded in source', severity: 'high' },
+  { id: 'py/session-cookie-secure-disabled', cwe: 'CWE-614', desc: 'SESSION_COOKIE_SECURE disabled in source', severity: 'medium' },
 ];
 
 const goRules = [
@@ -76,7 +80,10 @@ function timeWidth(seconds: number) {
 }
 ---
 
-<Base title="foxguard - Fast local security linting in Rust">
+<Base
+  title="foxguard - Fast local security guard in Rust"
+  description="Fast local security guard for changed files, built-in rules, secrets scanning, baselines, and Semgrep-compatible YAML."
+>
 
   <!-- Hero -->
   <section class="relative pt-24 pb-16 sm:pt-32 sm:pb-20">
@@ -106,10 +113,10 @@ function timeWidth(seconds: number) {
 
       <!-- Tagline -->
       <p class="fade-up fade-up-delay-3 text-lg sm:text-xl text-smoke max-w-2xl mx-auto mb-4">
-        Fast local security linting.
+        Fast local security guard.
       </p>
       <p class="fade-up fade-up-delay-3 text-sm sm:text-base text-ash max-w-xl mx-auto mb-10">
-        Rust-native. 36 built-in rules. Semgrep-compatible. Single binary. Hook-friendly.
+        Rust-native. 40 built-in code rules. Secrets mode. Semgrep-compatible. Single binary. Hook-friendly.
       </p>
 
       <!-- npx copy button -->
@@ -138,6 +145,7 @@ function timeWidth(seconds: number) {
       <div class="fade-up fade-up-delay-4 flex flex-wrap items-center justify-center gap-3 mb-12 font-mono text-xs text-ash">
         <span class="bg-night-light border border-night-lighter rounded-full px-3 py-1">foxguard init</span>
         <span class="bg-night-light border border-night-lighter rounded-full px-3 py-1">foxguard --changed .</span>
+        <span class="bg-night-light border border-night-lighter rounded-full px-3 py-1">foxguard secrets --changed .</span>
         <span class="bg-night-light border border-night-lighter rounded-full px-3 py-1">foxguard baseline --output .foxguard/baseline.json</span>
       </div>
 
@@ -297,15 +305,16 @@ function timeWidth(seconds: number) {
   <section class="py-20 border-t border-night-lighter" id="features">
     <div class="max-w-5xl mx-auto px-6 text-center">
       <h2 class="font-heading text-3xl font-bold text-white mb-2">Features</h2>
-      <p class="text-ash mb-10">Local-first security linting for the edit-save-commit loop.</p>
+      <p class="text-ash mb-10">Local-first security checks for the edit-save-commit loop.</p>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { icon: '< 60ms', title: 'Single binary, local-first', desc: 'No JVM, no Python runtime, no network calls. Fast enough for edit-save-commit loops, hooks, and scripts.' },
           { icon: 'hook', title: 'Pre-commit ready', desc: 'Install a repo-local hook with foxguard init and scan changed files before commit.' },
           { icon: '.yaml', title: 'Bring your own rules', desc: 'Built-ins are the default. Add a useful Semgrep-compatible YAML subset from a file or directory when needed.' },
-          { icon: '36', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including framework-specific rules.' },
+          { icon: '40', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including auth, session, and framework-specific rules.' },
           { icon: 'base', title: 'Baseline adoption', desc: 'Accept existing findings once and focus on new ones with a baseline file.' },
+          { icon: 'secret', title: 'Secrets mode', desc: 'Scan for common leaked credentials and private key material with the dedicated secrets command.' },
           { icon: 'SARIF', title: 'CI-friendly output', desc: 'Use terminal output locally or JSON and SARIF in automation.' },
         ].map((f) => (
           <div class="group bg-night-light border border-night-lighter rounded-xl p-6 hover:border-fox/20 transition-colors">

@@ -922,7 +922,65 @@ impl Rule for ExpressCookieNoHttpOnly {
     }
 }
 
-// ─── Rule 15: express-direct-response-write ───────────────────────────────
+// ─── Rule 15: express-cookie-no-samesite ──────────────────────────────────
+
+pub struct ExpressCookieNoSameSite;
+
+impl Rule for ExpressCookieNoSameSite {
+    fn id(&self) -> &str {
+        "js/express-cookie-no-samesite"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-352")
+    }
+    fn description(&self) -> &str {
+        "Cookie configuration missing sameSite protection"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "pair" {
+                if let (Some(key), Some(value)) = (
+                    node.child_by_field_name("key"),
+                    node.child_by_field_name("value"),
+                ) {
+                    let key_text = &src[key.byte_range()];
+                    let key_inner = key_text.trim_matches(|c| c == '"' || c == '\'');
+                    if key_inner == "cookie" && value.kind() == "object" {
+                        let obj_text = &src[value.byte_range()];
+                        let has_same_site = obj_text.contains("sameSite");
+                        let none_mode = obj_text.contains("sameSite: \"none\"")
+                            || obj_text.contains("sameSite:'none'")
+                            || obj_text.contains("sameSite: 'none'")
+                            || obj_text.contains("sameSite:\"none\"")
+                            || obj_text.contains("sameSite: false")
+                            || obj_text.contains("sameSite:false");
+                        if !has_same_site || none_mode {
+                            findings.push(make_finding(
+                                self.id(),
+                                self.severity(),
+                                self.cwe(),
+                                "Cookie configuration missing a safe sameSite setting — set sameSite to 'lax' or 'strict'",
+                                node,
+                                src,
+                            ));
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 16: express-direct-response-write ───────────────────────────────
 
 pub struct ExpressDirectResponseWrite;
 
@@ -1015,6 +1073,77 @@ impl Rule for ExpressDirectResponseWrite {
                 }
             }
         });
+        findings
+    }
+}
+
+// ─── Rule 17: jwt-hardcoded-secret ────────────────────────────────────────
+
+pub struct JwtHardcodedSecret;
+
+impl Rule for JwtHardcodedSecret {
+    fn id(&self) -> &str {
+        "js/jwt-hardcoded-secret"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-798")
+    }
+    fn description(&self) -> &str {
+        "JWT signing or verification with a hardcoded secret"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "call_expression" {
+                return;
+            }
+
+            let Some(func) = node.child_by_field_name("function") else {
+                return;
+            };
+            let func_text = &src[func.byte_range()];
+            if func_text != "jwt.sign"
+                && func_text != "jwt.verify"
+                && func_text != "jsonwebtoken.sign"
+                && func_text != "jsonwebtoken.verify"
+            {
+                return;
+            }
+
+            let Some(args) = node.child_by_field_name("arguments") else {
+                return;
+            };
+            let Some(secret_arg) = args.named_child(1) else {
+                return;
+            };
+            if secret_arg.kind() != "string" && secret_arg.kind() != "template_string" {
+                return;
+            }
+
+            let secret = &src[secret_arg.byte_range()];
+            let inner = secret.trim_matches(|c| c == '"' || c == '\'' || c == '`');
+            if inner.len() < 4 {
+                return;
+            }
+
+            findings.push(make_finding(
+                self.id(),
+                self.severity(),
+                self.cwe(),
+                "JWT secret is hardcoded — load signing keys from environment or a secrets manager",
+                node,
+                src,
+            ));
+        });
+
         findings
     }
 }

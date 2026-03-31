@@ -1,5 +1,5 @@
 name: "Foxguard Security Scan"
-description: "Fast security linting for modern codebases"
+description: "Fast local security guard for changed files, built-in rules, and Semgrep-compatible YAML"
 author: "peaktwilight"
 
 branding:

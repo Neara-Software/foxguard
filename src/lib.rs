@@ -4,6 +4,7 @@ pub mod engine;
 pub mod git;
 pub mod report;
 pub mod rules;
+pub mod secrets;
 
 use serde::{Deserialize, Serialize};
 

@@ -5,16 +5,16 @@
 <h1 align="center">foxguard</h1>
 
 <p align="center">
-  Fast security linting for modern codebases.
+  Fast local security guard for changed files, built-in rules, and Semgrep-compatible YAML.
   <br/>
   <a href="https://foxguard.dev">foxguard.dev</a> | <a href="https://crates.io/crates/foxguard">crates.io</a> | <a href="https://www.npmjs.com/package/foxguard">npm</a>
 </p>
 
-> Fast local security scanning for JS/TS, Python, and Go.
+> Fast local security guard for JS/TS, Python, and Go.
 
 ## What foxguard is
 
-foxguard is a Rust security linter built for the edit-save-commit loop. It runs locally, scans quickly, emits terminal/JSON/SARIF output, and can load Semgrep-compatible YAML rules with `--rules`.
+foxguard is a Rust security guard built for the edit-save-commit loop. It runs locally, scans quickly, emits terminal/JSON/SARIF output, includes a first-class secrets mode, and can load Semgrep-compatible YAML rules with `--rules`.
 
 The point of the product is not "our opinionated rules vs everyone else's". The point is fast security feedback in a form teams can actually drop into existing workflows.
 
@@ -45,8 +45,10 @@ foxguard .
 foxguard --severity high .
 foxguard --format json .
 foxguard --format sarif .
+foxguard secrets .
 foxguard --rules ./rules .
 foxguard --changed .
+foxguard secrets --changed .
 foxguard baseline --output .foxguard/baseline.json
 foxguard init
 ```
@@ -65,6 +67,7 @@ WARNING 2 issues found: 1 critical, 1 high, 0 medium, 0 low
 
 - Fast enough to run locally without becoming background noise
 - Single binary, no JVM, no Python runtime, no network calls
+- First-class secrets scan for common leaked credentials and key material
 - Semgrep-compatible rule loading via `--rules`
 - Built-in security coverage out of the box
 - SARIF output for code scanning and CI systems
@@ -79,13 +82,28 @@ Install foxguard as a repo-local guard:
 foxguard init
 ```
 
-That installs a `pre-commit` hook that runs foxguard on changed files and suppresses already accepted findings from `.foxguard/baseline.json`.
+That installs a `pre-commit` hook that runs code scanning and secrets scanning on changed files and suppresses already accepted findings from `.foxguard/baseline.json` and `.foxguard/secrets-baseline.json`.
 
 Useful commands:
 
 - `foxguard --changed .`
+- `foxguard secrets --changed .`
 - `foxguard baseline --output .foxguard/baseline.json`
 - `foxguard --baseline .foxguard/baseline.json .`
+
+## Secrets mode
+
+Use the built-in secrets scanner when you want fast local checks for obvious leaked credentials and key material:
+
+```sh
+foxguard secrets .
+foxguard secrets --changed .
+foxguard secrets --write-baseline .foxguard/secrets-baseline.json .
+foxguard secrets --baseline .foxguard/secrets-baseline.json .
+```
+
+Current patterns include common AWS, GitHub, Slack, and Stripe tokens plus private key headers.
+Secrets findings are redacted in output, and secrets baselines store suppression fingerprints rather than raw secret values.
 
 ## Bring your own rules
 
@@ -103,12 +121,12 @@ See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the supported subset and the in
 
 ## Built-in coverage
 
-foxguard currently ships with 36 built-in rules across 3 languages:
+foxguard currently ships with 40 built-in code rules across 3 languages:
 
 | Language | Rules | Frameworks |
 |----------|-------|------------|
-| JavaScript/TypeScript | 16 | Express |
-| Python | 13 | Flask, Django |
+| JavaScript/TypeScript | 18 | Express, JWT flows |
+| Python | 15 | Flask, Django |
 | Go | 7 | Gin, net/http |
 
 Examples of included checks:
@@ -119,7 +137,7 @@ Examples of included checks:
 - XSS via unsafe response or DOM writes
 - Weak crypto such as MD5 and SHA1
 - Unsafe deserialization
-- Framework misconfigurations
+- Auth, session, and framework misconfigurations
 
 ## GitHub Action
 

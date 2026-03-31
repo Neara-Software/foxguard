@@ -1,5 +1,7 @@
 # foxguard Compatibility
 
+Fast local security guard for changed files, built-in rules, and Semgrep-compatible YAML.
+
 foxguard supports a focused Semgrep-compatible YAML subset for local rule loading.
 
 The product default is still built-in rules. Compatibility mode exists to help teams adopt foxguard without throwing away existing rule work on day one.
@@ -10,6 +12,7 @@ Built-ins first:
 
 ```sh
 foxguard .
+foxguard secrets .
 foxguard --rules ./rules .
 foxguard --changed .
 ```

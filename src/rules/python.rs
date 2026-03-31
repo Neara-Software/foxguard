@@ -651,26 +651,6 @@ impl Rule for NoDebugTrue {
                 }
             }
 
-            // Detect: app.run(debug=True) or similar (Flask pattern)
-            if node.kind() == "keyword_argument" {
-                if let (Some(name), Some(value)) = (
-                    node.child_by_field_name("name"),
-                    node.child_by_field_name("value"),
-                ) {
-                    let name_text = &src[name.byte_range()];
-                    let value_text = &src[value.byte_range()];
-                    if name_text == "debug" && value_text == "True" {
-                        findings.push(make_finding(
-                            self.id(),
-                            self.severity(),
-                            self.cwe(),
-                            "debug=True passed to function — disable in production",
-                            node,
-                            src,
-                        ));
-                    }
-                }
-            }
         });
         findings
     }
@@ -966,6 +946,129 @@ impl Rule for NoCorsStar {
                 }
             }
         });
+        findings
+    }
+}
+
+// ─── Rule 14: flask-secret-key-hardcoded ──────────────────────────────────
+
+pub struct FlaskSecretKeyHardcoded;
+
+impl Rule for FlaskSecretKeyHardcoded {
+    fn id(&self) -> &str {
+        "py/flask-secret-key-hardcoded"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-798")
+    }
+    fn description(&self) -> &str {
+        "Flask SECRET_KEY hardcoded in source code"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "assignment" {
+                return;
+            }
+
+            let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) else {
+                return;
+            };
+
+            if right.kind() != "string" {
+                return;
+            }
+
+            let left_text = &src[left.byte_range()];
+            let is_flask_secret = left_text == "app.secret_key"
+                || (left_text.contains("config") && left_text.contains("SECRET_KEY"));
+            if !is_flask_secret {
+                return;
+            }
+
+            let val = &src[right.byte_range()];
+            let inner = val.trim_matches(|c| c == '"' || c == '\'');
+            if inner.len() < 4 {
+                return;
+            }
+
+            findings.push(make_finding(
+                self.id(),
+                self.severity(),
+                self.cwe(),
+                "Flask SECRET_KEY is hardcoded — use an environment variable or secrets manager",
+                node,
+                src,
+            ));
+        });
+
+        findings
+    }
+}
+
+// ─── Rule 15: session-cookie-secure-disabled ──────────────────────────────
+
+pub struct SessionCookieSecureDisabled;
+
+impl Rule for SessionCookieSecureDisabled {
+    fn id(&self) -> &str {
+        "py/session-cookie-secure-disabled"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-614")
+    }
+    fn description(&self) -> &str {
+        "SESSION_COOKIE_SECURE disabled in source code"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "assignment" {
+                return;
+            }
+
+            let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) else {
+                return;
+            };
+
+            let left_text = &src[left.byte_range()];
+            let right_text = &src[right.byte_range()];
+            let is_session_cookie_secure =
+                left_text == "SESSION_COOKIE_SECURE" || left_text.contains("SESSION_COOKIE_SECURE");
+            if is_session_cookie_secure && right_text == "False" {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "SESSION_COOKIE_SECURE = False — session cookies may be sent over HTTP",
+                    node,
+                    src,
+                ));
+            }
+        });
+
         findings
     }
 }

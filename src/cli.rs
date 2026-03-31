@@ -64,6 +64,10 @@ pub struct InitArgs {
     #[arg(long, default_value = ".foxguard/baseline.json")]
     pub baseline: String,
 
+    /// Secrets baseline path relative to the repo
+    #[arg(long, default_value = ".foxguard/secrets-baseline.json")]
+    pub secrets_baseline: String,
+
     /// Do not create an initial baseline file
     #[arg(long, default_value_t = false)]
     pub no_baseline: bool,
@@ -83,18 +87,43 @@ pub struct BaselineArgs {
     pub output: String,
 }
 
+#[derive(Args, Debug, Clone)]
+pub struct SecretsArgs {
+    /// Path to scan
+    #[arg(default_value = ".")]
+    pub path: String,
+
+    /// Output format
+    #[arg(short, long, value_enum, default_value = "terminal")]
+    pub format: OutputFormat,
+
+    /// Scan changed files only (staged first, then unstaged)
+    #[arg(long, default_value_t = false)]
+    pub changed: bool,
+
+    /// Apply a baseline file to suppress known findings
+    #[arg(long)]
+    pub baseline: Option<String>,
+
+    /// Write the current findings to a baseline file
+    #[arg(long)]
+    pub write_baseline: Option<String>,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// Install a pre-commit hook for local foxguard runs
     Init(InitArgs),
     /// Generate a baseline file from current findings
     Baseline(BaselineArgs),
+    /// Scan repositories and changed files for common secrets
+    Secrets(SecretsArgs),
 }
 
 #[derive(Parser, Debug)]
 #[command(
     name = "foxguard",
-    about = "Fast security linting for modern codebases",
+    about = "Fast local security guard for changed files, built-in rules, and Semgrep-compatible YAML",
     version
 )]
 pub struct Cli {

@@ -32,7 +32,13 @@ const config = {
 // Safe: specific CORS origin
 const corsOptions = { origin: "https://example.com" };
 
+// Safe: secure cookie flags
+const cookieOptions = { cookie: { secure: true, httpOnly: true, sameSite: "lax" } };
+
+// Safe: JWT secret from environment
+const token = jwt.sign({ sub: "123" }, process.env.JWT_SECRET);
+
 // Safe: safe regex
 const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-module.exports = { getUser, setContent, hashData, readConfig };
+module.exports = { getUser, setContent, hashData, readConfig, cookieOptions, token };
