@@ -46,6 +46,9 @@ foxguard --severity high .
 foxguard --format json .
 foxguard --format sarif .
 foxguard --rules ./rules .
+foxguard --changed .
+foxguard baseline --output .foxguard/baseline.json
+foxguard init
 ```
 
 ```text
@@ -67,6 +70,22 @@ WARNING 2 issues found: 1 critical, 1 high, 0 medium, 0 low
 - SARIF output for code scanning and CI systems
 
 foxguard is best thought of as a fast security engine you can slot into your workflow, not as a closed rules product.
+
+## Local guard workflow
+
+Install foxguard as a repo-local guard:
+
+```sh
+foxguard init
+```
+
+That installs a `pre-commit` hook that runs foxguard on changed files and suppresses already accepted findings from `.foxguard/baseline.json`.
+
+Useful commands:
+
+- `foxguard --changed .`
+- `foxguard baseline --output .foxguard/baseline.json`
+- `foxguard --baseline .foxguard/baseline.json .`
 
 ## Bring your own rules
 

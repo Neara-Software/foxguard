@@ -8,6 +8,14 @@ foxguard scans JS/TS, Python, and Go with built-in security rules by default and
 
 Use `--rules` to add external rules on top of the built-ins. Use `--no-builtins --rules ...` for an external-rules-only compatibility run.
 
+Local-first workflow:
+
+```sh
+npx foxguard --changed .
+npx foxguard baseline --output .foxguard/baseline.json
+npx foxguard init
+```
+
 ## Usage
 
 ```sh

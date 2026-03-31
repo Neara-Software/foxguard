@@ -11,12 +11,20 @@ Built-ins first:
 ```sh
 foxguard .
 foxguard --rules ./rules .
+foxguard --changed .
 ```
 
 External-rules-only compatibility run:
 
 ```sh
 foxguard --no-builtins --rules ./rules .
+```
+
+Adoption baseline:
+
+```sh
+foxguard baseline --output .foxguard/baseline.json
+foxguard --baseline .foxguard/baseline.json .
 ```
 
 ## Supported today

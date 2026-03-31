@@ -109,7 +109,7 @@ function timeWidth(seconds: number) {
         Fast local security linting.
       </p>
       <p class="fade-up fade-up-delay-3 text-sm sm:text-base text-ash max-w-xl mx-auto mb-10">
-        Rust-native. 36 built-in rules. Semgrep-compatible. Single binary.
+        Rust-native. 36 built-in rules. Semgrep-compatible. Single binary. Hook-friendly.
       </p>
 
       <!-- npx copy button -->
@@ -133,6 +133,12 @@ function timeWidth(seconds: number) {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
           Star on GitHub
         </a>
+      </div>
+
+      <div class="fade-up fade-up-delay-4 flex flex-wrap items-center justify-center gap-3 mb-12 font-mono text-xs text-ash">
+        <span class="bg-night-light border border-night-lighter rounded-full px-3 py-1">foxguard init</span>
+        <span class="bg-night-light border border-night-lighter rounded-full px-3 py-1">foxguard --changed .</span>
+        <span class="bg-night-light border border-night-lighter rounded-full px-3 py-1">foxguard baseline --output .foxguard/baseline.json</span>
       </div>
 
       <!-- Terminal -->
@@ -296,8 +302,10 @@ function timeWidth(seconds: number) {
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { icon: '< 60ms', title: 'Single binary, local-first', desc: 'No JVM, no Python runtime, no network calls. Fast enough for edit-save-commit loops, hooks, and scripts.' },
+          { icon: 'hook', title: 'Pre-commit ready', desc: 'Install a repo-local hook with foxguard init and scan changed files before commit.' },
           { icon: '.yaml', title: 'Bring your own rules', desc: 'Built-ins are the default. Add a useful Semgrep-compatible YAML subset from a file or directory when needed.' },
           { icon: '36', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including framework-specific rules.' },
+          { icon: 'base', title: 'Baseline adoption', desc: 'Accept existing findings once and focus on new ones with a baseline file.' },
           { icon: 'SARIF', title: 'CI-friendly output', desc: 'Use terminal output locally or JSON and SARIF in automation.' },
         ].map((f) => (
           <div class="group bg-night-light border border-night-lighter rounded-xl p-6 hover:border-fox/20 transition-colors">

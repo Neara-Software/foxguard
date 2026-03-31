@@ -3,6 +3,7 @@ use crate::{Finding, Language};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 /// Detect language from file extension.
@@ -19,7 +20,6 @@ fn detect_language(path: &Path) -> Option<Language> {
 pub fn scan_directory(root: &str, registry: &RuleRegistry) -> Vec<Finding> {
     let root_path = Path::new(root);
 
-    // Collect files first so we can parallelize
     let files: Vec<_> = if root_path.is_file() {
         if let Some(lang) = detect_language(root_path) {
             vec![(root_path.to_path_buf(), lang)]
@@ -40,6 +40,19 @@ pub fn scan_directory(root: &str, registry: &RuleRegistry) -> Vec<Finding> {
             .collect()
     };
 
+    scan_files(files, registry)
+}
+
+/// Scan an explicit list of paths.
+pub fn scan_paths(paths: &[PathBuf], registry: &RuleRegistry) -> Vec<Finding> {
+    let files = paths
+        .iter()
+        .filter_map(|path| detect_language(path).map(|lang| (path.clone(), lang)))
+        .collect();
+    scan_files(files, registry)
+}
+
+fn scan_files(files: Vec<(PathBuf, Language)>, registry: &RuleRegistry) -> Vec<Finding> {
     let findings = Mutex::new(Vec::new());
 
     files.par_iter().for_each(|(path, language)| {

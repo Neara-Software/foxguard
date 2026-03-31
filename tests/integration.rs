@@ -1,7 +1,35 @@
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use tempfile::TempDir;
 
 fn foxguard_cmd() -> Command {
     Command::new(env!("CARGO_BIN_EXE_foxguard"))
+}
+
+fn fixture_path(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(name)
+}
+
+fn setup_git_repo(files: &[&str]) -> TempDir {
+    let repo = TempDir::new().expect("failed to create temp repo");
+
+    Command::new("git")
+        .args(["init"])
+        .current_dir(repo.path())
+        .output()
+        .expect("failed to initialize git repo");
+
+    for file in files {
+        let src = fixture_path(file);
+        let dest = repo.path().join(file);
+        fs::copy(src, dest).expect("failed to copy fixture");
+    }
+
+    repo
 }
 
 // ─── Vulnerable file detection ──────────────────────────────────────────────
@@ -256,6 +284,105 @@ fn test_no_builtins_with_external_rules_still_finds_matches() {
     assert!(
         !findings.is_empty(),
         "expected findings from external rules when built-ins are disabled"
+    );
+}
+
+#[test]
+fn test_write_and_apply_baseline() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    let source = fixture_path("vulnerable.js");
+    let target = repo.path().join("vulnerable.js");
+    fs::copy(source, &target).expect("failed to copy fixture");
+    let baseline = repo.path().join("baseline.json");
+
+    let initial = foxguard_cmd()
+        .args([
+            target.to_str().expect("non-utf8 path"),
+            "-f",
+            "json",
+            "--write-baseline",
+            baseline.to_str().expect("non-utf8 path"),
+        ])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(
+        !initial.status.success(),
+        "writing a baseline should still report current findings"
+    );
+    assert!(baseline.exists(), "baseline file should be created");
+
+    let suppressed = foxguard_cmd()
+        .args([
+            target.to_str().expect("non-utf8 path"),
+            "-f",
+            "json",
+            "--baseline",
+            baseline.to_str().expect("non-utf8 path"),
+        ])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(
+        suppressed.status.success(),
+        "baseline should suppress the existing findings"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&suppressed.stdout).expect("invalid JSON output");
+    assert_eq!(findings.len(), 0, "expected no findings after baseline");
+}
+
+#[test]
+fn test_changed_mode_scans_only_staged_files() {
+    let repo = setup_git_repo(&["vulnerable.js", "safe.py"]);
+
+    Command::new("git")
+        .args(["add", "vulnerable.js"])
+        .current_dir(repo.path())
+        .output()
+        .expect("failed to stage vulnerable.js");
+
+    let output = foxguard_cmd()
+        .args(["--changed", "-f", "json", "."])
+        .current_dir(repo.path())
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(
+        !output.status.success(),
+        "changed-mode scan should report findings from staged vulnerable.js"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+    assert!(
+        findings.iter().all(|finding| finding["file"]
+            .as_str()
+            .unwrap_or_default()
+            .ends_with("vulnerable.js")),
+        "changed mode should only scan the staged file"
+    );
+}
+
+#[test]
+fn test_init_installs_hook_and_baseline() {
+    let repo = setup_git_repo(&["vulnerable.js"]);
+
+    let output = foxguard_cmd()
+        .args(["init", "--path", ".", "--force"])
+        .current_dir(repo.path())
+        .output()
+        .expect("failed to execute foxguard init");
+
+    assert!(output.status.success(), "init should succeed");
+    assert!(
+        repo.path().join(".git/hooks/pre-commit").exists(),
+        "pre-commit hook should be installed"
+    );
+    assert!(
+        repo.path().join(".foxguard/baseline.json").exists(),
+        "baseline should be created by default"
     );
 }
 

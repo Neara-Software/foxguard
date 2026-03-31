@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Clone, clap::ValueEnum)]
 pub enum OutputFormat {
@@ -15,13 +15,8 @@ pub enum SeverityFilter {
     Critical,
 }
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "foxguard",
-    about = "Fast security linting for modern codebases",
-    version
-)]
-pub struct Cli {
+#[derive(Args, Debug, Clone)]
+pub struct ScanArgs {
     /// Path to scan
     #[arg(default_value = ".")]
     pub path: String,
@@ -41,6 +36,73 @@ pub struct Cli {
     /// Disable built-in rules and run only external rules loaded via --rules
     #[arg(long, default_value_t = false)]
     pub no_builtins: bool,
+
+    /// Scan changed files only (staged first, then unstaged)
+    #[arg(long, default_value_t = false)]
+    pub changed: bool,
+
+    /// Apply a baseline file to suppress known findings
+    #[arg(long)]
+    pub baseline: Option<String>,
+
+    /// Write the current findings to a baseline file
+    #[arg(long)]
+    pub write_baseline: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct InitArgs {
+    /// Repository path where the hook should be installed
+    #[arg(long, default_value = ".")]
+    pub path: String,
+
+    /// Hook file path relative to the repo
+    #[arg(long, default_value = ".git/hooks/pre-commit")]
+    pub hook_path: String,
+
+    /// Baseline path relative to the repo
+    #[arg(long, default_value = ".foxguard/baseline.json")]
+    pub baseline: String,
+
+    /// Do not create an initial baseline file
+    #[arg(long, default_value_t = false)]
+    pub no_baseline: bool,
+
+    /// Overwrite an existing hook file
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct BaselineArgs {
+    #[command(flatten)]
+    pub scan: ScanArgs,
+
+    /// Output path for the baseline file
+    #[arg(long, default_value = ".foxguard/baseline.json")]
+    pub output: String,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum Command {
+    /// Install a pre-commit hook for local foxguard runs
+    Init(InitArgs),
+    /// Generate a baseline file from current findings
+    Baseline(BaselineArgs),
+}
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "foxguard",
+    about = "Fast security linting for modern codebases",
+    version
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
+    #[command(flatten)]
+    pub scan: ScanArgs,
 }
 
 impl SeverityFilter {
