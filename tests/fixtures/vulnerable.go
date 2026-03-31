@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"crypto/md5"
 	"fmt"
 	"net/http"
@@ -31,9 +32,15 @@ func vulnerable() {
 	// 7. go/net-http-no-timeout (Medium)
 	http.ListenAndServe(":8080", nil)
 
+	// 8. go/insecure-tls-skip-verify (High)
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
 	_ = query1
 	_ = query2
 	_ = apiKey
+	_ = transport
 }
 
 func getUserInput() string {

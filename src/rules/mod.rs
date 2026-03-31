@@ -44,6 +44,7 @@ impl RuleRegistry {
         registry.register(Box::new(javascript::NoOpenRedirect));
         registry.register(Box::new(javascript::NoWeakCrypto));
         registry.register(Box::new(javascript::NoPathTraversal));
+        registry.register(Box::new(javascript::NoSsrf));
         registry.register(Box::new(javascript::NoPrototypePollution));
         registry.register(Box::new(javascript::NoUnsafeRegex));
         registry.register(Box::new(javascript::NoCorsStar));
@@ -60,6 +61,7 @@ impl RuleRegistry {
         registry.register(Box::new(python::NoSqlInjection));
         registry.register(Box::new(python::NoCommandInjection));
         registry.register(Box::new(python::NoPathTraversal));
+        registry.register(Box::new(python::NoSsrf));
         registry.register(Box::new(python::NoWeakCrypto));
         registry.register(Box::new(python::NoPickle));
         registry.register(Box::new(python::NoYamlLoad));
@@ -77,6 +79,7 @@ impl RuleRegistry {
         registry.register(Box::new(go::NoHardcodedSecret));
         registry.register(Box::new(go::NoWeakCrypto));
         registry.register(Box::new(go::NoSsrf));
+        registry.register(Box::new(go::InsecureTlsSkipVerify));
         registry.register(Box::new(go::GinNoTrustedProxies));
         registry.register(Box::new(go::NetHttpNoTimeout));
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
@@ -21,6 +22,9 @@ func safeOperations(db *sql.DB) {
 
 	// Safe: static URL
 	http.Get("https://api.example.com/health")
+
+	// Safe: TLS verification remains enabled
+	_ = &tls.Config{MinVersion: tls.VersionTLS12}
 
 	// Safe: environment variable for secrets
 	fmt.Println("Application started")

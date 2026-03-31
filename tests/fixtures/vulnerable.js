@@ -37,34 +37,37 @@ const hash = crypto.createHash("md5");
 // 10. js/no-path-traversal (High)
 fs.readFileSync(`/data/${userInput}`);
 
-// 11. js/no-prototype-pollution (High)
+// 11. js/no-ssrf (High)
+fetch(userInput);
+
+// 12. js/no-prototype-pollution (High)
 const obj = {};
 const a = "__proto__";
 const b = "polluted";
 obj[a][b] = "pwned";
 
-// 12. js/no-unsafe-regex (Medium)
+// 13. js/no-unsafe-regex (Medium)
 const re = /(a+)+$/;
 
-// 13. js/no-cors-star (Medium)
+// 14. js/no-cors-star (Medium)
 const cors = { origin: "*" };
 
-// 14. js/express-no-hardcoded-session-secret (High)
+// 15. js/express-no-hardcoded-session-secret (High)
 const sessionConfig = { secret: "keyboard-cat-secret" };
 
-// 15. js/express-cookie-no-secure (Medium)
+// 16. js/express-cookie-no-secure (Medium)
 const cookieOpts = { cookie: { maxAge: 86400 } };
 
-// 16. js/express-cookie-no-httponly (Medium)
+// 17. js/express-cookie-no-httponly (Medium)
 const cookieOpts2 = { cookie: { secure: true } };
 
-// 17. js/express-cookie-no-samesite (Medium)
+// 18. js/express-cookie-no-samesite (Medium)
 const cookieOpts3 = { cookie: { secure: true, httpOnly: true } };
 
-// 18. js/jwt-hardcoded-secret (High)
+// 19. js/jwt-hardcoded-secret (High)
 const token = jwt.sign({ sub: userId }, "hardcoded-jwt-secret");
 
-// 19. js/express-direct-response-write (High)
+// 20. js/express-direct-response-write (High)
 function handler(req, res) {
   res.send(req.query.name);
 }

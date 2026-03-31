@@ -11,6 +11,7 @@ const jsRules = [
   { id: 'js/no-open-redirect', cwe: 'CWE-601', desc: 'Open redirect via user-controlled URL', severity: 'medium' },
   { id: 'js/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak cryptographic hash (MD5/SHA1)', severity: 'medium' },
   { id: 'js/no-path-traversal', cwe: 'CWE-22', desc: 'Path traversal via unsanitized user input', severity: 'high' },
+  { id: 'js/no-ssrf', cwe: 'CWE-918', desc: 'SSRF via dynamic outbound request URL', severity: 'high' },
   { id: 'js/no-prototype-pollution', cwe: 'CWE-1321', desc: 'Prototype pollution via object merge', severity: 'high' },
   { id: 'js/no-unsafe-regex', cwe: 'CWE-1333', desc: 'ReDoS-vulnerable regular expression', severity: 'medium' },
   { id: 'js/no-cors-star', cwe: 'CWE-942', desc: 'Permissive CORS policy (Access-Control-Allow-Origin: *)', severity: 'medium' },
@@ -28,6 +29,7 @@ const pyRules = [
   { id: 'py/no-sql-injection', cwe: 'CWE-89', desc: 'SQL injection via string formatting', severity: 'critical' },
   { id: 'py/no-command-injection', cwe: 'CWE-78', desc: 'Command injection via os.system/subprocess', severity: 'critical' },
   { id: 'py/no-path-traversal', cwe: 'CWE-22', desc: 'Path traversal via unsanitized user input', severity: 'high' },
+  { id: 'py/no-ssrf', cwe: 'CWE-918', desc: 'SSRF via dynamic outbound request URL', severity: 'high' },
   { id: 'py/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak cryptographic hash (MD5/SHA1)', severity: 'medium' },
   { id: 'py/no-pickle', cwe: 'CWE-502', desc: 'Deserialization of untrusted data via pickle', severity: 'high' },
   { id: 'py/no-yaml-load', cwe: 'CWE-502', desc: 'Unsafe yaml.load() without SafeLoader', severity: 'high' },
@@ -46,6 +48,7 @@ const goRules = [
   { id: 'go/no-hardcoded-secret', cwe: 'CWE-798', desc: 'Hardcoded secret or credential detected', severity: 'high' },
   { id: 'go/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak cryptographic hash (MD5/SHA1)', severity: 'medium' },
   { id: 'go/no-ssrf', cwe: 'CWE-918', desc: 'SSRF via http.Get/http.Post with variable URL', severity: 'high' },
+  { id: 'go/insecure-tls-skip-verify', cwe: 'CWE-295', desc: 'TLS verification disabled with InsecureSkipVerify', severity: 'high' },
   { id: 'go/gin-no-trusted-proxies', cwe: 'CWE-346', desc: 'Gin engine without SetTrustedProxies', severity: 'medium' },
   { id: 'go/net-http-no-timeout', cwe: 'CWE-400', desc: 'http.ListenAndServe without timeout config', severity: 'medium' },
 ];
@@ -116,7 +119,7 @@ function timeWidth(seconds: number) {
         Fast local security guard.
       </p>
       <p class="fade-up fade-up-delay-3 text-sm sm:text-base text-ash max-w-xl mx-auto mb-10">
-        Rust-native. 40 built-in code rules. Secrets mode. Semgrep-compatible. Single binary. Hook-friendly.
+        Rust-native. 43 built-in code rules. Secrets mode. Semgrep-compatible. Single binary. Hook-friendly.
       </p>
 
       <!-- npx copy button -->
@@ -312,7 +315,7 @@ function timeWidth(seconds: number) {
           { icon: '< 60ms', title: 'Single binary, local-first', desc: 'No JVM, no Python runtime, no network calls. Fast enough for edit-save-commit loops, hooks, and scripts.' },
           { icon: 'hook', title: 'Pre-commit ready', desc: 'Install a repo-local hook with foxguard init and scan changed files before commit.' },
           { icon: '.yaml', title: 'Bring your own rules', desc: 'Built-ins are the default. Add a useful Semgrep-compatible YAML subset from a file or directory when needed.' },
-          { icon: '40', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including auth, session, and framework-specific rules.' },
+          { icon: '43', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including SSRF, auth, session, transport, and framework-specific rules.' },
           { icon: 'base', title: 'Baseline adoption', desc: 'Accept existing findings once and focus on new ones with a baseline file.' },
           { icon: 'secret', title: 'Secrets mode', desc: 'Scan for common leaked credentials and private key material with the dedicated secrets command.' },
           { icon: 'SARIF', title: 'CI-friendly output', desc: 'Use terminal output locally or JSON and SARIF in automation.' },

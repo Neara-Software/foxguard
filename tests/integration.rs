@@ -67,8 +67,8 @@ fn test_vulnerable_js_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        22,
-        "vulnerable.js should have 22 findings, got {}",
+        23,
+        "vulnerable.js should have 23 findings, got {}",
         findings.len()
     );
 
@@ -88,6 +88,7 @@ fn test_vulnerable_js_finds_all_rules() {
         "js/no-open-redirect",
         "js/no-weak-crypto",
         "js/no-path-traversal",
+        "js/no-ssrf",
         "js/no-prototype-pollution",
         "js/no-unsafe-regex",
         "js/no-cors-star",
@@ -118,8 +119,8 @@ fn test_vulnerable_py_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        18,
-        "vulnerable.py should have 18 findings, got {}",
+        19,
+        "vulnerable.py should have 19 findings, got {}",
         findings.len()
     );
 
@@ -134,6 +135,7 @@ fn test_vulnerable_py_finds_all_rules() {
         "py/no-sql-injection",
         "py/no-command-injection",
         "py/no-path-traversal",
+        "py/no-ssrf",
         "py/no-weak-crypto",
         "py/no-pickle",
         "py/no-yaml-load",
@@ -165,8 +167,8 @@ fn test_vulnerable_go_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        8,
-        "vulnerable.go should have 8 findings, got {}",
+        9,
+        "vulnerable.go should have 9 findings, got {}",
         findings.len()
     );
 
@@ -181,6 +183,7 @@ fn test_vulnerable_go_finds_all_rules() {
         "go/no-hardcoded-secret",
         "go/no-weak-crypto",
         "go/no-ssrf",
+        "go/insecure-tls-skip-verify",
         "go/net-http-no-timeout",
     ];
 
@@ -434,8 +437,8 @@ fn test_severity_filter_high() {
     // High and Critical only
     assert_eq!(
         findings.len(),
-        12,
-        "high severity filter on vulnerable.js should yield 12 findings, got {}",
+        13,
+        "high severity filter on vulnerable.js should yield 13 findings, got {}",
         findings.len()
     );
 

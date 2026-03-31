@@ -121,13 +121,13 @@ See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the supported subset and the in
 
 ## Built-in coverage
 
-foxguard currently ships with 40 built-in code rules across 3 languages:
+foxguard currently ships with 43 built-in code rules across 3 languages:
 
 | Language | Rules | Frameworks |
 |----------|-------|------------|
-| JavaScript/TypeScript | 18 | Express, JWT flows |
-| Python | 15 | Flask, Django |
-| Go | 7 | Gin, net/http |
+| JavaScript/TypeScript | 19 | Express, outbound request checks, JWT flows |
+| Python | 16 | Flask, Django, outbound request checks |
+| Go | 8 | Gin, net/http, TLS transport checks |
 
 Examples of included checks:
 
@@ -136,6 +136,7 @@ Examples of included checks:
 - Command injection via exec/spawn
 - XSS via unsafe response or DOM writes
 - Weak crypto such as MD5 and SHA1
+- SSRF via dynamic outbound requests
 - Unsafe deserialization
 - Auth, session, and framework misconfigurations
 

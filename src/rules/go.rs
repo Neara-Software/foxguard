@@ -48,6 +48,37 @@ fn make_finding(
     }
 }
 
+fn make_finding_from_offsets(
+    rule_id: &str,
+    severity: Severity,
+    cwe: Option<&str>,
+    description: &str,
+    source: &str,
+    start_byte: usize,
+    end_byte: usize,
+) -> Finding {
+    let line = source[..start_byte].bytes().filter(|b| *b == b'\n').count() + 1;
+    let line_start = source[..start_byte].rfind('\n').map_or(0, |idx| idx + 1);
+    let column = source[line_start..start_byte].chars().count() + 1;
+
+    let end_line = source[..end_byte].bytes().filter(|b| *b == b'\n').count() + 1;
+    let end_line_start = source[..end_byte].rfind('\n').map_or(0, |idx| idx + 1);
+    let end_column = source[end_line_start..end_byte].chars().count() + 1;
+
+    Finding {
+        rule_id: rule_id.to_string(),
+        severity,
+        cwe: cwe.map(|s| s.to_string()),
+        description: description.to_string(),
+        file: String::new(),
+        line,
+        column,
+        end_line,
+        end_column,
+        snippet: get_source_line(source, start_byte),
+    }
+}
+
 // ─── Rule 1: no-sql-injection ───────────────────────────────────────────────
 
 pub struct NoSqlInjection;
@@ -554,6 +585,47 @@ impl Rule for NoSsrf {
                 }
             }
         });
+        findings
+    }
+}
+
+// ─── Rule 8: insecure-tls-skip-verify ──────────────────────────────────────
+
+pub struct InsecureTlsSkipVerify;
+
+impl Rule for InsecureTlsSkipVerify {
+    fn id(&self) -> &str {
+        "go/insecure-tls-skip-verify"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-295")
+    }
+    fn description(&self) -> &str {
+        "TLS certificate verification disabled with InsecureSkipVerify"
+    }
+    fn language(&self) -> Language {
+        Language::Go
+    }
+
+    fn check(&self, source: &str, _tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        let pattern = Regex::new(r"InsecureSkipVerify\s*:\s*true").unwrap();
+
+        for matched in pattern.find_iter(source) {
+            findings.push(make_finding_from_offsets(
+                self.id(),
+                self.severity(),
+                self.cwe(),
+                "InsecureSkipVerify: true disables TLS certificate verification — prefer proper CA validation",
+                source,
+                matched.start(),
+                matched.end(),
+            ));
+        }
+
         findings
     }
 }

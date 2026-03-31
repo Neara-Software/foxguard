@@ -631,6 +631,93 @@ impl Rule for NoPathTraversal {
 
 // ─── Rule 10: no-prototype-pollution ────────────────────────────────────────
 
+pub struct NoSsrf;
+
+impl Rule for NoSsrf {
+    fn id(&self) -> &str {
+        "js/no-ssrf"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-918")
+    }
+    fn description(&self) -> &str {
+        "Potential SSRF via dynamic outbound request URL"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        let request_fns = [
+            "fetch",
+            "axios",
+            "axios.get",
+            "axios.post",
+            "axios.put",
+            "axios.delete",
+            "axios.request",
+            "http.get",
+            "http.request",
+            "https.get",
+            "https.request",
+        ];
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "call_expression" {
+                return;
+            }
+
+            let Some(func) = node.child_by_field_name("function") else {
+                return;
+            };
+            let func_text = &src[func.byte_range()];
+            if !request_fns.contains(&func_text) {
+                return;
+            }
+
+            let Some(args) = node.child_by_field_name("arguments") else {
+                return;
+            };
+            let Some(first_arg) = args.named_child(0) else {
+                return;
+            };
+
+            let is_dynamic = match first_arg.kind() {
+                "string" => false,
+                "object" => {
+                    let arg_text = &src[first_arg.byte_range()];
+                    arg_text.contains("url:") && !arg_text.contains("url: \"") && !arg_text.contains("url: '")
+                }
+                "template_string" | "binary_expression" | "identifier" | "member_expression"
+                | "call_expression" | "subscript_expression" => true,
+                _ => false,
+            };
+
+            if is_dynamic {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    &format!(
+                        "{} called with dynamic URL — validate and allowlist outbound destinations to prevent SSRF",
+                        func_text
+                    ),
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}
+
+// ─── Rule 10: no-prototype-pollution ────────────────────────────────────────
+
 pub struct NoPrototypePollution;
 
 impl Rule for NoPrototypePollution {

@@ -421,6 +421,94 @@ impl Rule for NoPathTraversal {
 
 // ─── Rule 6: no-weak-crypto ────────────────────────────────────────────────
 
+pub struct NoSsrf;
+
+impl Rule for NoSsrf {
+    fn id(&self) -> &str {
+        "py/no-ssrf"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-918")
+    }
+    fn description(&self) -> &str {
+        "Potential SSRF via dynamic outbound request URL"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        let request_fns = [
+            "requests.get",
+            "requests.post",
+            "requests.put",
+            "requests.delete",
+            "requests.head",
+            "requests.patch",
+            "requests.request",
+            "urllib.request.urlopen",
+        ];
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "call" {
+                return;
+            }
+
+            let Some(func) = node.child_by_field_name("function") else {
+                return;
+            };
+            let func_text = &src[func.byte_range()];
+            if !request_fns.contains(&func_text) {
+                return;
+            }
+
+            let Some(args) = node.child_by_field_name("arguments") else {
+                return;
+            };
+
+            let url_arg = if func_text == "requests.request" {
+                args.named_child(1)
+            } else {
+                args.named_child(0)
+            };
+            let Some(url_arg) = url_arg else {
+                return;
+            };
+
+            let is_dynamic = match url_arg.kind() {
+                "string" => {
+                    let text = &src[url_arg.byte_range()];
+                    text.starts_with("f\"") || text.starts_with("f'")
+                }
+                "identifier" | "call" | "subscript" | "attribute" | "binary_operator" => true,
+                _ => false,
+            };
+
+            if is_dynamic {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    &format!(
+                        "{} called with dynamic URL — validate and allowlist outbound destinations to prevent SSRF",
+                        func_text
+                    ),
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}
+
+// ─── Rule 6: no-weak-crypto ────────────────────────────────────────────────
+
 pub struct NoWeakCrypto;
 
 impl Rule for NoWeakCrypto {

@@ -2,6 +2,7 @@ import sqlite3
 import os
 import hashlib
 import pickle
+import requests
 import yaml
 from flask import Flask, redirect, request
 
@@ -17,6 +18,9 @@ app.secret_key = "my-hardcoded-flask-secret"
 
 # py/session-cookie-secure-disabled
 SESSION_COOKIE_SECURE = False
+
+# py/no-ssrf
+requests.get(request.args["url"])
 
 # py/no-sql-injection (string concat with cursor.execute)
 def run_query(user_input):
