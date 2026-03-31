@@ -9,7 +9,7 @@ Built-ins now cover local code risks like SSRF client variants, file/path traver
 
 Use `--rules` to add external rules on top of the built-ins. Use `--no-builtins --rules ...` for an external-rules-only compatibility run.
 
-It also includes a dedicated `secrets` mode for common leaked credentials and private key material, with redacted output and baseline-safe suppression data.
+It also includes a dedicated `secrets` mode for common leaked credentials and private key material, with redacted output, binary-file skipping, and baseline-safe suppression data.
 
 Local-first workflow:
 

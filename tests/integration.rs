@@ -16,17 +16,35 @@ fn fixture_path(name: &str) -> PathBuf {
 
 fn write_secrets_fixture(dir: &Path) -> PathBuf {
     let aws = ["AKIA", "1234567890ABCDEF"].concat();
+    let aws_secret = [
+        "ABCD1234+/",
+        "wxyz5678+/",
+        "MNOP9012+/",
+        "qrst3456+/",
+    ]
+    .concat();
     let github = ["ghp_", "abcdefghijklmnopqrstuvwxyz1234567890"].concat();
+    let gitlab = ["gl", "pat-abcdefghijklmnopqrstuvwx123456"].concat();
+    let npm = ["npm_", "abcdefghijklmnopqrstuvwxyz1234567890"].concat();
     let slack = ["xoxb", "123456789012", "123456789012", "abcdefghijklmnop"].join("-");
     let stripe = ["sk", "live", "1234567890abcdefghijklmnop"].join("_");
     let private_key = ["-----BEGIN ", "PRIVATE KEY-----"].concat();
 
     let content = format!(
-        "AWS_ACCESS_KEY_ID={aws}\nGITHUB_TOKEN={github}\nSLACK_TOKEN={slack}\nSTRIPE_SECRET_KEY={stripe}\nPRIVATE_KEY_HEADER={private_key}\n"
+        "AWS_ACCESS_KEY_ID={aws}\nAWS_SECRET_ACCESS_KEY={aws_secret}\nGITHUB_TOKEN={github}\nGITLAB_TOKEN={gitlab}\nNPM_TOKEN={npm}\nSLACK_TOKEN={slack}\nSTRIPE_SECRET_KEY={stripe}\nPRIVATE_KEY_HEADER={private_key}\n"
     );
 
     let path = dir.join("secrets.txt");
     fs::write(&path, content).expect("failed to write secrets fixture");
+    path
+}
+
+fn write_binary_secrets_fixture(dir: &Path) -> PathBuf {
+    let secret = ["ghp_", "abcdefghijklmnopqrstuvwxyz1234567890"].concat();
+    let path = dir.join("binary-secrets.bin");
+    let mut bytes = b"\0BINARY\0".to_vec();
+    bytes.extend_from_slice(secret.as_bytes());
+    fs::write(&path, bytes).expect("failed to write binary secrets fixture");
     path
 }
 
@@ -473,8 +491,8 @@ fn test_secrets_mode_finds_common_credentials() {
 
     assert_eq!(
         findings.len(),
-        5,
-        "secrets fixture should yield 5 findings, got {}",
+        8,
+        "secrets fixture should yield 8 findings, got {}",
         findings.len()
     );
 
@@ -485,7 +503,10 @@ fn test_secrets_mode_finds_common_credentials() {
 
     let expected_rules = [
         "secret/aws-access-key-id",
+        "secret/aws-secret-access-key",
         "secret/github-token",
+        "secret/gitlab-token",
+        "secret/npm-token",
         "secret/slack-token",
         "secret/stripe-live-key",
         "secret/private-key",
@@ -527,6 +548,23 @@ fn test_secrets_mode_changed_scans_only_staged_files() {
             .ends_with("secrets.txt")),
         "changed secrets scan should only scan the staged secret fixture"
     );
+}
+
+#[test]
+fn test_secrets_mode_skips_binary_files() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    let path = write_binary_secrets_fixture(repo.path());
+
+    let output = foxguard_cmd()
+        .args(["secrets", path.to_str().expect("non-utf8 path"), "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard secrets");
+
+    assert!(output.status.success(), "binary file should be skipped");
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+    assert_eq!(findings.len(), 0, "binary secrets fixture should be skipped");
 }
 
 #[test]

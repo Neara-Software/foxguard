@@ -102,8 +102,8 @@ foxguard secrets --write-baseline .foxguard/secrets-baseline.json .
 foxguard secrets --baseline .foxguard/secrets-baseline.json .
 ```
 
-Current patterns include common AWS, GitHub, Slack, and Stripe tokens plus private key headers.
-Secrets findings are redacted in output, and secrets baselines store suppression fingerprints rather than raw secret values.
+Current patterns include AWS access keys and secret access keys, GitHub, GitLab, npm, Slack, and Stripe tokens plus private key headers.
+Secrets findings are redacted in output, secrets baselines store suppression fingerprints rather than raw secret values, and binary files are skipped.
 
 ## Bring your own rules
 

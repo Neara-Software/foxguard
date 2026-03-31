@@ -317,7 +317,7 @@ function timeWidth(seconds: number) {
           { icon: '.yaml', title: 'Bring your own rules', desc: 'Built-ins are the default. Add a useful Semgrep-compatible YAML subset from a file or directory when needed.' },
           { icon: '43', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including SSRF client variants, path traversal sinks, auth, session, transport, and framework-specific rules.' },
           { icon: 'base', title: 'Baseline adoption', desc: 'Accept existing findings once and focus on new ones with a baseline file.' },
-          { icon: 'secret', title: 'Secrets mode', desc: 'Scan for common leaked credentials and private key material with the dedicated secrets command.' },
+          { icon: 'secret', title: 'Secrets mode', desc: 'Scan for common leaked credentials and private key material with redacted output and binary-safe handling.' },
           { icon: 'SARIF', title: 'CI-friendly output', desc: 'Use terminal output locally or JSON and SARIF in automation.' },
         ].map((f) => (
           <div class="group bg-night-light border border-night-lighter rounded-xl p-6 hover:border-fox/20 transition-colors">
