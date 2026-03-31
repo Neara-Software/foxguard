@@ -747,7 +747,6 @@ impl Rule for NoDebugTrue {
                     }
                 }
             }
-
         });
         findings
     }

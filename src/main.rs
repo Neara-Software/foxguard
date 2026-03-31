@@ -1,13 +1,13 @@
 use clap::Parser;
 use foxguard::baseline::{load_baseline, suppress_with_baseline, write_baseline};
-use foxguard::cli::{
-    BaselineArgs, Cli, Command, InitArgs, OutputFormat, ScanArgs, SecretsArgs,
-};
+use foxguard::cli::{BaselineArgs, Cli, Command, InitArgs, OutputFormat, ScanArgs, SecretsArgs};
 use foxguard::engine::{scan_directory, scan_paths};
 use foxguard::git::changed_files;
 use foxguard::rules::semgrep_compat::load_semgrep_rules;
 use foxguard::rules::RuleRegistry;
-use foxguard::secrets::{scan_directory as scan_secrets_directory, scan_paths as scan_secrets_paths};
+use foxguard::secrets::{
+    scan_directory as scan_secrets_directory, scan_paths as scan_secrets_paths,
+};
 use std::path::{Path, PathBuf};
 
 fn main() {

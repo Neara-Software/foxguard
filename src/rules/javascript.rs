@@ -730,10 +730,16 @@ impl Rule for NoSsrf {
                 "string" => false,
                 "object" => {
                     let arg_text = &src[first_arg.byte_range()];
-                    arg_text.contains("url:") && !arg_text.contains("url: \"") && !arg_text.contains("url: '")
+                    arg_text.contains("url:")
+                        && !arg_text.contains("url: \"")
+                        && !arg_text.contains("url: '")
                 }
-                "template_string" | "binary_expression" | "identifier" | "member_expression"
-                | "call_expression" | "subscript_expression" => true,
+                "template_string"
+                | "binary_expression"
+                | "identifier"
+                | "member_expression"
+                | "call_expression"
+                | "subscript_expression" => true,
                 _ => false,
             };
 

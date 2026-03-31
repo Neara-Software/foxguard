@@ -16,13 +16,7 @@ fn fixture_path(name: &str) -> PathBuf {
 
 fn write_secrets_fixture(dir: &Path) -> PathBuf {
     let aws = ["AKIA", "1234567890ABCDEF"].concat();
-    let aws_secret = [
-        "ABCD1234+/",
-        "wxyz5678+/",
-        "MNOP9012+/",
-        "qrst3456+/",
-    ]
-    .concat();
+    let aws_secret = ["ABCD1234+/", "wxyz5678+/", "MNOP9012+/", "qrst3456+/"].concat();
     let github = ["ghp_", "abcdefghijklmnopqrstuvwxyz1234567890"].concat();
     let gitlab = ["gl", "pat-abcdefghijklmnopqrstuvwx123456"].concat();
     let npm = ["npm_", "abcdefghijklmnopqrstuvwxyz1234567890"].concat();
@@ -477,7 +471,12 @@ fn test_secrets_mode_finds_common_credentials() {
     let path = write_secrets_fixture(repo.path());
 
     let output = foxguard_cmd()
-        .args(["secrets", path.to_str().expect("non-utf8 path"), "-f", "json"])
+        .args([
+            "secrets",
+            path.to_str().expect("non-utf8 path"),
+            "-f",
+            "json",
+        ])
         .output()
         .expect("failed to execute foxguard secrets");
 
@@ -513,7 +512,11 @@ fn test_secrets_mode_finds_common_credentials() {
     ];
 
     for rule in &expected_rules {
-        assert!(rule_ids.contains(rule), "missing expected secret rule: {}", rule);
+        assert!(
+            rule_ids.contains(rule),
+            "missing expected secret rule: {}",
+            rule
+        );
     }
 }
 
@@ -556,7 +559,12 @@ fn test_secrets_mode_skips_binary_files() {
     let path = write_binary_secrets_fixture(repo.path());
 
     let output = foxguard_cmd()
-        .args(["secrets", path.to_str().expect("non-utf8 path"), "-f", "json"])
+        .args([
+            "secrets",
+            path.to_str().expect("non-utf8 path"),
+            "-f",
+            "json",
+        ])
         .output()
         .expect("failed to execute foxguard secrets");
 
@@ -564,7 +572,11 @@ fn test_secrets_mode_skips_binary_files() {
 
     let findings: Vec<serde_json::Value> =
         serde_json::from_slice(&output.stdout).expect("invalid JSON output");
-    assert_eq!(findings.len(), 0, "binary secrets fixture should be skipped");
+    assert_eq!(
+        findings.len(),
+        0,
+        "binary secrets fixture should be skipped"
+    );
 }
 
 #[test]
@@ -633,7 +645,12 @@ fn test_secrets_mode_redacts_snippets() {
     let path = write_secrets_fixture(repo.path());
 
     let output = foxguard_cmd()
-        .args(["secrets", path.to_str().expect("non-utf8 path"), "-f", "json"])
+        .args([
+            "secrets",
+            path.to_str().expect("non-utf8 path"),
+            "-f",
+            "json",
+        ])
         .output()
         .expect("failed to execute foxguard secrets");
 
