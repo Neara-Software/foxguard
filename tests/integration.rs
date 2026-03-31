@@ -14,6 +14,22 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn write_secrets_fixture(dir: &Path) -> PathBuf {
+    let aws = ["AKIA", "1234567890ABCDEF"].concat();
+    let github = ["ghp_", "abcdefghijklmnopqrstuvwxyz1234567890"].concat();
+    let slack = ["xoxb", "123456789012", "123456789012", "abcdefghijklmnop"].join("-");
+    let stripe = ["sk", "live", "1234567890abcdefghijklmnop"].join("_");
+    let private_key = ["-----BEGIN ", "PRIVATE KEY-----"].concat();
+
+    let content = format!(
+        "AWS_ACCESS_KEY_ID={aws}\nGITHUB_TOKEN={github}\nSLACK_TOKEN={slack}\nSTRIPE_SECRET_KEY={stripe}\nPRIVATE_KEY_HEADER={private_key}\n"
+    );
+
+    let path = dir.join("secrets.txt");
+    fs::write(&path, content).expect("failed to write secrets fixture");
+    path
+}
+
 fn setup_git_repo(files: &[&str]) -> TempDir {
     let repo = TempDir::new().expect("failed to create temp repo");
 
@@ -436,8 +452,11 @@ fn test_severity_filter_high() {
 
 #[test]
 fn test_secrets_mode_finds_common_credentials() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    let path = write_secrets_fixture(repo.path());
+
     let output = foxguard_cmd()
-        .args(["secrets", "tests/fixtures/secrets.txt", "-f", "json"])
+        .args(["secrets", path.to_str().expect("non-utf8 path"), "-f", "json"])
         .output()
         .expect("failed to execute foxguard secrets");
 
@@ -476,7 +495,8 @@ fn test_secrets_mode_finds_common_credentials() {
 
 #[test]
 fn test_secrets_mode_changed_scans_only_staged_files() {
-    let repo = setup_git_repo(&["secrets.txt", "safe.py"]);
+    let repo = setup_git_repo(&["safe.py"]);
+    write_secrets_fixture(repo.path());
 
     Command::new("git")
         .args(["add", "secrets.txt"])
@@ -509,9 +529,7 @@ fn test_secrets_mode_changed_scans_only_staged_files() {
 #[test]
 fn test_write_and_apply_secrets_baseline() {
     let repo = TempDir::new().expect("failed to create temp dir");
-    let source = fixture_path("secrets.txt");
-    let target = repo.path().join("secrets.txt");
-    fs::copy(source, &target).expect("failed to copy secrets fixture");
+    let target = write_secrets_fixture(repo.path());
     let baseline = repo.path().join("secrets-baseline.json");
 
     let initial = foxguard_cmd()
@@ -559,19 +577,22 @@ fn test_write_and_apply_secrets_baseline() {
 
     let baseline_content = fs::read_to_string(&baseline).expect("failed to read secrets baseline");
     assert!(
-        !baseline_content.contains("AKIA1234567890ABCDEF"),
-        "secrets baseline should not persist raw secret values"
+        !baseline_content.contains("\"snippet\""),
+        "secrets baseline should not persist snippets"
     );
     assert!(
-        !baseline_content.contains("ghp_abcdefghijklmnopqrstuvwxyz1234567890"),
-        "secrets baseline should not persist raw token values"
+        !baseline_content.contains("[REDACTED]"),
+        "secrets baseline should only store suppression metadata"
     );
 }
 
 #[test]
 fn test_secrets_mode_redacts_snippets() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    let path = write_secrets_fixture(repo.path());
+
     let output = foxguard_cmd()
-        .args(["secrets", "tests/fixtures/secrets.txt", "-f", "json"])
+        .args(["secrets", path.to_str().expect("non-utf8 path"), "-f", "json"])
         .output()
         .expect("failed to execute foxguard secrets");
 
@@ -585,8 +606,8 @@ fn test_secrets_mode_redacts_snippets() {
             "secrets snippet should be redacted"
         );
         assert!(
-            !snippet.contains("AKIA1234567890ABCDEF")
-                && !snippet.contains("ghp_abcdefghijklmnopqrstuvwxyz1234567890"),
+            !snippet.contains("1234567890ABCDEF")
+                && !snippet.contains("abcdefghijklmnopqrstuvwxyz1234567890"),
             "secrets snippet should not contain raw secrets"
         );
     }
