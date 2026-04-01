@@ -70,6 +70,15 @@ fn setup_git_repo(files: &[&str]) -> TempDir {
     repo
 }
 
+fn write_config_file(dir: &Path, relative_path: &str, content: &str) -> PathBuf {
+    let path = dir.join(relative_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("failed to create config directory");
+    }
+    fs::write(&path, content).expect("failed to write config file");
+    path
+}
+
 // ─── Vulnerable file detection ──────────────────────────────────────────────
 
 #[test]
@@ -376,6 +385,62 @@ fn test_write_and_apply_baseline() {
     let findings: Vec<serde_json::Value> =
         serde_json::from_slice(&suppressed.stdout).expect("invalid JSON output");
     assert_eq!(findings.len(), 0, "expected no findings after baseline");
+}
+
+#[test]
+fn test_scan_uses_discovered_config_baseline() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    fs::copy(
+        fixture_path("vulnerable.js"),
+        repo.path().join("vulnerable.js"),
+    )
+    .expect("failed to copy vulnerable fixture");
+
+    let baseline = repo.path().join(".foxguard").join("baseline.json");
+    fs::create_dir_all(baseline.parent().expect("missing baseline parent"))
+        .expect("failed to create baseline directory");
+
+    let initial = foxguard_cmd()
+        .current_dir(repo.path())
+        .args([
+            "vulnerable.js",
+            "-f",
+            "json",
+            "--write-baseline",
+            baseline.to_str().expect("non-utf8 path"),
+        ])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(
+        !initial.status.success(),
+        "writing the baseline should still report findings"
+    );
+
+    write_config_file(
+        repo.path(),
+        ".foxguard.yml",
+        "scan:\n  baseline: .foxguard/baseline.json\n",
+    );
+
+    let suppressed = foxguard_cmd()
+        .current_dir(repo.path())
+        .args(["vulnerable.js", "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard with config");
+
+    assert!(
+        suppressed.status.success(),
+        "configured baseline should suppress the existing findings"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&suppressed.stdout).expect("invalid JSON output");
+    assert_eq!(
+        findings.len(),
+        0,
+        "expected no findings after config baseline"
+    );
 }
 
 #[test]
@@ -782,6 +847,43 @@ fn test_secrets_mode_ignore_rule_skips_specific_patterns() {
             .iter()
             .all(|finding| finding["rule_id"].as_str() != Some("secret/github-token")),
         "ignored rule should be absent from findings"
+    );
+}
+
+#[test]
+fn test_secrets_mode_uses_explicit_config_file() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    write_secret_file(repo.path(), "fixtures/ignored.txt");
+
+    let config = write_config_file(
+        repo.path(),
+        "config/foxguard.yml",
+        "secrets:\n  exclude_paths:\n    - ../fixtures\n",
+    );
+
+    let output = foxguard_cmd()
+        .current_dir(repo.path())
+        .args([
+            "secrets",
+            "--config",
+            config.to_str().expect("non-utf8 path"),
+            ".",
+            "-f",
+            "json",
+        ])
+        .output()
+        .expect("failed to execute foxguard secrets with config");
+
+    assert!(
+        output.status.success(),
+        "configured excludes should suppress matching secret findings"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+    assert!(
+        findings.is_empty(),
+        "expected no findings after config excludes"
     );
 }
 

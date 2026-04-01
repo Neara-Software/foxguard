@@ -1,13 +1,16 @@
 use clap::{Args, Parser, Subcommand};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     Terminal,
     Json,
     Sarif,
 }
 
-#[derive(Debug, Clone, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SeverityFilter {
     Low,
     Medium,
@@ -20,6 +23,10 @@ pub struct ScanArgs {
     /// Path to scan
     #[arg(default_value = ".")]
     pub path: String,
+
+    /// Path to foxguard config file
+    #[arg(long)]
+    pub config: Option<String>,
 
     /// Output format
     #[arg(short, long, value_enum, default_value = "terminal")]
@@ -92,6 +99,10 @@ pub struct SecretsArgs {
     /// Path to scan
     #[arg(default_value = ".")]
     pub path: String,
+
+    /// Path to foxguard config file
+    #[arg(long)]
+    pub config: Option<String>,
 
     /// Output format
     #[arg(short, long, value_enum, default_value = "terminal")]

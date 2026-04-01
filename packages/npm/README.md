@@ -11,6 +11,7 @@ Use `--rules` to add external rules on top of the built-ins. Use `--no-builtins 
 
 It also includes a dedicated `secrets` mode for common leaked credentials and private key material, with redacted output, binary-file skipping, and baseline-safe suppression data.
 Secrets mode also supports path-scoped excludes and per-rule ignores for fixtures, generated files, or intentionally fake tokens.
+foxguard can also auto-discover a repo config file such as `.foxguard.yml` for shared baselines, rule paths, and secrets defaults.
 
 Local-first workflow:
 

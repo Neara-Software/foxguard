@@ -52,6 +52,7 @@ foxguard secrets --changed .
 foxguard baseline --output .foxguard/baseline.json
 foxguard init
 foxguard secrets --exclude-path fixtures --ignore-rule secret/github-token .
+foxguard --config .foxguard.yml .
 ```
 
 ```text
@@ -74,6 +75,29 @@ WARNING 2 issues found: 1 critical, 1 high, 0 medium, 0 low
 - SARIF output for code scanning and CI systems
 
 foxguard is best thought of as a fast security engine you can slot into your workflow, not as a closed rules product.
+
+## Repo config
+
+foxguard can auto-discover `./.foxguard.yml`, `./.foxguard.yaml`, `./foxguard.yml`, or `./foxguard.yaml` from the scan path upward. You can also point at an explicit file with `--config`.
+Relative paths inside the config are resolved from the config file location.
+
+Example:
+
+```yaml
+scan:
+  baseline: .foxguard/baseline.json
+  rules: ./semgrep-rules
+
+secrets:
+  baseline: .foxguard/secrets-baseline.json
+  exclude_paths:
+    - fixtures
+    - testdata
+  ignore_rules:
+    - secret/github-token
+```
+
+CLI flags still win over config values.
 
 ## Local guard workflow
 
@@ -108,6 +132,7 @@ foxguard secrets --ignore-rule secret/github-token .
 Current patterns include AWS access keys and secret access keys, GitHub, GitLab, npm, Slack, and Stripe tokens plus private key headers.
 Secrets findings are redacted in output, secrets baselines store suppression fingerprints rather than raw secret values, and binary files are skipped.
 Use `--exclude-path` for repo-relative file or directory prefixes, `--exclude-path-file` for a newline-delimited ignore list, and `--ignore-rule` when a specific secret pattern is intentionally present in test fixtures or examples.
+The same defaults can live in `foxguard.yml` or `.foxguard.yml` for local hooks and CI runs.
 
 ## Bring your own rules
 

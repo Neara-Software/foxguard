@@ -1,6 +1,7 @@
 use clap::Parser;
 use foxguard::baseline::{load_baseline, suppress_with_baseline, write_baseline};
 use foxguard::cli::{BaselineArgs, Cli, Command, InitArgs, OutputFormat, ScanArgs, SecretsArgs};
+use foxguard::config::{apply_scan_defaults, apply_secrets_defaults, load_for_scan};
 use foxguard::engine::{scan_directory, scan_paths};
 use foxguard::git::changed_files;
 use foxguard::rules::semgrep_compat::load_semgrep_rules;
@@ -21,6 +22,32 @@ fn main() {
     };
 
     std::process::exit(exit_code);
+}
+
+fn resolve_scan_args(scan: &ScanArgs) -> Result<ScanArgs, i32> {
+    let mut scan = scan.clone();
+    let config = match load_for_scan(Path::new(&scan.path), scan.config.as_deref()) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return Err(2);
+        }
+    };
+    apply_scan_defaults(&mut scan, config.as_ref());
+    Ok(scan)
+}
+
+fn resolve_secrets_args(args: &SecretsArgs) -> Result<SecretsArgs, i32> {
+    let mut args = args.clone();
+    let config = match load_for_scan(Path::new(&args.path), args.config.as_deref()) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return Err(2);
+        }
+    };
+    apply_secrets_defaults(&mut args, config.as_ref());
+    Ok(args)
 }
 
 fn build_registry(scan: &ScanArgs) -> RuleRegistry {
@@ -99,7 +126,12 @@ fn scan_findings(scan: &ScanArgs) -> Result<Vec<foxguard::Finding>, i32> {
 }
 
 fn run_scan(scan: &ScanArgs) -> i32 {
-    let mut findings = match scan_findings(scan) {
+    let scan = match resolve_scan_args(scan) {
+        Ok(scan) => scan,
+        Err(code) => return code,
+    };
+
+    let mut findings = match scan_findings(&scan) {
         Ok(findings) => findings,
         Err(code) => return code,
     };
@@ -139,7 +171,10 @@ fn run_scan(scan: &ScanArgs) -> i32 {
 }
 
 fn run_baseline(args: &BaselineArgs) -> i32 {
-    let mut scan = args.scan.clone();
+    let mut scan = match resolve_scan_args(&args.scan) {
+        Ok(scan) => scan,
+        Err(code) => return code,
+    };
     scan.write_baseline = None;
     scan.baseline = None;
 
@@ -162,6 +197,11 @@ fn run_baseline(args: &BaselineArgs) -> i32 {
 }
 
 fn run_secrets(args: &SecretsArgs) -> i32 {
+    let args = match resolve_secrets_args(args) {
+        Ok(args) => args,
+        Err(code) => return code,
+    };
+
     let scan_path = Path::new(&args.path);
     if !scan_path.exists() {
         eprintln!("Error: path '{}' does not exist", args.path);
@@ -301,6 +341,7 @@ fn run_init(args: &InitArgs) -> i32 {
         let baseline_args = BaselineArgs {
             scan: ScanArgs {
                 path: args.path.clone(),
+                config: None,
                 format: OutputFormat::Json,
                 severity: None,
                 rules: None,
@@ -319,6 +360,7 @@ fn run_init(args: &InitArgs) -> i32 {
 
         let secrets_args = SecretsArgs {
             path: args.path.clone(),
+            config: None,
             format: OutputFormat::Json,
             changed: false,
             baseline: None,

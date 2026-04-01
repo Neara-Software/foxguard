@@ -21,7 +21,7 @@ pub struct SecretScanConfig {
 
 impl SecretScanConfig {
     pub fn from_inputs(
-        root: &Path,
+        _root: &Path,
         excluded_paths: &[String],
         exclude_path_file: Option<&Path>,
         ignored_rules: &[String],
@@ -42,17 +42,8 @@ impl SecretScanConfig {
             }
         }
 
-        let base = if root.is_file() {
-            root.parent().unwrap_or_else(|| Path::new("."))
-        } else {
-            root
-        };
-
         Ok(Self {
-            excluded_paths: all_excluded_paths
-                .into_iter()
-                .map(|value| normalize_prefix(base, &value))
-                .collect(),
+            excluded_paths: all_excluded_paths.into_iter().map(PathBuf::from).collect(),
             ignored_rules: ignored_rules.iter().cloned().collect(),
         })
     }
@@ -62,10 +53,22 @@ impl SecretScanConfig {
             return false;
         }
 
-        let relative = relative_path(root, path);
+        let relative = normalize_relative_path(relative_path(root, path));
+        let absolute = path.canonicalize().ok();
+
         self.excluded_paths.iter().any(|prefix| {
-            !prefix.as_os_str().is_empty()
-                && (relative == prefix.as_path() || relative.starts_with(prefix))
+            if prefix.as_os_str().is_empty() {
+                return false;
+            }
+
+            if prefix.is_absolute() {
+                absolute
+                    .as_ref()
+                    .is_some_and(|absolute| absolute == prefix || absolute.starts_with(prefix))
+            } else {
+                let prefix = normalize_relative_path(prefix);
+                relative == prefix || relative.starts_with(&prefix)
+            }
         })
     }
 
@@ -227,26 +230,6 @@ pub fn scan_paths_with_config(
     findings
 }
 
-fn normalize_prefix(base: &Path, value: &str) -> PathBuf {
-    let trimmed = value.trim().trim_matches('/');
-    if trimmed.is_empty() {
-        return PathBuf::new();
-    }
-
-    let candidate = Path::new(trimmed);
-    let relative = if candidate.is_absolute() {
-        candidate
-            .strip_prefix(base)
-            .or_else(|_| candidate.strip_prefix("/"))
-            .unwrap_or(candidate)
-            .to_path_buf()
-    } else {
-        candidate.to_path_buf()
-    };
-
-    relative.components().collect()
-}
-
 fn relative_path<'a>(root: &'a Path, path: &'a Path) -> &'a Path {
     let base = if root.is_file() {
         root.parent().unwrap_or_else(|| Path::new("."))
@@ -254,6 +237,10 @@ fn relative_path<'a>(root: &'a Path, path: &'a Path) -> &'a Path {
         root
     };
     path.strip_prefix(base).unwrap_or(path)
+}
+
+fn normalize_relative_path(path: &Path) -> PathBuf {
+    path.components().collect()
 }
 
 fn read_scannable_text(path: &Path) -> Option<String> {
