@@ -139,10 +139,10 @@ jobs:
           fi
 
       - name: npx foxguard clean scan
-        run: npx foxguard@0.1.0 src/
+        run: npx foxguard@0.1.0 --severity high src/
 
       - name: npx foxguard SARIF output
-        run: npx foxguard@0.1.0 --format sarif src/ > /dev/null
+        run: npx foxguard@0.1.0 --severity high --format sarif src/ > /dev/null
 
   dist-cargo:
     name: Distribution (cargo install)
@@ -168,16 +168,16 @@ jobs:
           fi
 
       - name: foxguard clean scan
-        run: foxguard src/
+        run: foxguard --severity high src/
 
       - name: foxguard secrets scan
         run: foxguard secrets src/
 
       - name: foxguard SARIF output
-        run: foxguard --format sarif src/ > /dev/null
+        run: foxguard --severity high --format sarif src/ > /dev/null
 
       - name: foxguard JSON output
-        run: foxguard --format json src/ > /dev/null
+        run: foxguard --severity high --format json src/ > /dev/null
 
       - name: foxguard init (dry run)
         run: |
