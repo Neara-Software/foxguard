@@ -300,6 +300,10 @@ Benchmark outputs are written locally as `benchmarks/results-default.md` and `be
 
 For the homepage-style visual comparison, use `default` mode. For compatibility checks, use `compat`.
 
+---
+
+*Built by [Peak Twilight](https://doruk.ch) -- also building [pwnkit](https://pwnkit.com), [vibecheck](https://vibechecked.doruk.ch), [unfuck](https://unfcked.doruk.ch), [whatdiditdo](https://whatdiditdo.doruk.ch)*
+
 ## License
 
 MIT
