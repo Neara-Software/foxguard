@@ -30,9 +30,9 @@
   --color-sage-light: #10B981;
 
   /* Typography */
-  --font-heading: 'Fraunces', Georgia, serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
-  --font-body: 'DM Sans', system-ui, sans-serif;
+  --font-heading: 'Space Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-body: 'Inter', system-ui, sans-serif;
 
   /* Shadows */
   --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.08);
@@ -68,7 +68,7 @@ h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-heading);
   color: var(--color-noir-50);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 p {
@@ -161,14 +161,6 @@ code {
   text-transform: uppercase;
 }
 
-.editorial-kicker::before {
-  content: "";
-  width: 0.4rem;
-  height: 0.4rem;
-  border-radius: 50%;
-  background: var(--color-fox-light);
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
-}
 
 .hero-frame,
 .panel-editorial {

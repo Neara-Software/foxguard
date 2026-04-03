@@ -9,7 +9,14 @@ import { totalRules } from '../../data/rules';
 
     <!-- Top bar -->
     <div class="fade-up flex items-center justify-between pb-10">
-      <div class="editorial-kicker">local-first sast</div>
+      <div class="editorial-kicker">
+        <svg class="w-4 h-4 shrink-0 -ml-0.5" viewBox="0 0 64 64" fill="none">
+          <path d="M8 8L20 28L32 20L44 28L56 8L52 32L44 44L36 52H28L20 44L12 32L8 8Z" fill="#F59E0B" fill-opacity="0.2" stroke="#F59E0B" stroke-width="2.5" stroke-linejoin="round"/>
+          <circle cx="24" cy="32" r="2.5" fill="#F59E0B"/>
+          <circle cx="40" cy="32" r="2.5" fill="#F59E0B"/>
+        </svg>
+        local-first sast
+      </div>
       <nav class="hidden md:flex items-center gap-6 font-mono text-[10px] uppercase tracking-[0.12em] text-noir-600">
         <a href="#speed" class="hover:text-noir-100 transition-colors no-underline">speed</a>
         <a href="#coverage" class="hover:text-noir-100 transition-colors no-underline">coverage</a>
@@ -23,9 +30,16 @@ import { totalRules } from '../../data/rules';
 
       <!-- Left: copy -->
       <div class="fade-up fade-up-delay-1">
-        <h1 class="font-heading text-noir-50 leading-[0.92] tracking-[-0.03em] mb-6" style="font-size: clamp(3.2rem, 7.5vw, 6rem);">
-          fox<span class="text-fox-light">guard</span>
-        </h1>
+        <div class="flex items-center gap-4 mb-6">
+          <svg class="w-12 h-12 sm:w-16 sm:h-16 shrink-0" viewBox="0 0 64 64" fill="none">
+            <path d="M8 8L20 28L32 20L44 28L56 8L52 32L44 44L36 52H28L20 44L12 32L8 8Z" fill="#F59E0B" fill-opacity="0.15" stroke="#F59E0B" stroke-width="2" stroke-linejoin="round"/>
+            <circle cx="24" cy="32" r="2.5" fill="#F59E0B"/>
+            <circle cx="40" cy="32" r="2.5" fill="#F59E0B"/>
+          </svg>
+          <h1 class="font-heading text-noir-50 leading-[0.92] tracking-[-0.03em]" style="font-size: clamp(3.2rem, 7.5vw, 6rem);">
+            fox<span class="text-fox-light">guard</span>
+          </h1>
+        </div>
 
         <p class="max-w-lg text-lg text-noir-300 mb-3">
           Fast local security scanner written in Rust.
