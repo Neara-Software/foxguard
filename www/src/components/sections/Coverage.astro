@@ -1,5 +1,15 @@
 ---
 import { frameworkGroups, features, compatFeatures } from '../../data/features';
+
+const langColors: Record<string, string> = {
+  'Express / Node': '#F7DF1E',
+  'Flask / Django': '#3776AB',
+  'Gin / net/http': '#00ADD8',
+  'Rails / Ruby': '#CC342D',
+  'Spring / Java': '#ED8B00',
+  'PHP / Laravel': '#777BB4',
+  'Rust': '#DEA584',
+};
 ---
 
 <section class="py-20" id="coverage">
@@ -10,21 +20,22 @@ import { frameworkGroups, features, compatFeatures } from '../../data/features';
     <div class="text-center mb-12">
       <h2 class="font-heading text-2xl sm:text-3xl text-noir-50 mb-3">What it catches</h2>
       <p class="text-noir-500 max-w-xl mx-auto text-sm leading-relaxed">
-        Framework-aware rules that understand Express sessions, Django CSRF, Gin proxies, JWT flows, and more.
+        Framework-aware rules across 7 languages. Express sessions, Django CSRF, Rails mass assignment, Spring XXE, and more.
       </p>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-16">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 mb-16">
       {frameworkGroups.map((group) => (
-        <div class="bg-noir-900 border border-noir-800 rounded-xl p-5 transition-colors hover:border-noir-700">
-          <div class="flex items-baseline justify-between mb-3">
+        <div class="bg-noir-900 border border-noir-800 rounded-xl p-4 transition-colors hover:border-noir-700">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" style={`background: ${langColors[group.title] || '#78716C'}`}></span>
             <h3 class="text-noir-100 font-semibold text-sm">{group.title}</h3>
-            <span class="font-mono text-[10px] text-fox">{group.ruleCount} rules</span>
+            <span class="font-mono text-[9px] text-fox ml-auto">{group.ruleCount}</span>
           </div>
-          <p class="text-xs text-noir-500 leading-relaxed mb-4">{group.desc}</p>
-          <div class="flex flex-wrap gap-1.5">
+          <p class="text-[11px] text-noir-500 leading-relaxed mb-3">{group.desc}</p>
+          <div class="flex flex-wrap gap-1">
             {group.badges.map((badge) => (
-              <span class="rounded-md bg-noir-950 px-2 py-0.5 font-mono text-[10px] text-noir-600">{badge}</span>
+              <span class="rounded bg-noir-950 px-1.5 py-0.5 font-mono text-[9px] text-noir-600">{badge}</span>
             ))}
           </div>
         </div>
@@ -42,7 +53,7 @@ import { frameworkGroups, features, compatFeatures } from '../../data/features';
       ))}
     </div>
 
-    <!-- Semgrep compat (brief, not its own section) -->
+    <!-- Semgrep compat -->
     <div class="bg-noir-900 border border-noir-800 rounded-xl p-6">
       <div class="flex flex-col sm:flex-row sm:items-start gap-6">
         <div class="sm:flex-1">

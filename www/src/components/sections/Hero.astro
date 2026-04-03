@@ -1,7 +1,19 @@
 ---
 import TerminalDemo from '../ui/TerminalDemo.astro';
-import CopyButton from '../ui/CopyButton.astro';
-import { totalRules } from '../../data/rules';
+import { totalRules, ruleGroups } from '../../data/rules';
+
+const langCount = ruleGroups.length;
+
+const languages = [
+  { name: 'JavaScript', short: 'JS', color: '#F7DF1E' },
+  { name: 'TypeScript', short: 'TS', color: '#3178C6' },
+  { name: 'Python', short: 'PY', color: '#3776AB' },
+  { name: 'Go', short: 'GO', color: '#00ADD8' },
+  { name: 'Ruby', short: 'RB', color: '#CC342D' },
+  { name: 'Java', short: 'JA', color: '#ED8B00' },
+  { name: 'PHP', short: 'PHP', color: '#777BB4' },
+  { name: 'Rust', short: 'RS', color: '#DEA584' },
+];
 ---
 
 <section class="relative pt-10 pb-16 sm:pt-14 sm:pb-24">
@@ -44,9 +56,19 @@ import { totalRules } from '../../data/rules';
         <p class="max-w-lg text-lg text-noir-300 mb-3">
           Fast local security scanner written in Rust.
         </p>
-        <p class="max-w-lg text-base text-noir-500 leading-relaxed mb-8">
-          {totalRules} built-in rules for JS/TS, Python, and Go. Secrets scanning. Baselines. Semgrep-compatible YAML. Single binary. No network calls.
+        <p class="max-w-lg text-base text-noir-500 leading-relaxed mb-6">
+          {totalRules} built-in rules across {langCount} languages. Secrets scanning. Baselines. Semgrep-compatible YAML. Single binary.
         </p>
+
+        <!-- Language badges -->
+        <div class="flex flex-wrap gap-2 mb-8">
+          {languages.map((lang) => (
+            <div class="flex items-center gap-1.5 rounded-md bg-noir-900 border border-noir-800 px-2.5 py-1.5 transition-colors hover:border-noir-700">
+              <span class="w-2 h-2 rounded-full shrink-0" style={`background: ${lang.color}`}></span>
+              <span class="font-mono text-[10px] text-noir-400 tracking-wide">{lang.name}</span>
+            </div>
+          ))}
+        </div>
 
         <!-- CTA -->
         <div class="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-10">
@@ -78,7 +100,7 @@ import { totalRules } from '../../data/rules';
           </div>
           <div class="w-px h-4 bg-noir-800"></div>
           <div>
-            <span class="text-noir-100 text-lg font-heading">3</span>
+            <span class="text-noir-100 text-lg font-heading">{langCount}</span>
             <span class="text-noir-600 ml-1.5">languages</span>
           </div>
           <div class="w-px h-4 bg-noir-800"></div>
