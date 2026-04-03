@@ -1,6 +1,7 @@
 use crate::engine::parser::parse_file;
 use crate::rules::Rule;
 use crate::{Finding, Language, Severity};
+use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -17,10 +18,14 @@ pub struct SemgrepRuleYaml {
     pub id: String,
     #[serde(default)]
     pub pattern: Option<String>,
+    #[serde(default, rename = "pattern-regex")]
+    pub pattern_regex: Option<String>,
     #[serde(default, rename = "pattern-either")]
     pub pattern_either: Option<Vec<PatternEntry>>,
     #[serde(default, rename = "pattern-not")]
     pub pattern_not: Option<String>,
+    #[serde(default, rename = "pattern-not-regex")]
+    pub pattern_not_regex: Option<String>,
     #[serde(default, rename = "pattern-inside")]
     pub pattern_inside: Option<String>,
     #[serde(default)]
@@ -34,15 +39,22 @@ pub struct SemgrepRuleYaml {
 
 #[derive(Debug, Deserialize)]
 pub struct PatternEntry {
-    pub pattern: String,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default, rename = "pattern-regex")]
+    pub pattern_regex: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct PatternClause {
     #[serde(default)]
     pub pattern: Option<String>,
+    #[serde(default, rename = "pattern-regex")]
+    pub pattern_regex: Option<String>,
     #[serde(default, rename = "pattern-not")]
     pub pattern_not: Option<String>,
+    #[serde(default, rename = "pattern-not-regex")]
+    pub pattern_not_regex: Option<String>,
     #[serde(default, rename = "pattern-inside")]
     pub pattern_inside: Option<String>,
     #[serde(default, rename = "pattern-either")]
@@ -86,14 +98,22 @@ pub struct SemgrepRule {
 pub enum PatternMatcher {
     /// Single pattern
     Single(String),
+    /// Regex match against source text
+    Regex(Regex),
     /// Match any of these patterns (OR)
-    Either(Vec<String>),
+    Either(Vec<PatternMatcher>),
     /// Combine multiple clauses (AND): positives must all match, negatives must not
     Combined {
         positives: Vec<PatternMatcher>,
-        negatives: Vec<String>,
+        negatives: Vec<NegativeMatcher>,
         inside: Option<String>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum NegativeMatcher {
+    Pattern(String),
+    Regex(Regex),
 }
 
 impl Rule for SemgrepRule {
@@ -121,18 +141,17 @@ impl Rule for SemgrepRule {
         let matches = match_pattern_in_tree(&self.matcher, root, source, self.lang);
 
         for matched_node_range in matches {
-            let (line, col, end_line, end_col, snippet) = matched_node_range;
             findings.push(Finding {
                 rule_id: self.id.clone(),
                 severity: self.severity,
                 cwe: self.cwe.clone(),
                 description: self.message.clone(),
                 file: String::new(),
-                line,
-                column: col,
-                end_line,
-                end_column: end_col,
-                snippet,
+                line: matched_node_range.line,
+                column: matched_node_range.column,
+                end_line: matched_node_range.end_line,
+                end_column: matched_node_range.end_column,
+                snippet: matched_node_range.snippet,
             });
         }
 
@@ -142,7 +161,18 @@ impl Rule for SemgrepRule {
 
 // ─── Pattern Matching Engine ────────────────────────────────────────────────
 
-type MatchResult = Vec<(usize, usize, usize, usize, String)>;
+#[derive(Debug, Clone)]
+struct MatchRange {
+    start_byte: usize,
+    end_byte: usize,
+    line: usize,
+    column: usize,
+    end_line: usize,
+    end_column: usize,
+    snippet: String,
+}
+
+type MatchResult = Vec<MatchRange>;
 
 fn match_pattern_in_tree(
     matcher: &PatternMatcher,
@@ -152,14 +182,14 @@ fn match_pattern_in_tree(
 ) -> MatchResult {
     match matcher {
         PatternMatcher::Single(pat) => match_single_pattern(pat, root, source, lang),
-        PatternMatcher::Either(pats) => {
+        PatternMatcher::Regex(regex) => match_regex_pattern(regex, source),
+        PatternMatcher::Either(matchers) => {
             let mut results = Vec::new();
-            for pat in pats {
-                results.extend(match_single_pattern(pat, root, source, lang));
+            for matcher in matchers {
+                results.extend(match_pattern_in_tree(matcher, root, source, lang));
             }
-            // Deduplicate by line
-            results.sort_by_key(|r| (r.0, r.1));
-            results.dedup_by_key(|r| (r.0, r.1));
+            results.sort_by_key(|r| (r.start_byte, r.end_byte));
+            results.dedup_by_key(|r| (r.start_byte, r.end_byte));
             results
         }
         PatternMatcher::Combined {
@@ -172,23 +202,22 @@ fn match_pattern_in_tree(
                 let inside_matches = match_single_pattern(inside_pat, root, source, lang);
                 inside_matches
                     .iter()
-                    .map(|m| (m.0, m.1, m.2, m.3))
+                    .map(|m| (m.start_byte, m.end_byte))
                     .collect::<Vec<_>>()
             } else {
                 vec![]
             };
 
             // Find all positive matches
-            type Match = (usize, usize, usize, usize, String);
-            let mut candidates: Option<Vec<Match>> = None;
+            let mut candidates: Option<Vec<MatchRange>> = None;
             for pos in positives {
                 let matches = match_pattern_in_tree(pos, root, source, lang);
                 candidates = Some(match candidates {
                     None => matches,
                     Some(prev) => {
-                        // Intersection: keep only matches that appear at same locations
+                        // Intersection: keep only matches that overlap in source.
                         prev.into_iter()
-                            .filter(|p| matches.iter().any(|m| m.0 == p.0 && m.1 == p.1))
+                            .filter(|p| matches.iter().any(|m| ranges_overlap(p, m)))
                             .collect()
                     }
                 });
@@ -198,13 +227,17 @@ fn match_pattern_in_tree(
 
             // Filter out negative matches
             for neg in negatives {
-                let neg_matches = match_single_pattern(neg, root, source, lang);
-                results.retain(|r| !neg_matches.iter().any(|n| n.0 == r.0 && n.1 == r.1));
+                let neg_matches = match_negative_pattern(neg, root, source, lang);
+                results.retain(|r| !neg_matches.iter().any(|n| ranges_overlap(r, n)));
             }
 
             // If inside constraint, filter to only matches within those ranges
             if !search_roots.is_empty() {
-                results.retain(|r| search_roots.iter().any(|sr| r.0 >= sr.0 && r.2 <= sr.2));
+                results.retain(|r| {
+                    search_roots
+                        .iter()
+                        .any(|(start, end)| r.start_byte >= *start && r.end_byte <= *end)
+                });
             }
 
             results
@@ -240,6 +273,25 @@ fn match_single_pattern(
     walk_and_match(root, source, pat_node, pattern, &mut results);
 
     results
+}
+
+fn match_regex_pattern(regex: &Regex, source: &str) -> MatchResult {
+    regex
+        .find_iter(source)
+        .map(|matched| {
+            let (line, column) = byte_offset_to_position(source, matched.start());
+            let (end_line, end_column) = byte_offset_to_position(source, matched.end());
+            MatchRange {
+                start_byte: matched.start(),
+                end_byte: matched.end(),
+                line,
+                column,
+                end_line,
+                end_column,
+                snippet: get_source_line(source, matched.start()),
+            }
+        })
+        .collect()
 }
 
 /// Skip wrapper nodes (module, program, expression_statement) to get the real pattern.
@@ -281,14 +333,15 @@ fn walk_and_match(
     if match_node(node, source, pat_node, pat_source, &mut bindings) {
         let start = node.start_position();
         let end = node.end_position();
-        let snippet = get_source_line(source, node.start_byte());
-        results.push((
-            start.row + 1,
-            start.column + 1,
-            end.row + 1,
-            end.column + 1,
-            snippet,
-        ));
+        results.push(MatchRange {
+            start_byte: node.start_byte(),
+            end_byte: node.end_byte(),
+            line: start.row + 1,
+            column: start.column + 1,
+            end_line: end.row + 1,
+            end_column: end.column + 1,
+            snippet: get_source_line(source, node.start_byte()),
+        });
         // Don't recurse into children of a matched node to avoid duplicates
         return;
     }
@@ -525,6 +578,30 @@ fn get_source_line(source: &str, byte_offset: usize) -> String {
     source[start..end].to_string()
 }
 
+fn byte_offset_to_position(source: &str, byte_offset: usize) -> (usize, usize) {
+    let prefix = &source[..byte_offset];
+    let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
+    let line_start = prefix.rfind('\n').map_or(0, |pos| pos + 1);
+    let column = byte_offset - line_start + 1;
+    (line, column)
+}
+
+fn ranges_overlap(left: &MatchRange, right: &MatchRange) -> bool {
+    left.start_byte < right.end_byte && right.start_byte < left.end_byte
+}
+
+fn match_negative_pattern(
+    negative: &NegativeMatcher,
+    root: tree_sitter::Node,
+    source: &str,
+    lang: Language,
+) -> MatchResult {
+    match negative {
+        NegativeMatcher::Pattern(pattern) => match_single_pattern(pattern, root, source, lang),
+        NegativeMatcher::Regex(regex) => match_regex_pattern(regex, source),
+    }
+}
+
 // ─── File Loading ───────────────────────────────────────────────────────────
 
 fn map_severity(s: &SemgrepSeverity) -> Severity {
@@ -544,7 +621,7 @@ fn map_language(lang_str: &str) -> Option<Language> {
     }
 }
 
-fn build_matcher(yaml: &SemgrepRuleYaml) -> PatternMatcher {
+fn build_matcher(yaml: &SemgrepRuleYaml) -> Result<PatternMatcher, String> {
     // Combined patterns (AND)
     if let Some(ref clauses) = yaml.patterns {
         let mut positives = Vec::new();
@@ -555,45 +632,83 @@ fn build_matcher(yaml: &SemgrepRuleYaml) -> PatternMatcher {
             if let Some(ref p) = clause.pattern {
                 positives.push(PatternMatcher::Single(p.clone()));
             }
+            if let Some(ref regex) = clause.pattern_regex {
+                positives.push(PatternMatcher::Regex(compile_regex(regex)?));
+            }
             if let Some(ref pn) = clause.pattern_not {
-                negatives.push(pn.clone());
+                negatives.push(NegativeMatcher::Pattern(pn.clone()));
+            }
+            if let Some(ref regex) = clause.pattern_not_regex {
+                negatives.push(NegativeMatcher::Regex(compile_regex(regex)?));
             }
             if let Some(ref pi) = clause.pattern_inside {
                 inside = Some(pi.clone());
             }
             if let Some(ref pe) = clause.pattern_either {
-                let pats: Vec<String> = pe.iter().map(|e| e.pattern.clone()).collect();
-                positives.push(PatternMatcher::Either(pats));
+                let matchers = build_either_matchers(pe)?;
+                positives.push(PatternMatcher::Either(matchers));
             }
         }
 
-        return PatternMatcher::Combined {
+        return Ok(PatternMatcher::Combined {
             positives,
             negatives,
             inside,
-        };
+        });
     }
 
-    // pattern-either (OR)
-    if let Some(ref either) = yaml.pattern_either {
-        let pats: Vec<String> = either.iter().map(|e| e.pattern.clone()).collect();
-        return PatternMatcher::Either(pats);
-    }
+    let mut positives = Vec::new();
+    let mut negatives = Vec::new();
 
-    // Single pattern (may have pattern-not / pattern-inside at top level)
     if let Some(ref pat) = yaml.pattern {
-        if yaml.pattern_not.is_some() || yaml.pattern_inside.is_some() {
-            return PatternMatcher::Combined {
-                positives: vec![PatternMatcher::Single(pat.clone())],
-                negatives: yaml.pattern_not.iter().cloned().collect(),
-                inside: yaml.pattern_inside.clone(),
-            };
-        }
-        return PatternMatcher::Single(pat.clone());
+        positives.push(PatternMatcher::Single(pat.clone()));
+    }
+    if let Some(ref regex) = yaml.pattern_regex {
+        positives.push(PatternMatcher::Regex(compile_regex(regex)?));
+    }
+    if let Some(ref either) = yaml.pattern_either {
+        positives.push(PatternMatcher::Either(build_either_matchers(either)?));
+    }
+    if let Some(ref pat) = yaml.pattern_not {
+        negatives.push(NegativeMatcher::Pattern(pat.clone()));
+    }
+    if let Some(ref regex) = yaml.pattern_not_regex {
+        negatives.push(NegativeMatcher::Regex(compile_regex(regex)?));
+    }
+
+    if positives.len() == 1 && negatives.is_empty() && yaml.pattern_inside.is_none() {
+        return Ok(positives.into_iter().next().unwrap());
+    }
+
+    if !positives.is_empty() {
+        return Ok(PatternMatcher::Combined {
+            positives,
+            negatives,
+            inside: yaml.pattern_inside.clone(),
+        });
     }
 
     // Fallback: empty matcher that matches nothing
-    PatternMatcher::Single(String::new())
+    Ok(PatternMatcher::Either(Vec::new()))
+}
+
+fn build_either_matchers(entries: &[PatternEntry]) -> Result<Vec<PatternMatcher>, String> {
+    let mut matchers = Vec::new();
+
+    for entry in entries {
+        if let Some(ref pattern) = entry.pattern {
+            matchers.push(PatternMatcher::Single(pattern.clone()));
+        }
+        if let Some(ref regex) = entry.pattern_regex {
+            matchers.push(PatternMatcher::Regex(compile_regex(regex)?));
+        }
+    }
+
+    Ok(matchers)
+}
+
+fn compile_regex(pattern: &str) -> Result<Regex, String> {
+    Regex::new(pattern).map_err(|e| format!("Invalid pattern-regex '{}': {}", pattern, e))
 }
 
 fn extract_cwe(yaml: &SemgrepRuleYaml) -> Option<String> {
@@ -618,7 +733,7 @@ pub fn parse_semgrep_file(path: &Path) -> Result<Vec<Box<dyn Rule>>, String> {
     for yaml_rule in semgrep_file.rules {
         let cwe = extract_cwe(&yaml_rule);
         let severity = map_severity(&yaml_rule.severity);
-        let matcher = build_matcher(&yaml_rule);
+        let matcher = build_matcher(&yaml_rule)?;
 
         let mut mapped_languages = Vec::new();
         for lang_str in &yaml_rule.languages {
@@ -802,6 +917,48 @@ rules:
         let rules = parse_semgrep_file(f.path()).unwrap();
 
         let source = "query = \"SELECT \" + user_input\nsafe = 1 + 2\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 1);
+    }
+
+    #[test]
+    fn test_match_pattern_regex() {
+        let yaml = r#"
+rules:
+  - id: regex-secret
+    pattern-regex: "(?m)^SECRET_KEY\\s*="
+    message: Regex secret
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "password = \"supersecret\"\nSECRET_KEY = \"django-secret\"\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 2);
+    }
+
+    #[test]
+    fn test_pattern_not_regex_filters_matches() {
+        let yaml = r#"
+rules:
+  - id: password-assign
+    patterns:
+      - pattern-regex: "(?m)^.*password.*="
+      - pattern-not-regex: "not_password"
+    message: Password assignment
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "password = \"supersecret\"\nnot_password = \"safe\"\n";
         let tree = parse_file(source, Language::Python).unwrap();
         let findings = rules[0].check(source, &tree);
         assert_eq!(findings.len(), 1);

@@ -44,8 +44,10 @@ Top-level structure:
 Pattern operators:
 
 - `pattern`
+- `pattern-regex`
 - `pattern-either`
 - `pattern-not`
+- `pattern-not-regex`
 - `pattern-inside`
 - `patterns`
 

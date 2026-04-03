@@ -1,7 +1,9 @@
 use foxguard::engine::parser::parse_file;
 use foxguard::rules::semgrep_compat::{load_semgrep_rules, parse_semgrep_file};
 use foxguard::Language;
+use std::io::Write;
 use std::path::Path;
+use tempfile::NamedTempFile;
 
 const RULES_DIR: &str = "tests/semgrep_rules";
 const FIXTURE: &str = "tests/fixtures/vulnerable.py";
@@ -87,4 +89,54 @@ fn test_semgrep_rule_metadata() {
     assert_eq!(rule.id(), "semgrep/hardcoded-secret");
     assert_eq!(rule.cwe(), Some("CWE-798"));
     assert_eq!(rule.language(), Language::Python);
+}
+
+#[test]
+fn test_pattern_regex_support_on_fixture() {
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(
+        br#"
+rules:
+  - id: regex-secret-key
+    pattern-regex: '(?m)^SECRET_KEY\s*='
+    message: SECRET_KEY assigned in source
+    severity: ERROR
+    languages: [python]
+"#,
+    )
+    .unwrap();
+
+    let rules = parse_semgrep_file(file.path()).unwrap();
+    let source = std::fs::read_to_string(FIXTURE).unwrap();
+    let tree = parse_file(&source, Language::Python).unwrap();
+    let findings = rules[0].check(&source, &tree);
+
+    assert_eq!(findings.len(), 1, "expected one regex-based finding");
+    assert!(findings[0].snippet.contains("SECRET_KEY"));
+}
+
+#[test]
+fn test_mixed_ast_and_regex_patterns() {
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(
+        br#"
+rules:
+  - id: eval-regex-overlap
+    patterns:
+      - pattern: eval(...)
+      - pattern-regex: "eval"
+    message: eval usage
+    severity: ERROR
+    languages: [python]
+"#,
+    )
+    .unwrap();
+
+    let rules = parse_semgrep_file(file.path()).unwrap();
+    let source = std::fs::read_to_string(FIXTURE).unwrap();
+    let tree = parse_file(&source, Language::Python).unwrap();
+    let findings = rules[0].check(&source, &tree);
+
+    assert_eq!(findings.len(), 1, "expected AST+regex rule to match eval()");
+    assert!(findings[0].snippet.contains("eval"));
 }
