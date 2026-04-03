@@ -293,15 +293,24 @@ fn run_init(args: &InitArgs) -> i32 {
         }
     }
 
-    let hook_contents = if args.no_baseline {
-        "#!/usr/bin/env sh\nset -eu\nfoxguard --changed\nfoxguard secrets --changed\n".to_string()
-    } else {
-        format!(
-            "#!/usr/bin/env sh\nset -eu\nfoxguard --changed --baseline \"{}\"\nfoxguard secrets --changed --baseline \"{}\"\n",
-            args.baseline,
-            args.secrets_baseline
-        )
+    let config_path = repo_root.join(&args.config_path);
+    let config_created = match ensure_init_config(args, &config_path) {
+        Ok(created) => created,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 2;
+        }
     };
+
+    let config = match load_for_scan(repo_root, Some(config_path.to_string_lossy().as_ref())) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 2;
+        }
+    };
+
+    let hook_contents = build_init_hook(args, config.as_ref(), config_created);
 
     if let Err(e) = std::fs::write(&hook_path, hook_contents) {
         eprintln!(
@@ -376,6 +385,63 @@ fn run_init(args: &InitArgs) -> i32 {
         }
     }
 
+    if config_created {
+        eprintln!("Wrote starter config to {}", config_path.display());
+    }
     eprintln!("Installed pre-commit hook at {}", hook_path.display());
     0
+}
+
+fn ensure_init_config(args: &InitArgs, config_path: &Path) -> Result<bool, String> {
+    if config_path.exists() {
+        return Ok(false);
+    }
+
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "failed to create config directory '{}': {}",
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    let contents = if args.no_baseline {
+        "scan: {}\nsecrets: {}\n".to_string()
+    } else {
+        format!(
+            "scan:\n  baseline: {}\n\nsecrets:\n  baseline: {}\n",
+            args.baseline, args.secrets_baseline
+        )
+    };
+
+    std::fs::write(config_path, contents)
+        .map_err(|e| format!("failed to write config '{}': {}", config_path.display(), e))?;
+
+    Ok(true)
+}
+
+fn build_init_hook(
+    args: &InitArgs,
+    config: Option<&foxguard::config::FoxguardConfig>,
+    config_created: bool,
+) -> String {
+    let uses_config_baselines = args.no_baseline
+        || config_created
+        || config
+            .map(|config| config.scan.baseline.is_some() && config.secrets.baseline.is_some())
+            .unwrap_or(false);
+
+    if uses_config_baselines {
+        format!(
+            "#!/usr/bin/env sh\nset -eu\nfoxguard --config \"{}\" --changed\nfoxguard secrets --config \"{}\" --changed\n",
+            args.config_path, args.config_path
+        )
+    } else {
+        format!(
+            "#!/usr/bin/env sh\nset -eu\nfoxguard --config \"{}\" --changed --baseline \"{}\"\nfoxguard secrets --config \"{}\" --changed --baseline \"{}\"\n",
+            args.config_path, args.baseline, args.config_path, args.secrets_baseline
+        )
+    }
 }

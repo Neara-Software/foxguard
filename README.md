@@ -107,12 +107,13 @@ Install foxguard as a repo-local guard:
 foxguard init
 ```
 
-That installs a `pre-commit` hook that runs code scanning and secrets scanning on changed files and suppresses already accepted findings from `.foxguard/baseline.json` and `.foxguard/secrets-baseline.json`.
+That installs a `pre-commit` hook and writes a starter `.foxguard.yml` when one does not already exist. By default, the generated config points at `.foxguard/baseline.json` and `.foxguard/secrets-baseline.json`, so the hook can stay on the clean `--config ... --changed` path.
 
 Useful commands:
 
 - `foxguard --changed .`
 - `foxguard secrets --changed .`
+- `foxguard --config .foxguard.yml .`
 - `foxguard baseline --output .foxguard/baseline.json`
 - `foxguard --baseline .foxguard/baseline.json .`
 

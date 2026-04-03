@@ -315,7 +315,7 @@ function timeWidth(seconds: number) {
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { icon: '< 60ms', title: 'Single binary, local-first', desc: 'No JVM, no Python runtime, no network calls. Fast enough for edit-save-commit loops, hooks, and scripts.' },
-          { icon: 'hook', title: 'Pre-commit ready', desc: 'Install a repo-local hook with foxguard init and scan changed files before commit.' },
+          { icon: 'hook', title: 'Pre-commit ready', desc: 'Install a repo-local hook with foxguard init and get a starter .foxguard.yml for changed-file scans.' },
           { icon: '.yaml', title: 'Bring your own rules', desc: 'Built-ins are the default. Add a useful Semgrep-compatible YAML subset from a file or directory when needed.' },
           { icon: '43', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including SSRF client variants, path traversal sinks, auth, session, transport, and framework-specific rules.' },
           { icon: 'base', title: 'Baseline adoption', desc: 'Accept existing findings once and focus on new ones with a baseline file.' },

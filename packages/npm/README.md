@@ -22,6 +22,8 @@ npx foxguard baseline --output .foxguard/baseline.json
 npx foxguard init
 ```
 
+`foxguard init` also writes a starter `.foxguard.yml` when the repo does not already have one.
+
 ## Usage
 
 ```sh

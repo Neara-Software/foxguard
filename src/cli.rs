@@ -63,6 +63,10 @@ pub struct InitArgs {
     #[arg(long, default_value = ".")]
     pub path: String,
 
+    /// Config file path relative to the repo
+    #[arg(long, default_value = ".foxguard.yml")]
+    pub config_path: String,
+
     /// Hook file path relative to the repo
     #[arg(long, default_value = ".git/hooks/pre-commit")]
     pub hook_path: String,

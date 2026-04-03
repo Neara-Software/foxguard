@@ -498,12 +498,71 @@ fn test_init_installs_hook_and_baseline() {
         repo.path().join(".foxguard/secrets-baseline.json").exists(),
         "secrets baseline should be created by default"
     );
+    assert!(
+        repo.path().join(".foxguard.yml").exists(),
+        "starter config should be created by default"
+    );
 
     let hook = fs::read_to_string(repo.path().join(".git/hooks/pre-commit"))
         .expect("failed to read pre-commit hook");
     assert!(
-        hook.contains("foxguard secrets --changed"),
+        hook.contains("foxguard --config \".foxguard.yml\" --changed"),
+        "hook should use the generated config"
+    );
+    assert!(
+        hook.contains("foxguard secrets --config \".foxguard.yml\" --changed"),
         "hook should run the secrets scanner"
+    );
+
+    let config = fs::read_to_string(repo.path().join(".foxguard.yml"))
+        .expect("failed to read generated config");
+    assert!(
+        config.contains("scan:\n  baseline: .foxguard/baseline.json"),
+        "generated config should include the code baseline"
+    );
+    assert!(
+        config.contains("secrets:\n  baseline: .foxguard/secrets-baseline.json"),
+        "generated config should include the secrets baseline"
+    );
+}
+
+#[test]
+fn test_init_preserves_existing_config_and_keeps_baseline_flags_when_needed() {
+    let repo = setup_git_repo(&["vulnerable.js"]);
+    write_config_file(
+        repo.path(),
+        ".foxguard.yml",
+        "secrets:\n  exclude_paths:\n    - fixtures\n",
+    );
+
+    let output = foxguard_cmd()
+        .args(["init", "--path", ".", "--force"])
+        .current_dir(repo.path())
+        .output()
+        .expect("failed to execute foxguard init");
+
+    assert!(output.status.success(), "init should succeed");
+
+    let hook = fs::read_to_string(repo.path().join(".git/hooks/pre-commit"))
+        .expect("failed to read pre-commit hook");
+    assert!(
+        hook.contains("--config \".foxguard.yml\""),
+        "hook should still use the existing config"
+    );
+    assert!(
+        hook.contains("--baseline \".foxguard/baseline.json\""),
+        "hook should keep explicit code baseline flags when existing config lacks them"
+    );
+    assert!(
+        hook.contains("--baseline \".foxguard/secrets-baseline.json\""),
+        "hook should keep explicit secrets baseline flags when existing config lacks them"
+    );
+
+    let config = fs::read_to_string(repo.path().join(".foxguard.yml"))
+        .expect("failed to read preserved config");
+    assert!(
+        config.contains("exclude_paths:\n    - fixtures"),
+        "existing config should be preserved"
     );
 }
 
