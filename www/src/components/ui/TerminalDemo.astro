@@ -1,7 +1,7 @@
 ---
 /**
  * Fake terminal output showing foxguard in action.
- * This is the hero visual — it sells the tool.
+ * Shows findings across multiple languages.
  */
 ---
 
@@ -14,38 +14,51 @@
   </div>
   <div class="p-4 sm:p-5 font-mono text-[11px] sm:text-[12px] leading-[1.9] text-left">
     <div><span class="text-fox-light">$</span> <span class="text-noir-100">foxguard .</span></div>
-    <div class="text-noir-600">Scanning 1,247 files...</div>
-    <div class="h-3"></div>
+    <div class="text-noir-600">Scanning 2,814 files...</div>
+    <div class="h-2.5"></div>
 
-    <div><span class="text-blue-400/90">src/auth/login.js</span><span class="text-noir-600">:14:5</span></div>
+    <div><span class="text-[#F7DF1E]/70">src/auth/login.js</span><span class="text-noir-600">:14:5</span></div>
     <div class="pl-4">
       <span class="text-[#ef4444] font-semibold text-[10px] uppercase tracking-wide">critical</span>
       <span class="text-noir-300 ml-1.5">js/no-sql-injection</span>
       <span class="text-noir-600 ml-1.5">CWE-89</span>
     </div>
-    <div class="pl-4 text-noir-600">SQL query built with template literal interpolation</div>
-    <div class="h-3"></div>
+    <div class="h-2.5"></div>
 
-    <div><span class="text-blue-400/90">src/utils/config.py</span><span class="text-noir-600">:7:1</span></div>
+    <div><span class="text-[#3776AB]/70">app/views.py</span><span class="text-noir-600">:42:1</span></div>
     <div class="pl-4">
       <span class="text-[#f97316] font-semibold text-[10px] uppercase tracking-wide">high</span>
       <span class="text-noir-300 ml-1.5">py/no-hardcoded-secret</span>
       <span class="text-noir-600 ml-1.5">CWE-798</span>
     </div>
-    <div class="pl-4 text-noir-600">Hardcoded secret in 'api_key'</div>
-    <div class="h-3"></div>
+    <div class="h-2.5"></div>
 
-    <div><span class="text-blue-400/90">cmd/server.go</span><span class="text-noir-600">:42:3</span></div>
+    <div><span class="text-[#CC342D]/70">app/controllers/users.rb</span><span class="text-noir-600">:23:5</span></div>
+    <div class="pl-4">
+      <span class="text-[#ef4444] font-semibold text-[10px] uppercase tracking-wide">critical</span>
+      <span class="text-noir-300 ml-1.5">rb/no-sql-injection</span>
+      <span class="text-noir-600 ml-1.5">CWE-89</span>
+    </div>
+    <div class="h-2.5"></div>
+
+    <div><span class="text-[#ED8B00]/70">UserService.java</span><span class="text-noir-600">:67:12</span></div>
+    <div class="pl-4">
+      <span class="text-[#f97316] font-semibold text-[10px] uppercase tracking-wide">high</span>
+      <span class="text-noir-300 ml-1.5">java/no-xxe</span>
+      <span class="text-noir-600 ml-1.5">CWE-611</span>
+    </div>
+    <div class="h-2.5"></div>
+
+    <div><span class="text-[#00ADD8]/70">cmd/server.go</span><span class="text-noir-600">:31:3</span></div>
     <div class="pl-4">
       <span class="text-[#f97316] font-semibold text-[10px] uppercase tracking-wide">high</span>
       <span class="text-noir-300 ml-1.5">go/no-ssrf</span>
       <span class="text-noir-600 ml-1.5">CWE-918</span>
     </div>
-    <div class="pl-4 text-noir-600">Potential SSRF via http.Get with variable URL</div>
-    <div class="h-3"></div>
+    <div class="h-2.5"></div>
 
     <div class="border-t border-noir-800 pt-3">
-      Found <span class="text-fox-light font-semibold">3 issues</span> in <span class="text-fox-light font-semibold">1,247 files</span> <span class="text-noir-600">(0.84s)</span>
+      Found <span class="text-fox-light font-semibold">5 issues</span> in <span class="text-fox-light font-semibold">2,814 files</span> <span class="text-noir-600">(0.92s)</span>
     </div>
   </div>
 </div>
