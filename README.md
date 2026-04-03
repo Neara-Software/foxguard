@@ -187,13 +187,104 @@ Framework-oriented highlights:
 - Flask and Django apps: hardcoded secret keys, debug mode, session cookie flags, CSRF cookie flags, `@csrf_exempt`, Flask-WTF CSRF enforcement, `ALLOWED_HOSTS`, and HTTPS redirect settings
 - Gin and net/http services: trusted proxy config, request timeouts, outbound request misuse, and TLS verification bypass
 
-## GitHub Action
+## CI Integration
+
+### GitHub Actions
+
+The fastest way to add foxguard to CI. Scans your code, uploads SARIF to GitHub Code Scanning, and fails the check if issues are found.
 
 ```yaml
-- uses: peaktwilight/foxguard/action@v1
-  with:
-    path: .
-    severity: medium
+name: Security
+on: [push, pull_request]
+
+jobs:
+  foxguard:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # needed for SARIF upload
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: peaktwilight/foxguard/action@v0.1.0
+        with:
+          path: .
+          severity: medium          # low | medium | high | critical
+          format: sarif             # terminal | json | sarif
+          fail-on-findings: "true"  # fail the check if issues exist
+          upload-sarif: "true"      # push results to Code Scanning tab
+```
+
+Findings show up in the **Security → Code Scanning** tab on your repo.
+
+#### Action inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `path` | `.` | Path to scan |
+| `severity` | `low` | Minimum severity to report |
+| `format` | `sarif` | Output format (`terminal`, `json`, `sarif`) |
+| `version` | `latest` | foxguard version (e.g. `v0.1.0`) |
+| `fail-on-findings` | `true` | Fail the check if findings exist |
+| `upload-sarif` | `true` | Upload SARIF to GitHub Code Scanning |
+| `badge-label` | `foxguard` | Custom badge label |
+
+#### Action outputs
+
+| Output | Description |
+|--------|-------------|
+| `findings-count` | Number of issues found |
+| `sarif-file` | Path to the SARIF file |
+| `badge-json` | Path to shields.io endpoint JSON |
+
+### Any CI (npx)
+
+Works anywhere Node.js is available. No install step needed.
+
+```yaml
+# GitLab CI
+foxguard:
+  image: node:20
+  script:
+    - npx foxguard@0.1.0 .
+    - npx foxguard@0.1.0 secrets .
+
+# CircleCI
+- run: npx foxguard@0.1.0 --severity high .
+
+# Generic
+- npx foxguard@0.1.0 --format sarif . > results.sarif
+```
+
+### Pre-commit hook
+
+```sh
+foxguard init
+```
+
+Installs a `pre-commit` hook that runs `foxguard --changed` and `foxguard secrets --changed` on every commit. Also generates a starter `.foxguard.yml` if one doesn't exist.
+
+### Badge
+
+Add a foxguard badge to your README:
+
+```md
+[![foxguard](https://img.shields.io/badge/foxguard-clean-2dd4bf)](https://github.com/peaktwilight/foxguard)
+```
+
+Or generate a dynamic badge from the action output:
+
+```yaml
+- uses: peaktwilight/foxguard/action@v0.1.0
+  id: scan
+
+- run: |
+    if [ "${{ steps.scan.outputs.findings-count }}" = "0" ]; then
+      echo "STATUS=clean" >> $GITHUB_ENV
+      echo "COLOR=2dd4bf" >> $GITHUB_ENV
+    else
+      echo "STATUS=${{ steps.scan.outputs.findings-count }} issues" >> $GITHUB_ENV
+      echo "COLOR=f59e0b" >> $GITHUB_ENV
+    fi
 ```
 
 ## Performance
