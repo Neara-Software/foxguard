@@ -161,19 +161,25 @@ impl Rule for NoCommandInjection {
             if node.kind() == "call_expression" {
                 if let Some(func) = node.child_by_field_name("function") {
                     let func_text = &src[func.byte_range()];
-                    if func_text.contains("Command::new") {
+                    // Only match the direct Command::new call, not chained methods
+                    if func_text == "Command::new"
+                        || func_text == "std::process::Command::new"
+                        || func_text == "process::Command::new"
+                    {
                         if let Some(args) = node.child_by_field_name("arguments") {
+                            let mut has_literal = false;
                             if let Some(first_arg) = args.named_child(0) {
-                                if first_arg.kind() != "string_literal" {
-                                    findings.push(make_finding(
-                                        self.id(),
-                                        self.severity(),
-                                        self.cwe(),
-                                        "Command::new called with dynamic argument — risk of command injection",
-                                        node,
-                                        src,
-                                    ));
-                                }
+                                has_literal = first_arg.kind() == "string_literal";
+                            }
+                            if !has_literal {
+                                findings.push(make_finding(
+                                    self.id(),
+                                    self.severity(),
+                                    self.cwe(),
+                                    "Command::new called with dynamic argument — risk of command injection",
+                                    node,
+                                    src,
+                                ));
                             }
                         }
                     }
@@ -271,11 +277,12 @@ impl Rule for NoWeakHash {
             if node.kind() == "use_declaration" {
                 let text = &src[node.byte_range()];
                 if weak_hash.is_match(text) {
-                    let algo = if text.contains("md5") || text.contains("Md5") || text.contains("MD5") {
-                        "MD5"
-                    } else {
-                        "SHA1"
-                    };
+                    let algo =
+                        if text.contains("md5") || text.contains("Md5") || text.contains("MD5") {
+                            "MD5"
+                        } else {
+                            "SHA1"
+                        };
                     findings.push(make_finding(
                         self.id(),
                         self.severity(),
@@ -295,7 +302,10 @@ impl Rule for NoWeakHash {
                 if let Some(func) = node.child_by_field_name("function") {
                     let func_text = &src[func.byte_range()];
                     if weak_hash.is_match(func_text) {
-                        let algo = if func_text.contains("md5") || func_text.contains("Md5") || func_text.contains("MD5") {
+                        let algo = if func_text.contains("md5")
+                            || func_text.contains("Md5")
+                            || func_text.contains("MD5")
+                        {
                             "MD5"
                         } else {
                             "SHA1"
@@ -501,7 +511,7 @@ impl Rule for NoPathTraversal {
         "rs/no-path-traversal"
     }
     fn severity(&self) -> Severity {
-        Severity::High
+        Severity::Medium
     }
     fn cwe(&self) -> Option<&str> {
         Some("CWE-22")

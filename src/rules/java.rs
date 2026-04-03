@@ -88,10 +88,10 @@ fn has_string_concat(node: tree_sitter::Node, src: &str) -> bool {
                 // Check if either side is or contains a string_literal
                 let left_has_str = node
                     .child_by_field_name("left")
-                    .map_or(false, |n| contains_kind(n, "string_literal"));
+                    .is_some_and(|n| contains_kind(n, "string_literal"));
                 let right_has_str = node
                     .child_by_field_name("right")
-                    .map_or(false, |n| contains_kind(n, "string_literal"));
+                    .is_some_and(|n| contains_kind(n, "string_literal"));
                 if left_has_str || right_has_str {
                     return true;
                 }
@@ -536,7 +536,8 @@ impl Rule for NoWeakCrypto {
 
     fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
         let mut findings = Vec::new();
-        let weak_algo = Regex::new(r#"(?i)"(DES|DESede|RC2|RC4|Blowfish|MD5|SHA-?1|.*ECB.*)"#).unwrap();
+        let weak_algo =
+            Regex::new(r#"(?i)"(DES|DESede|RC2|RC4|Blowfish|MD5|SHA-?1|.*ECB.*)"#).unwrap();
 
         walk_tree(tree.root_node(), source, &mut |node, src| {
             if node.kind() == "method_invocation" {
@@ -689,9 +690,10 @@ impl Rule for NoXxe {
 
     fn check(&self, source: &str, _tree: &tree_sitter::Tree) -> Vec<Finding> {
         let mut findings = Vec::new();
-        let factory_pattern =
-            Regex::new(r"(DocumentBuilderFactory|SAXParserFactory|XMLInputFactory)\.newInstance\(\)")
-                .unwrap();
+        let factory_pattern = Regex::new(
+            r"(DocumentBuilderFactory|SAXParserFactory|XMLInputFactory)\.newInstance\(\)",
+        )
+        .unwrap();
         let secure_pattern =
             Regex::new(r"setFeature\s*\(|setProperty\s*\(|setAttribute\s*\(").unwrap();
 
@@ -738,9 +740,10 @@ impl Rule for SpringCsrfDisabled {
     fn check(&self, source: &str, _tree: &tree_sitter::Tree) -> Vec<Finding> {
         let mut findings = Vec::new();
         // .csrf().disable() or csrf(csrf -> csrf.disable()) or csrf(c -> c.disable())
-        let csrf_pattern =
-            Regex::new(r"\.csrf\(\s*\)\s*\.\s*disable\(\s*\)|csrf\s*\([^)]*\.\s*disable\(\s*\)\s*\)")
-                .unwrap();
+        let csrf_pattern = Regex::new(
+            r"\.csrf\(\s*\)\s*\.\s*disable\(\s*\)|csrf\s*\([^)]*\.\s*disable\(\s*\)\s*\)",
+        )
+        .unwrap();
 
         for matched in csrf_pattern.find_iter(source) {
             findings.push(make_finding_from_offsets(

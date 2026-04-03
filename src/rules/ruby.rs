@@ -572,26 +572,24 @@ impl Rule for NoHardcodedSecret {
                     node.child_by_field_name("right"),
                 ) {
                     let left_text = &src[left.byte_range()];
-                    if secret_pattern.is_match(left_text) {
-                        if right.kind() == "string" {
-                            let val = &src[right.byte_range()];
-                            // Strip quotes and check length
-                            let inner = val
-                                .trim_start_matches(|c| c == '"' || c == '\'')
-                                .trim_end_matches(|c| c == '"' || c == '\'');
-                            if inner.len() >= 4 {
-                                findings.push(make_finding(
-                                    self.id(),
-                                    self.severity(),
-                                    self.cwe(),
-                                    &format!(
-                                        "Hardcoded secret in '{}' — use environment variables",
-                                        left_text.trim()
-                                    ),
-                                    node,
-                                    src,
-                                ));
-                            }
+                    if secret_pattern.is_match(left_text) && right.kind() == "string" {
+                        let val = &src[right.byte_range()];
+                        // Strip quotes and check length
+                        let inner = val
+                            .trim_start_matches(['"', '\''])
+                            .trim_end_matches(['"', '\'']);
+                        if inner.len() >= 4 {
+                            findings.push(make_finding(
+                                self.id(),
+                                self.severity(),
+                                self.cwe(),
+                                &format!(
+                                    "Hardcoded secret in '{}' — use environment variables",
+                                    left_text.trim()
+                                ),
+                                node,
+                                src,
+                            ));
                         }
                     }
                 }

@@ -461,8 +461,7 @@ impl Rule for NoHardcodedSecret {
 
     fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
         let mut findings = Vec::new();
-        let secret_pattern =
-            Regex::new(r"(?i)(password|secret|api_?key|token)").unwrap();
+        let secret_pattern = Regex::new(r"(?i)(password|secret|api_?key|token)").unwrap();
 
         walk_tree(tree.root_node(), source, &mut |node, src| {
             // Detect: $password = "hardcoded";

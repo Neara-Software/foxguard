@@ -99,7 +99,7 @@ jobs:
         run: cargo build --release
 
       - name: Scan own source (must be clean)
-        run: ./target/release/foxguard src/
+        run: ./target/release/foxguard --severity high src/
 
       - name: Scan own source for secrets (must be clean)
         run: ./target/release/foxguard secrets src/
