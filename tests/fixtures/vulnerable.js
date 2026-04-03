@@ -67,19 +67,25 @@ const cookieOpts2 = { cookie: { secure: true } };
 // 19. js/express-cookie-no-samesite (Medium)
 const cookieOpts3 = { cookie: { secure: true, httpOnly: true } };
 
-// 20. js/jwt-hardcoded-secret (High)
+// 20. js/express-session-saveuninitialized-true (Medium)
+const sessionLifecycle = { saveUninitialized: true };
+
+// 21. js/jwt-hardcoded-secret (High)
 const token = jwt.sign({ sub: userId }, "hardcoded-jwt-secret");
 
-// 21. js/jwt-none-algorithm (High)
+// 22. js/jwt-none-algorithm (High)
 const insecureToken = jwt.verify(token, publicKey, { algorithms: ["none"] });
 
-// 22. js/jwt-ignore-expiration (High)
+// 23. js/jwt-ignore-expiration (High)
 const expiredToken = jwt.verify(token, publicKey, { ignoreExpiration: true });
 
-// 23. js/jwt-decode-without-verify (High)
+// 24. js/jwt-decode-without-verify (High)
 const decodedOnly = jwt.decode(token);
 
-// 24. js/express-direct-response-write (High)
+// 25. js/jwt-verify-missing-algorithms (High)
+const weakVerify = jwt.verify(token, publicKey);
+
+// 26. js/express-direct-response-write (High)
 function handler(req, res) {
   res.send(req.query.name);
 }

@@ -178,7 +178,7 @@ Examples of included checks:
 Framework-oriented highlights:
 
 - Express and Node apps: session secret handling, cookie flags, direct response writes, JWT hardcoding, JWT `none` algorithm, JWT expiry bypass, and JWT decode-without-verify
-- Flask and Django apps: hardcoded secret keys, debug mode, session cookie flags, CSRF cookie flags, and `@csrf_exempt`
+- Flask and Django apps: hardcoded secret keys, debug mode, session cookie flags, CSRF cookie flags, `@csrf_exempt`, and Flask-WTF CSRF enforcement
 - Gin and net/http services: trusted proxy config, request timeouts, outbound request misuse, and TLS verification bypass
 
 ## GitHub Action

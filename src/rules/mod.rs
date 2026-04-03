@@ -56,11 +56,13 @@ impl RuleRegistry {
         registry.register(Box::new(javascript::ExpressCookieNoSecure));
         registry.register(Box::new(javascript::ExpressCookieNoHttpOnly));
         registry.register(Box::new(javascript::ExpressCookieNoSameSite));
+        registry.register(Box::new(javascript::ExpressSessionSaveUninitializedTrue));
         registry.register(Box::new(javascript::ExpressDirectResponseWrite));
         registry.register(Box::new(javascript::JwtHardcodedSecret));
         registry.register(Box::new(javascript::JwtNoneAlgorithm));
         registry.register(Box::new(javascript::JwtIgnoreExpiration));
         registry.register(Box::new(javascript::JwtDecodeWithoutVerify));
+        registry.register(Box::new(javascript::JwtVerifyMissingAlgorithms));
 
         // Register Python rules
         registry.register(Box::new(python::NoEval));
@@ -85,6 +87,8 @@ impl RuleRegistry {
         registry.register(Box::new(python::CsrfCookieHttpOnlyDisabled));
         registry.register(Box::new(python::CsrfCookieSameSiteDisabled));
         registry.register(Box::new(python::CsrfExempt));
+        registry.register(Box::new(python::WtfCsrfDisabled));
+        registry.register(Box::new(python::WtfCsrfCheckDefaultDisabled));
 
         // Register Go rules
         registry.register(Box::new(go::NoSqlInjection));

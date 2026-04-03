@@ -1113,7 +1113,60 @@ impl Rule for ExpressCookieNoSameSite {
     }
 }
 
-// ─── Rule 16: express-direct-response-write ───────────────────────────────
+// ─── Rule 16: express-session-saveuninitialized-true ──────────────────────
+
+pub struct ExpressSessionSaveUninitializedTrue;
+
+impl Rule for ExpressSessionSaveUninitializedTrue {
+    fn id(&self) -> &str {
+        "js/express-session-saveuninitialized-true"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-359")
+    }
+    fn description(&self) -> &str {
+        "express-session configured with saveUninitialized: true"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "pair" {
+                return;
+            }
+
+            let (Some(key), Some(value)) = (
+                node.child_by_field_name("key"),
+                node.child_by_field_name("value"),
+            ) else {
+                return;
+            };
+
+            let key_text = &src[key.byte_range()];
+            let key_inner = key_text.trim_matches(|c| c == '"' || c == '\'');
+            let value_text = &src[value.byte_range()];
+            if key_inner == "saveUninitialized" && value_text == "true" {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "express-session saveUninitialized: true stores sessions before consent or login state is established",
+                    node,
+                    src,
+                ));
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 17: express-direct-response-write ───────────────────────────────
 
 pub struct ExpressDirectResponseWrite;
 
@@ -1210,7 +1263,7 @@ impl Rule for ExpressDirectResponseWrite {
     }
 }
 
-// ─── Rule 17: jwt-hardcoded-secret ────────────────────────────────────────
+// ─── Rule 18: jwt-hardcoded-secret ────────────────────────────────────────
 
 pub struct JwtHardcodedSecret;
 
@@ -1281,7 +1334,7 @@ impl Rule for JwtHardcodedSecret {
     }
 }
 
-// ─── Rule 18: jwt-none-algorithm ───────────────────────────────────────────
+// ─── Rule 19: jwt-none-algorithm ───────────────────────────────────────────
 
 pub struct JwtNoneAlgorithm;
 
@@ -1359,7 +1412,7 @@ impl Rule for JwtNoneAlgorithm {
     }
 }
 
-// ─── Rule 19: jwt-ignore-expiration ────────────────────────────────────────
+// ─── Rule 20: jwt-ignore-expiration ────────────────────────────────────────
 
 pub struct JwtIgnoreExpiration;
 
@@ -1427,7 +1480,7 @@ impl Rule for JwtIgnoreExpiration {
     }
 }
 
-// ─── Rule 20: jwt-decode-without-verify ────────────────────────────────────
+// ─── Rule 21: jwt-decode-without-verify ────────────────────────────────────
 
 pub struct JwtDecodeWithoutVerify;
 
@@ -1478,7 +1531,81 @@ impl Rule for JwtDecodeWithoutVerify {
     }
 }
 
-// ─── Rule 21: no-cors-star ─────────────────────────────────────────────────
+// ─── Rule 22: jwt-verify-missing-algorithms ───────────────────────────────
+
+pub struct JwtVerifyMissingAlgorithms;
+
+impl Rule for JwtVerifyMissingAlgorithms {
+    fn id(&self) -> &str {
+        "js/jwt-verify-missing-algorithms"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-347")
+    }
+    fn description(&self) -> &str {
+        "JWT verification without an explicit algorithms allowlist"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "call_expression" {
+                return;
+            }
+
+            let Some(func) = node.child_by_field_name("function") else {
+                return;
+            };
+            let func_text = &src[func.byte_range()];
+            if func_text != "jwt.verify" && func_text != "jsonwebtoken.verify" {
+                return;
+            }
+
+            let Some(args) = node.child_by_field_name("arguments") else {
+                return;
+            };
+
+            let Some(options_arg) = args.named_child(2) else {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "JWT verification does not restrict allowed algorithms — pass an explicit algorithms allowlist",
+                    node,
+                    src,
+                ));
+                return;
+            };
+
+            if options_arg.kind() != "object" {
+                return;
+            }
+
+            let options_text = &src[options_arg.byte_range()];
+            if !options_text.contains("algorithms") {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "JWT verification does not restrict allowed algorithms — pass an explicit algorithms allowlist",
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}
+
+// ─── Rule 23: no-cors-star ─────────────────────────────────────────────────
 
 pub struct NoCorsStar;
 

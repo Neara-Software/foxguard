@@ -1502,3 +1502,111 @@ impl Rule for CsrfExempt {
         findings
     }
 }
+
+// ─── Rule 22: wtf-csrf-disabled ───────────────────────────────────────────
+
+pub struct WtfCsrfDisabled;
+
+impl Rule for WtfCsrfDisabled {
+    fn id(&self) -> &str {
+        "py/wtf-csrf-disabled"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-352")
+    }
+    fn description(&self) -> &str {
+        "Flask-WTF CSRF protection disabled in source code"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "assignment" {
+                return;
+            }
+
+            let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) else {
+                return;
+            };
+
+            let left_text = &src[left.byte_range()];
+            let right_text = &src[right.byte_range()];
+            if left_text.contains("WTF_CSRF_ENABLED") && right_text == "False" {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "Flask-WTF CSRF protection disabled — keep WTF_CSRF_ENABLED enabled",
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}
+
+// ─── Rule 23: wtf-csrf-check-default-disabled ─────────────────────────────
+
+pub struct WtfCsrfCheckDefaultDisabled;
+
+impl Rule for WtfCsrfCheckDefaultDisabled {
+    fn id(&self) -> &str {
+        "py/wtf-csrf-check-default-disabled"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-352")
+    }
+    fn description(&self) -> &str {
+        "Flask-WTF default CSRF checks disabled in source code"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "assignment" {
+                return;
+            }
+
+            let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) else {
+                return;
+            };
+
+            let left_text = &src[left.byte_range()];
+            let right_text = &src[right.byte_range()];
+            if left_text.contains("WTF_CSRF_CHECK_DEFAULT") && right_text == "False" {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "Flask-WTF default CSRF checks disabled — keep WTF_CSRF_CHECK_DEFAULT enabled",
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}

@@ -29,6 +29,8 @@ SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SECURE = True
 CSRF_COOKIE_HTTPONLY = True
 CSRF_COOKIE_SAMESITE = "Lax"
+WTF_CSRF_ENABLED = True
+WTF_CSRF_CHECK_DEFAULT = True
 requests.get("https://api.example.com/health")
 os.remove("/tmp/fixed-name.txt")
 

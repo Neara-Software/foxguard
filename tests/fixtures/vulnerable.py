@@ -40,6 +40,12 @@ CSRF_COOKIE_SAMESITE = "None"
 def webhook(request):
     return "ok"
 
+# py/wtf-csrf-disabled
+WTF_CSRF_ENABLED = False
+
+# py/wtf-csrf-check-default-disabled
+WTF_CSRF_CHECK_DEFAULT = False
+
 # py/no-ssrf
 requests.get(request.args["url"])
 

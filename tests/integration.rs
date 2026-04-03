@@ -108,8 +108,8 @@ fn test_vulnerable_js_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        27,
-        "vulnerable.js should have 27 findings, got {}",
+        30,
+        "vulnerable.js should have 30 findings, got {}",
         findings.len()
     );
 
@@ -137,11 +137,13 @@ fn test_vulnerable_js_finds_all_rules() {
         "js/express-cookie-no-secure",
         "js/express-cookie-no-httponly",
         "js/express-cookie-no-samesite",
+        "js/express-session-saveuninitialized-true",
         "js/express-direct-response-write",
         "js/jwt-hardcoded-secret",
         "js/jwt-none-algorithm",
         "js/jwt-ignore-expiration",
         "js/jwt-decode-without-verify",
+        "js/jwt-verify-missing-algorithms",
     ];
 
     for rule in &expected_rules {
@@ -163,8 +165,8 @@ fn test_vulnerable_py_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        26,
-        "vulnerable.py should have 26 findings, got {}",
+        28,
+        "vulnerable.py should have 28 findings, got {}",
         findings.len()
     );
 
@@ -196,6 +198,8 @@ fn test_vulnerable_py_finds_all_rules() {
         "py/csrf-cookie-httponly-disabled",
         "py/csrf-cookie-samesite-disabled",
         "py/csrf-exempt",
+        "py/wtf-csrf-disabled",
+        "py/wtf-csrf-check-default-disabled",
     ];
 
     for rule in &expected_rules {
@@ -649,8 +653,8 @@ fn test_severity_filter_high() {
     // High and Critical only
     assert_eq!(
         findings.len(),
-        17,
-        "high severity filter on vulnerable.js should yield 17 findings, got {}",
+        19,
+        "high severity filter on vulnerable.js should yield 19 findings, got {}",
         findings.len()
     );
 
