@@ -35,6 +35,10 @@ pub enum Language {
     JavaScript,
     Python,
     Go,
+    Ruby,
+    Java,
+    Php,
+    Rust,
 }
 
 impl std::fmt::Display for Language {
@@ -43,6 +47,10 @@ impl std::fmt::Display for Language {
             Language::JavaScript => write!(f, "javascript"),
             Language::Python => write!(f, "python"),
             Language::Go => write!(f, "go"),
+            Language::Ruby => write!(f, "ruby"),
+            Language::Java => write!(f, "java"),
+            Language::Php => write!(f, "php"),
+            Language::Rust => write!(f, "rust"),
         }
     }
 }

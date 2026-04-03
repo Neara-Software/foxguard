@@ -161,31 +161,30 @@ See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the supported subset and the in
 
 ## Built-in coverage
 
-foxguard currently ships with 59 built-in code rules across 3 languages:
+foxguard currently ships with 98 built-in code rules across 7 languages:
 
 | Language | Rules | Frameworks |
 |----------|-------|------------|
-| JavaScript/TypeScript | 25 | Express, outbound request checks, JWT flows |
+| JavaScript/TypeScript | 24 | Express, JWT flows, outbound request checks |
 | Python | 26 | Flask, Django, outbound request checks |
-| Go | 8 | Gin, net/http request flows, TLS transport checks |
+| Go | 8 | Gin, net/http, TLS transport checks |
+| Ruby | 10 | Rails mass assignment, CSRF, deserialization |
+| Java | 10 | Spring CSRF/CORS, XXE, deserialization |
+| PHP | 10 | Laravel, file inclusion, unserialize, extract |
+| Rust | 10 | unsafe blocks, transmute, TLS, unwrap |
 
 Examples of included checks:
 
 - Hardcoded secrets and placeholder credentials
 - SQL injection via string interpolation
-- Command injection via exec/spawn
+- Command injection via exec/spawn/system
 - XSS via unsafe response or DOM writes
 - Weak crypto such as MD5 and SHA1
 - SSRF via dynamic outbound requests and common client variants
 - Path traversal across file and response-file operations
-- Unsafe deserialization
+- Unsafe deserialization (pickle, Marshal, YAML, ObjectInputStream, unserialize)
 - Auth, session, and framework misconfigurations
-
-Framework-oriented highlights:
-
-- Express and Node apps: session secret handling, cookie flags, direct response writes, JWT hardcoding, JWT `none` algorithm, JWT expiry bypass, and JWT decode-without-verify
-- Flask and Django apps: hardcoded secret keys, debug mode, session cookie flags, CSRF cookie flags, `@csrf_exempt`, Flask-WTF CSRF enforcement, `ALLOWED_HOSTS`, and HTTPS redirect settings
-- Gin and net/http services: trusted proxy config, request timeouts, outbound request misuse, and TLS verification bypass
+- Unsafe Rust patterns (unsafe blocks, transmute, unwrap)
 
 ## CI Integration
 

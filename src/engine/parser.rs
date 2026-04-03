@@ -8,6 +8,10 @@ pub fn parse_file(source: &str, language: Language) -> Option<tree_sitter::Tree>
         Language::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
         Language::Python => tree_sitter_python::LANGUAGE.into(),
         Language::Go => tree_sitter_go::LANGUAGE.into(),
+        Language::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+        Language::Java => tree_sitter_java::LANGUAGE.into(),
+        Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+        Language::Rust => tree_sitter_rust::LANGUAGE.into(),
     };
 
     parser.set_language(&ts_language).ok()?;

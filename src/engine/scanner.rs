@@ -12,6 +12,10 @@ fn detect_language(path: &Path) -> Option<Language> {
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" => Some(Language::JavaScript),
         "py" | "pyw" => Some(Language::Python),
         "go" => Some(Language::Go),
+        "rb" | "rake" | "gemspec" => Some(Language::Ruby),
+        "java" => Some(Language::Java),
+        "php" => Some(Language::Php),
+        "rs" => Some(Language::Rust),
         _ => None,
     }
 }

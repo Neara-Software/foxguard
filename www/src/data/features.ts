@@ -63,6 +63,30 @@ export const frameworkGroups: FrameworkGroup[] = [
     badges: ['proxies', 'timeouts', 'ssrf', 'tls'],
     ruleCount: 8,
   },
+  {
+    title: 'Rails / Ruby',
+    desc: 'Mass assignment, CSRF bypass, unsafe deserialization, XSS escaping.',
+    badges: ['params', 'csrf', 'marshal', 'xss'],
+    ruleCount: 10,
+  },
+  {
+    title: 'Spring / Java',
+    desc: 'SQL injection, XXE, deserialization, CSRF config, CORS policy.',
+    badges: ['sql', 'xxe', 'csrf', 'cors'],
+    ruleCount: 10,
+  },
+  {
+    title: 'PHP / Laravel',
+    desc: 'Eval, file inclusion, unserialize, command injection, extract.',
+    badges: ['eval', 'include', 'unserialize', 'ssrf'],
+    ruleCount: 10,
+  },
+  {
+    title: 'Rust',
+    desc: 'Unsafe blocks, transmute, command injection, TLS verification.',
+    badges: ['unsafe', 'transmute', 'tls', 'unwrap'],
+    ruleCount: 10,
+  },
 ];
 
 export interface CompatFeature {

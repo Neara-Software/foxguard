@@ -1,6 +1,10 @@
 pub mod go;
+pub mod java;
 pub mod javascript;
+pub mod php;
 pub mod python;
+pub mod ruby;
+pub mod rust_lang;
 pub mod semgrep_compat;
 
 use crate::{Finding, Language, Severity};
@@ -102,6 +106,54 @@ impl RuleRegistry {
         registry.register(Box::new(go::InsecureTlsSkipVerify));
         registry.register(Box::new(go::GinNoTrustedProxies));
         registry.register(Box::new(go::NetHttpNoTimeout));
+
+        // Register Java rules
+        registry.register(Box::new(java::NoSqlInjection));
+        registry.register(Box::new(java::NoCommandInjection));
+        registry.register(Box::new(java::NoUnsafeDeserialization));
+        registry.register(Box::new(java::NoSsrf));
+        registry.register(Box::new(java::NoPathTraversal));
+        registry.register(Box::new(java::NoWeakCrypto));
+        registry.register(Box::new(java::NoHardcodedSecret));
+        registry.register(Box::new(java::NoXxe));
+        registry.register(Box::new(java::SpringCsrfDisabled));
+        registry.register(Box::new(java::SpringCorsPermissive));
+
+        // Register PHP rules
+        registry.register(Box::new(php::NoEval));
+        registry.register(Box::new(php::NoCommandInjection));
+        registry.register(Box::new(php::NoSqlInjection));
+        registry.register(Box::new(php::NoUnserialize));
+        registry.register(Box::new(php::NoFileInclusion));
+        registry.register(Box::new(php::NoWeakCrypto));
+        registry.register(Box::new(php::NoHardcodedSecret));
+        registry.register(Box::new(php::NoSsrf));
+        registry.register(Box::new(php::NoExtract));
+        registry.register(Box::new(php::NoPregEval));
+
+        // Register Ruby rules
+        registry.register(Box::new(ruby::NoEval));
+        registry.register(Box::new(ruby::NoCommandInjection));
+        registry.register(Box::new(ruby::NoSqlInjection));
+        registry.register(Box::new(ruby::NoMassAssignment));
+        registry.register(Box::new(ruby::NoUnsafeDeserialization));
+        registry.register(Box::new(ruby::NoOpenRedirect));
+        registry.register(Box::new(ruby::NoCsrfSkip));
+        registry.register(Box::new(ruby::NoHtmlSafe));
+        registry.register(Box::new(ruby::NoHardcodedSecret));
+        registry.register(Box::new(ruby::NoWeakCrypto));
+
+        // Register Rust rules
+        registry.register(Box::new(rust_lang::UnsafeBlock));
+        registry.register(Box::new(rust_lang::TransmuteUsage));
+        registry.register(Box::new(rust_lang::NoCommandInjection));
+        registry.register(Box::new(rust_lang::NoSqlInjection));
+        registry.register(Box::new(rust_lang::NoWeakHash));
+        registry.register(Box::new(rust_lang::NoHardcodedSecret));
+        registry.register(Box::new(rust_lang::TlsVerifyDisabled));
+        registry.register(Box::new(rust_lang::NoSsrf));
+        registry.register(Box::new(rust_lang::NoPathTraversal));
+        registry.register(Box::new(rust_lang::NoUnwrapInLib));
 
         registry
     }

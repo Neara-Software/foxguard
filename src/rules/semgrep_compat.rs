@@ -772,6 +772,10 @@ fn map_language(lang_str: &str) -> Option<Language> {
         "javascript" | "js" | "typescript" | "ts" | "jsx" | "tsx" => Some(Language::JavaScript),
         "python" | "py" => Some(Language::Python),
         "go" | "golang" => Some(Language::Go),
+        "ruby" | "rb" => Some(Language::Ruby),
+        "java" => Some(Language::Java),
+        "php" => Some(Language::Php),
+        "rust" | "rs" => Some(Language::Rust),
         _ => None,
     }
 }

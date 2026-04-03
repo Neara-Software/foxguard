@@ -78,10 +78,66 @@ const goRules: Rule[] = [
   { id: 'go/net-http-no-timeout', cwe: 'CWE-400', desc: 'http.ListenAndServe without timeout config', severity: 'medium' },
 ];
 
+const rubyRules: Rule[] = [
+  { id: 'rb/no-eval', cwe: 'CWE-94', desc: 'Use of eval/instance_eval/class_eval allows arbitrary code execution', severity: 'critical' },
+  { id: 'rb/no-command-injection', cwe: 'CWE-78', desc: 'Command injection via system/exec/spawn or backtick execution', severity: 'critical' },
+  { id: 'rb/no-sql-injection', cwe: 'CWE-89', desc: 'SQL injection via string interpolation in ActiveRecord queries', severity: 'critical' },
+  { id: 'rb/no-mass-assignment', cwe: 'CWE-915', desc: 'permit! allows all parameters through without filtering', severity: 'high' },
+  { id: 'rb/no-unsafe-deserialization', cwe: 'CWE-502', desc: 'Marshal.load or YAML.load on untrusted data enables RCE', severity: 'critical' },
+  { id: 'rb/no-open-redirect', cwe: 'CWE-601', desc: 'redirect_to with user-controlled input', severity: 'high' },
+  { id: 'rb/no-csrf-skip', cwe: 'CWE-352', desc: 'skip_before_action :verify_authenticity_token disables CSRF', severity: 'high' },
+  { id: 'rb/no-html-safe', cwe: 'CWE-79', desc: 'html_safe or raw() on user input disables XSS auto-escaping', severity: 'high' },
+  { id: 'rb/no-hardcoded-secret', cwe: 'CWE-798', desc: 'Hardcoded secret or credential detected', severity: 'high' },
+  { id: 'rb/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak cryptographic hash (Digest::MD5/SHA1)', severity: 'medium' },
+];
+
+const javaRules: Rule[] = [
+  { id: 'java/no-sql-injection', cwe: 'CWE-89', desc: 'SQL injection via string concatenation in query methods', severity: 'critical' },
+  { id: 'java/no-command-injection', cwe: 'CWE-78', desc: 'Command injection via Runtime.exec or ProcessBuilder', severity: 'critical' },
+  { id: 'java/no-unsafe-deserialization', cwe: 'CWE-502', desc: 'Unsafe deserialization via ObjectInputStream or YAML.load', severity: 'critical' },
+  { id: 'java/no-ssrf', cwe: 'CWE-918', desc: 'SSRF via new URL() or RestTemplate with dynamic URL', severity: 'high' },
+  { id: 'java/no-path-traversal', cwe: 'CWE-22', desc: 'Path traversal via new File/FileInputStream with dynamic path', severity: 'high' },
+  { id: 'java/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak crypto algorithm (DES, MD5, SHA-1, ECB)', severity: 'medium' },
+  { id: 'java/no-hardcoded-secret', cwe: 'CWE-798', desc: 'Hardcoded secret or credential detected', severity: 'high' },
+  { id: 'java/no-xxe', cwe: 'CWE-611', desc: 'XML parser without external entity protection', severity: 'high' },
+  { id: 'java/spring-csrf-disabled', cwe: 'CWE-352', desc: 'Spring Security CSRF protection disabled', severity: 'high' },
+  { id: 'java/spring-cors-permissive', cwe: 'CWE-942', desc: 'CORS configured with wildcard origin', severity: 'medium' },
+];
+
+const phpRules: Rule[] = [
+  { id: 'php/no-eval', cwe: 'CWE-95', desc: 'Use of eval() allows arbitrary code execution', severity: 'critical' },
+  { id: 'php/no-command-injection', cwe: 'CWE-78', desc: 'Command injection via exec/system/passthru/shell_exec', severity: 'critical' },
+  { id: 'php/no-sql-injection', cwe: 'CWE-89', desc: 'SQL injection via interpolated or concatenated query strings', severity: 'critical' },
+  { id: 'php/no-unserialize', cwe: 'CWE-502', desc: 'unserialize() on untrusted data enables object injection', severity: 'critical' },
+  { id: 'php/no-file-inclusion', cwe: 'CWE-98', desc: 'Dynamic file inclusion via include/require with variable path', severity: 'critical' },
+  { id: 'php/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak hash function (md5/sha1)', severity: 'medium' },
+  { id: 'php/no-hardcoded-secret', cwe: 'CWE-798', desc: 'Hardcoded secret or credential detected', severity: 'high' },
+  { id: 'php/no-ssrf', cwe: 'CWE-918', desc: 'SSRF via file_get_contents/curl_init with dynamic URL', severity: 'high' },
+  { id: 'php/no-extract', cwe: 'CWE-621', desc: 'extract() creates arbitrary variables from user input', severity: 'high' },
+  { id: 'php/no-preg-eval', cwe: 'CWE-95', desc: 'preg_replace with /e modifier executes matched string as PHP', severity: 'critical' },
+];
+
+const rustRules: Rule[] = [
+  { id: 'rs/unsafe-block', cwe: 'CWE-676', desc: 'Unsafe block bypasses Rust safety guarantees', severity: 'medium' },
+  { id: 'rs/transmute-usage', cwe: 'CWE-843', desc: 'std::mem::transmute reinterprets types unsafely', severity: 'high' },
+  { id: 'rs/no-command-injection', cwe: 'CWE-78', desc: 'Command::new with non-literal argument', severity: 'critical' },
+  { id: 'rs/no-sql-injection', cwe: 'CWE-89', desc: 'format! macro in SQL query argument', severity: 'critical' },
+  { id: 'rs/no-weak-hash', cwe: 'CWE-328', desc: 'Use of MD5 or SHA1 hash', severity: 'medium' },
+  { id: 'rs/no-hardcoded-secret', cwe: 'CWE-798', desc: 'Hardcoded secret or credential detected', severity: 'high' },
+  { id: 'rs/tls-verify-disabled', cwe: 'CWE-295', desc: 'TLS certificate verification disabled', severity: 'high' },
+  { id: 'rs/no-ssrf', cwe: 'CWE-918', desc: 'reqwest request with non-literal URL', severity: 'high' },
+  { id: 'rs/no-path-traversal', cwe: 'CWE-22', desc: 'Path::new/PathBuf::from with non-literal argument', severity: 'high' },
+  { id: 'rs/no-unwrap-in-lib', cwe: 'CWE-248', desc: 'unwrap()/expect() may panic at runtime', severity: 'medium' },
+];
+
 export const ruleGroups: RuleGroup[] = [
   { name: 'JavaScript / TypeScript', slug: 'js', rules: jsRules },
   { name: 'Python', slug: 'py', rules: pyRules },
   { name: 'Go', slug: 'go', rules: goRules },
+  { name: 'Ruby', slug: 'rb', rules: rubyRules },
+  { name: 'Java', slug: 'java', rules: javaRules },
+  { name: 'PHP', slug: 'php', rules: phpRules },
+  { name: 'Rust', slug: 'rs', rules: rustRules },
 ];
 
 export const totalRules = ruleGroups.reduce((sum, g) => sum + g.rules.length, 0);
