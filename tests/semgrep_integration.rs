@@ -140,3 +140,31 @@ rules:
     assert_eq!(findings.len(), 1, "expected AST+regex rule to match eval()");
     assert!(findings[0].snippet.contains("eval"));
 }
+
+#[test]
+fn test_rule_paths_include_exclude() {
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(
+        br#"
+rules:
+  - id: path-scoped-eval
+    pattern: eval(...)
+    message: eval usage
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - src/**/*.py
+      exclude:
+        - src/generated/**
+"#,
+    )
+    .unwrap();
+
+    let rules = parse_semgrep_file(file.path()).unwrap();
+    let rule = &rules[0];
+
+    assert!(rule.applies_to_path(Path::new("src/app/main.py")));
+    assert!(!rule.applies_to_path(Path::new("tests/main.py")));
+    assert!(!rule.applies_to_path(Path::new("src/generated/main.py")));
+}

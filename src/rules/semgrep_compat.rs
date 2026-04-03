@@ -1,6 +1,7 @@
 use crate::engine::parser::parse_file;
 use crate::rules::Rule;
 use crate::{Finding, Language, Severity};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -35,6 +36,8 @@ pub struct SemgrepRuleYaml {
     pub languages: Vec<String>,
     #[serde(default)]
     pub metadata: Option<SemgrepMetadata>,
+    #[serde(default)]
+    pub paths: Option<SemgrepPaths>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +77,14 @@ pub struct SemgrepMetadata {
     pub cwe: Option<CweValue>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct SemgrepPaths {
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum CweValue {
@@ -91,6 +102,7 @@ pub struct SemgrepRule {
     pub lang: Language,
     pub cwe: Option<String>,
     pub matcher: PatternMatcher,
+    pub path_filter: Option<PathFilter>,
 }
 
 /// Represents the matching strategy for a rule.
@@ -116,6 +128,12 @@ pub enum NegativeMatcher {
     Regex(Regex),
 }
 
+#[derive(Debug, Clone)]
+pub struct PathFilter {
+    include: Option<GlobSet>,
+    exclude: Option<GlobSet>,
+}
+
 impl Rule for SemgrepRule {
     fn id(&self) -> &str {
         &self.id
@@ -131,6 +149,12 @@ impl Rule for SemgrepRule {
     }
     fn language(&self) -> Language {
         self.lang
+    }
+
+    fn applies_to_path(&self, path: &Path) -> bool {
+        self.path_filter
+            .as_ref()
+            .is_none_or(|filter| filter.matches(path))
     }
 
     fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
@@ -156,6 +180,37 @@ impl Rule for SemgrepRule {
         }
 
         findings
+    }
+}
+
+impl PathFilter {
+    fn from_yaml(paths: Option<&SemgrepPaths>) -> Result<Option<Self>, String> {
+        let Some(paths) = paths else {
+            return Ok(None);
+        };
+
+        let include = compile_globset(&paths.include)?;
+        let exclude = compile_globset(&paths.exclude)?;
+
+        Ok(Some(Self { include, exclude }))
+    }
+
+    fn matches(&self, path: &Path) -> bool {
+        let normalized = normalize_rule_path(path);
+
+        if let Some(include) = &self.include {
+            if !include.is_match(&normalized) {
+                return false;
+            }
+        }
+
+        if let Some(exclude) = &self.exclude {
+            if exclude.is_match(&normalized) {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
@@ -711,6 +766,31 @@ fn compile_regex(pattern: &str) -> Result<Regex, String> {
     Regex::new(pattern).map_err(|e| format!("Invalid pattern-regex '{}': {}", pattern, e))
 }
 
+fn compile_globset(patterns: &[String]) -> Result<Option<GlobSet>, String> {
+    if patterns.is_empty() {
+        return Ok(None);
+    }
+
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        let glob =
+            Glob::new(pattern).map_err(|e| format!("Invalid paths glob '{}': {}", pattern, e))?;
+        builder.add(glob);
+    }
+
+    builder
+        .build()
+        .map(Some)
+        .map_err(|e| format!("Failed to build paths globset: {}", e))
+}
+
+fn normalize_rule_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn extract_cwe(yaml: &SemgrepRuleYaml) -> Option<String> {
     let meta = yaml.metadata.as_ref()?;
     let cwe = meta.cwe.as_ref()?;
@@ -734,6 +814,7 @@ pub fn parse_semgrep_file(path: &Path) -> Result<Vec<Box<dyn Rule>>, String> {
         let cwe = extract_cwe(&yaml_rule);
         let severity = map_severity(&yaml_rule.severity);
         let matcher = build_matcher(&yaml_rule)?;
+        let path_filter = PathFilter::from_yaml(yaml_rule.paths.as_ref())?;
 
         let mut mapped_languages = Vec::new();
         for lang_str in &yaml_rule.languages {
@@ -752,6 +833,7 @@ pub fn parse_semgrep_file(path: &Path) -> Result<Vec<Box<dyn Rule>>, String> {
                 lang,
                 cwe: cwe.clone(),
                 matcher: matcher.clone(),
+                path_filter: path_filter.clone(),
             }));
         }
     }

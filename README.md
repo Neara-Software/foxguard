@@ -147,6 +147,7 @@ By default, foxguard runs its built-in rules. Use `--rules` to add external rule
 
 foxguard currently supports a useful Semgrep-compatible subset for local rule loading. That makes it a good fit for teams already using Semgrep or OpenGrep-style rules, without claiming full drop-in compatibility.
 That subset now includes regex clauses such as `pattern-regex` and `pattern-not-regex` in addition to the AST-style operators listed in [`COMPATIBILITY.md`](./COMPATIBILITY.md).
+It also supports rule-level path scoping with `paths.include` and `paths.exclude`.
 
 See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the supported subset and the intended built-ins-first workflow.
 

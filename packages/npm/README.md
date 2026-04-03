@@ -13,6 +13,7 @@ It also includes a dedicated `secrets` mode for common leaked credentials and pr
 Secrets mode also supports path-scoped excludes and per-rule ignores for fixtures, generated files, or intentionally fake tokens.
 foxguard can also auto-discover a repo config file such as `.foxguard.yml` for shared baselines, rule paths, and secrets defaults.
 The Semgrep-compatible subset also supports regex clauses like `pattern-regex` and `pattern-not-regex`.
+It also supports rule-level path filters like `paths.include` and `paths.exclude`.
 
 Local-first workflow:
 

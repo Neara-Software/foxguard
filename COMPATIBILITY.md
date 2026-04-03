@@ -51,6 +51,11 @@ Pattern operators:
 - `pattern-inside`
 - `patterns`
 
+Rule scoping:
+
+- `paths.include`
+- `paths.exclude`
+
 Language mapping:
 
 - JavaScript / TypeScript

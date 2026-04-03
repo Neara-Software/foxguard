@@ -40,19 +40,32 @@ pub fn scan_directory(root: &str, registry: &RuleRegistry) -> Vec<Finding> {
             .collect()
     };
 
-    scan_files(files, registry)
+    scan_files(scan_root(root_path), files, registry)
 }
 
 /// Scan an explicit list of paths.
 pub fn scan_paths(paths: &[PathBuf], registry: &RuleRegistry) -> Vec<Finding> {
+    scan_paths_with_root(Path::new("."), paths, registry)
+}
+
+/// Scan an explicit list of paths relative to a scan root.
+pub fn scan_paths_with_root(
+    root: &Path,
+    paths: &[PathBuf],
+    registry: &RuleRegistry,
+) -> Vec<Finding> {
     let files = paths
         .iter()
         .filter_map(|path| detect_language(path).map(|lang| (path.clone(), lang)))
         .collect();
-    scan_files(files, registry)
+    scan_files(scan_root(root), files, registry)
 }
 
-fn scan_files(files: Vec<(PathBuf, Language)>, registry: &RuleRegistry) -> Vec<Finding> {
+fn scan_files(
+    scan_root: &Path,
+    files: Vec<(PathBuf, Language)>,
+    registry: &RuleRegistry,
+) -> Vec<Finding> {
     let findings = Mutex::new(Vec::new());
 
     files.par_iter().for_each(|(path, language)| {
@@ -65,9 +78,13 @@ fn scan_files(files: Vec<(PathBuf, Language)>, registry: &RuleRegistry) -> Vec<F
         };
 
         let file_str = path.display().to_string();
+        let relative_path = relative_scan_path(scan_root, path);
         let rules = registry.rules_for_language(*language);
 
         for rule in rules {
+            if !rule.applies_to_path(&relative_path) {
+                continue;
+            }
             let mut rule_findings = rule.check(&source, &tree);
             for f in &mut rule_findings {
                 f.file = file_str.clone();
@@ -86,4 +103,16 @@ fn scan_files(files: Vec<(PathBuf, Language)>, registry: &RuleRegistry) -> Vec<F
             .then(a.column.cmp(&b.column))
     });
     results
+}
+
+fn scan_root(path: &Path) -> &Path {
+    if path.is_file() {
+        path.parent().unwrap_or_else(|| Path::new("."))
+    } else {
+        path
+    }
+}
+
+fn relative_scan_path(scan_root: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(scan_root).unwrap_or(path).to_path_buf()
 }

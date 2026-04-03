@@ -4,6 +4,7 @@ pub mod python;
 pub mod semgrep_compat;
 
 use crate::{Finding, Language, Severity};
+use std::path::Path;
 
 /// A security rule that checks parsed source code for vulnerabilities.
 pub trait Rule: Send + Sync {
@@ -12,6 +13,9 @@ pub trait Rule: Send + Sync {
     fn cwe(&self) -> Option<&str>;
     fn description(&self) -> &str;
     fn language(&self) -> Language;
+    fn applies_to_path(&self, _path: &Path) -> bool {
+        true
+    }
     fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding>;
 }
 

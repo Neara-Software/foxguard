@@ -2,7 +2,7 @@ use clap::Parser;
 use foxguard::baseline::{load_baseline, suppress_with_baseline, write_baseline};
 use foxguard::cli::{BaselineArgs, Cli, Command, InitArgs, OutputFormat, ScanArgs, SecretsArgs};
 use foxguard::config::{apply_scan_defaults, apply_secrets_defaults, load_for_scan};
-use foxguard::engine::{scan_directory, scan_paths};
+use foxguard::engine::{scan_directory, scan_paths_with_root};
 use foxguard::git::changed_files;
 use foxguard::rules::semgrep_compat::load_semgrep_rules;
 use foxguard::rules::RuleRegistry;
@@ -111,7 +111,7 @@ fn scan_findings(scan: &ScanArgs) -> Result<Vec<foxguard::Finding>, i32> {
     let targets = collect_changed_targets(&scan.path, scan.changed)?;
 
     let mut findings = if let Some(files) = targets {
-        scan_paths(&files, &registry)
+        scan_paths_with_root(Path::new(&scan.path), &files, &registry)
     } else {
         scan_directory(&scan.path, &registry)
     };

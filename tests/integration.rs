@@ -79,6 +79,16 @@ fn write_config_file(dir: &Path, relative_path: &str, content: &str) -> PathBuf 
     path
 }
 
+fn copy_fixture_to(dir: &Path, fixture_name: &str, relative_path: &str) -> PathBuf {
+    let src = fixture_path(fixture_name);
+    let dest = dir.join(relative_path);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).expect("failed to create fixture directory");
+    }
+    fs::copy(src, &dest).expect("failed to copy fixture to target path");
+    dest
+}
+
 // ─── Vulnerable file detection ──────────────────────────────────────────────
 
 #[test]
@@ -338,6 +348,53 @@ fn test_no_builtins_with_external_rules_still_finds_matches() {
     assert!(
         !findings.is_empty(),
         "expected findings from external rules when built-ins are disabled"
+    );
+}
+
+#[test]
+fn test_external_rules_respect_semgrep_paths_filters() {
+    let repo = TempDir::new().expect("failed to create temp repo");
+    copy_fixture_to(repo.path(), "vulnerable.py", "src/vulnerable.py");
+    copy_fixture_to(repo.path(), "vulnerable.py", "tests/vulnerable.py");
+
+    let rules_dir = repo.path().join("rules");
+    fs::create_dir_all(&rules_dir).expect("failed to create rules directory");
+    fs::write(
+        rules_dir.join("path-filter.yaml"),
+        r#"
+rules:
+  - id: path-filtered-eval
+    pattern: eval(...)
+    message: eval usage
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - src/**/*.py
+"#,
+    )
+    .expect("failed to write rules file");
+
+    let output = foxguard_cmd()
+        .current_dir(repo.path())
+        .args([".", "-f", "json", "--no-builtins", "--rules", "rules"])
+        .output()
+        .expect("failed to execute foxguard with path-filtered rules");
+
+    assert!(
+        !output.status.success(),
+        "path-filtered external rule should still report findings"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert!(
+        findings.iter().all(|finding| finding["file"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("/src/")),
+        "expected path filters to restrict findings to src/"
     );
 }
 
