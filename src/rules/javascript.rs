@@ -1166,7 +1166,60 @@ impl Rule for ExpressSessionSaveUninitializedTrue {
     }
 }
 
-// ─── Rule 17: express-direct-response-write ───────────────────────────────
+// ─── Rule 17: express-session-resave-true ─────────────────────────────────
+
+pub struct ExpressSessionResaveTrue;
+
+impl Rule for ExpressSessionResaveTrue {
+    fn id(&self) -> &str {
+        "js/express-session-resave-true"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-384")
+    }
+    fn description(&self) -> &str {
+        "express-session configured with resave: true"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "pair" {
+                return;
+            }
+
+            let (Some(key), Some(value)) = (
+                node.child_by_field_name("key"),
+                node.child_by_field_name("value"),
+            ) else {
+                return;
+            };
+
+            let key_text = &src[key.byte_range()];
+            let key_inner = key_text.trim_matches(|c| c == '"' || c == '\'');
+            let value_text = &src[value.byte_range()];
+            if key_inner == "resave" && value_text == "true" {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "express-session resave: true can overwrite sessions unnecessarily — prefer resave: false unless your store requires it",
+                    node,
+                    src,
+                ));
+            }
+        });
+        findings
+    }
+}
+
+// ─── Rule 18: express-direct-response-write ───────────────────────────────
 
 pub struct ExpressDirectResponseWrite;
 
@@ -1263,7 +1316,7 @@ impl Rule for ExpressDirectResponseWrite {
     }
 }
 
-// ─── Rule 18: jwt-hardcoded-secret ────────────────────────────────────────
+// ─── Rule 19: jwt-hardcoded-secret ────────────────────────────────────────
 
 pub struct JwtHardcodedSecret;
 
@@ -1334,7 +1387,7 @@ impl Rule for JwtHardcodedSecret {
     }
 }
 
-// ─── Rule 19: jwt-none-algorithm ───────────────────────────────────────────
+// ─── Rule 20: jwt-none-algorithm ───────────────────────────────────────────
 
 pub struct JwtNoneAlgorithm;
 
@@ -1412,7 +1465,7 @@ impl Rule for JwtNoneAlgorithm {
     }
 }
 
-// ─── Rule 20: jwt-ignore-expiration ────────────────────────────────────────
+// ─── Rule 21: jwt-ignore-expiration ────────────────────────────────────────
 
 pub struct JwtIgnoreExpiration;
 
@@ -1480,7 +1533,7 @@ impl Rule for JwtIgnoreExpiration {
     }
 }
 
-// ─── Rule 21: jwt-decode-without-verify ────────────────────────────────────
+// ─── Rule 22: jwt-decode-without-verify ────────────────────────────────────
 
 pub struct JwtDecodeWithoutVerify;
 
@@ -1531,7 +1584,7 @@ impl Rule for JwtDecodeWithoutVerify {
     }
 }
 
-// ─── Rule 22: jwt-verify-missing-algorithms ───────────────────────────────
+// ─── Rule 23: jwt-verify-missing-algorithms ───────────────────────────────
 
 pub struct JwtVerifyMissingAlgorithms;
 
@@ -1605,7 +1658,7 @@ impl Rule for JwtVerifyMissingAlgorithms {
     }
 }
 
-// ─── Rule 23: no-cors-star ─────────────────────────────────────────────────
+// ─── Rule 24: no-cors-star ─────────────────────────────────────────────────
 
 pub struct NoCorsStar;
 

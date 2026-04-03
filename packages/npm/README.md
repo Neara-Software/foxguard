@@ -6,7 +6,7 @@ This is the npm wrapper for foxguard. It downloads the correct prebuilt binary f
 
 foxguard scans JS/TS, Python, and Go with built-in security rules by default and can load a useful Semgrep-compatible YAML subset with `--rules`.
 Built-ins now cover local code risks like SSRF client variants, file/path traversal sinks, session/cookie misconfig, transport misconfig, and framework-specific auth issues.
-Current built-ins include Express/JWT checks on JavaScript plus Flask/Django session, CSRF, and exemption hardening checks on Python.
+Current built-ins include Express/JWT/session lifecycle checks on JavaScript plus Flask/Django session, CSRF, Flask-WTF, and exemption hardening checks on Python.
 
 Use `--rules` to add external rules on top of the built-ins. Use `--no-builtins --rules ...` for an external-rules-only compatibility run.
 

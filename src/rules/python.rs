@@ -1610,3 +1610,111 @@ impl Rule for WtfCsrfCheckDefaultDisabled {
         findings
     }
 }
+
+// ─── Rule 24: django-allowed-hosts-wildcard ───────────────────────────────
+
+pub struct DjangoAllowedHostsWildcard;
+
+impl Rule for DjangoAllowedHostsWildcard {
+    fn id(&self) -> &str {
+        "py/django-allowed-hosts-wildcard"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-346")
+    }
+    fn description(&self) -> &str {
+        "Django ALLOWED_HOSTS allows all hosts"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "assignment" {
+                return;
+            }
+
+            let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) else {
+                return;
+            };
+
+            let left_text = &src[left.byte_range()];
+            let right_text = &src[right.byte_range()];
+            if left_text.contains("ALLOWED_HOSTS") && right_text.contains("\"*\"") {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "Django ALLOWED_HOSTS contains '*' — restrict hostnames explicitly to reduce host header abuse risk",
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}
+
+// ─── Rule 25: secure-ssl-redirect-disabled ────────────────────────────────
+
+pub struct SecureSslRedirectDisabled;
+
+impl Rule for SecureSslRedirectDisabled {
+    fn id(&self) -> &str {
+        "py/secure-ssl-redirect-disabled"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-319")
+    }
+    fn description(&self) -> &str {
+        "Django SECURE_SSL_REDIRECT disabled in source code"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "assignment" {
+                return;
+            }
+
+            let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) else {
+                return;
+            };
+
+            let left_text = &src[left.byte_range()];
+            let right_text = &src[right.byte_range()];
+            if left_text.contains("SECURE_SSL_REDIRECT") && right_text == "False" {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "SECURE_SSL_REDIRECT = False — enable HTTPS redirect in production-facing Django deployments",
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}

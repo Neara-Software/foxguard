@@ -57,6 +57,7 @@ impl RuleRegistry {
         registry.register(Box::new(javascript::ExpressCookieNoHttpOnly));
         registry.register(Box::new(javascript::ExpressCookieNoSameSite));
         registry.register(Box::new(javascript::ExpressSessionSaveUninitializedTrue));
+        registry.register(Box::new(javascript::ExpressSessionResaveTrue));
         registry.register(Box::new(javascript::ExpressDirectResponseWrite));
         registry.register(Box::new(javascript::JwtHardcodedSecret));
         registry.register(Box::new(javascript::JwtNoneAlgorithm));
@@ -89,6 +90,8 @@ impl RuleRegistry {
         registry.register(Box::new(python::CsrfExempt));
         registry.register(Box::new(python::WtfCsrfDisabled));
         registry.register(Box::new(python::WtfCsrfCheckDefaultDisabled));
+        registry.register(Box::new(python::DjangoAllowedHostsWildcard));
+        registry.register(Box::new(python::SecureSslRedirectDisabled));
 
         // Register Go rules
         registry.register(Box::new(go::NoSqlInjection));
