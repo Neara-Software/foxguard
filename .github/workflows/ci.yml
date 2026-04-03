@@ -78,3 +78,37 @@ jobs:
           key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-build-
       - run: cargo build --release
+
+  dogfood:
+    name: Dogfood (foxguard scans itself)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-build-
+
+      - name: Build foxguard
+        run: cargo build --release
+
+      - name: Scan own source (must be clean)
+        run: ./target/release/foxguard src/
+
+      - name: Scan own source for secrets (must be clean)
+        run: ./target/release/foxguard secrets src/
+
+      - name: Verify fixture detection (must find issues)
+        run: |
+          if ./target/release/foxguard tests/fixtures/ 2>&1; then
+            echo "::error::Expected foxguard to find issues in test fixtures but it exited clean"
+            exit 1
+          else
+            echo "Fixtures correctly detected — foxguard found issues as expected"
+          fi
