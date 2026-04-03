@@ -48,6 +48,7 @@ The benchmark suite measures foxguard, Semgrep, and OpenGrep against three popul
 3. In `compat` mode, all three tools use the shared rules in `benchmarks/compat_rules/`
 4. foxguard uses `--no-builtins --rules` in `compat` mode to keep the rule set aligned
 5. Results are written to `benchmarks/results-default.md` or `benchmarks/results-compat.md`
+6. If Semgrep or OpenGrep is missing locally, that tool is skipped and the results file records `N/A`
 
 ### Fairness
 
@@ -57,6 +58,7 @@ The benchmark suite measures foxguard, Semgrep, and OpenGrep against three popul
 - Semgrep and OpenGrep use their default `auto` rulesets only in `default` mode
 - Timing includes startup overhead
 - Repos are cached after first clone; delete `benchmarks/repos/` to re-clone
+- Results are local snapshots, not a hosted leaderboard
 
 In `compat` mode, foxguard runs `--no-builtins --rules benchmarks/compat_rules` so the comparison stays explicitly focused on the same external YAML rules rather than foxguard's built-in coverage.
 

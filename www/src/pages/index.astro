@@ -64,11 +64,28 @@ const goRules = [
 
 const totalRules = jsRules.length + pyRules.length + goRules.length;
 const benchmarkRows = [
-  { repo: 'express', files: 141, foxguard: 0.079, semgrep: 4.712, opengrep: 4.756 },
-  { repo: 'flask', files: 83, foxguard: 0.049, semgrep: 4.702, opengrep: 5.150 },
-  { repo: 'gin', files: 99, foxguard: 0.065, semgrep: 4.467, opengrep: 4.294 },
+  { repo: 'express', files: 141, foxguard: 0.284, semgrep: 17.373, opengrep: null },
+  { repo: 'flask', files: 83, foxguard: 0.084, semgrep: 7.325, opengrep: null },
+  { repo: 'gin', files: 99, foxguard: 0.516, semgrep: 8.007, opengrep: null },
 ];
-const benchmarkMax = Math.max(...benchmarkRows.flatMap((row) => [row.foxguard, row.semgrep, row.opengrep]));
+const benchmarkMax = Math.max(...benchmarkRows.flatMap((row) => [row.foxguard, row.semgrep, row.opengrep ?? 0]));
+const frameworkGroups = [
+  {
+    title: 'Express / Node',
+    desc: 'Session secret handling, cookie flags, reflected response writes, and JWT hardening checks for common Node auth flows.',
+    badges: ['session', 'cookies', 'jwt', 'xss'],
+  },
+  {
+    title: 'Flask / Django',
+    desc: 'Secret key checks, debug mode, session cookie flags, CSRF cookie flags, and csrf_exempt coverage for common Python web apps.',
+    badges: ['secret keys', 'csrf', 'session', 'debug'],
+  },
+  {
+    title: 'Gin / net/http',
+    desc: 'Trusted proxy config, missing timeouts, outbound request misuse, and TLS verification bypass coverage for Go services.',
+    badges: ['proxies', 'timeouts', 'ssrf', 'tls'],
+  },
+];
 const compatFeatures = [
   { label: 'Top-level rules', status: 'supported' },
   { label: 'pattern', status: 'supported' },
@@ -92,7 +109,8 @@ function severityColor(s: string) {
   return '#737373';
 }
 
-function timeWidth(seconds: number) {
+function timeWidth(seconds: number | null) {
+  if (seconds === null) return 0;
   return Math.max((seconds / benchmarkMax) * 100, 2);
 }
 ---
@@ -133,7 +151,7 @@ function timeWidth(seconds: number) {
         Fast local security guard.
       </p>
       <p class="fade-up fade-up-delay-3 text-sm sm:text-base text-ash max-w-xl mx-auto mb-10">
-        Rust-native. 43 built-in code rules. Secrets mode with excludes. Repo config. Semgrep-compatible. Single binary. Hook-friendly.
+        Rust-native. 54 built-in code rules. Secrets mode with excludes. Repo config. Semgrep-compatible. Single binary. Hook-friendly.
       </p>
 
       <!-- npx copy button -->
@@ -210,7 +228,7 @@ function timeWidth(seconds: number) {
       <div class="text-center mb-10">
         <h2 class="font-heading text-3xl font-bold text-white mb-2">Fast by default</h2>
         <p class="text-ash max-w-2xl mx-auto">
-          Example local default-mode benchmark: foxguard built-ins vs Semgrep and OpenGrep <code>auto</code>.
+          Current local default-mode snapshot: foxguard built-ins vs Semgrep <code>auto</code>, with OpenGrep omitted here because it is not installed in this environment.
           For same-rules engine comparisons, use <code>BENCH_MODE=compat</code>.
         </p>
       </div>
@@ -239,12 +257,18 @@ function timeWidth(seconds: number) {
                 <div>
                   <div class="md:hidden font-mono text-[11px] uppercase tracking-wider text-ash mb-2">{tool.name}</div>
                   <div class="bg-night rounded-lg border border-night-lighter overflow-hidden h-10 flex items-center">
-                    <div
-                      class:list={['h-full flex items-center justify-end px-3 text-xs font-mono font-semibold min-w-[72px]', tool.className]}
-                      style={`width: ${timeWidth(tool.time)}%`}
-                    >
-                      {tool.time.toFixed(3)}s
-                    </div>
+                    {tool.time === null ? (
+                      <div class="h-full w-full flex items-center justify-center px-3 text-xs font-mono text-ash">
+                        N/A
+                      </div>
+                    ) : (
+                      <div
+                        class:list={['h-full flex items-center justify-end px-3 text-xs font-mono font-semibold min-w-[72px]', tool.className]}
+                        style={`width: ${timeWidth(tool.time)}%`}
+                      >
+                        {tool.time.toFixed(3)}s
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -252,6 +276,9 @@ function timeWidth(seconds: number) {
           ))}
         </div>
       </div>
+      <p class="text-xs text-ash mb-12">
+        Run <code>./benchmarks/run.sh</code> locally to refresh this snapshot. Missing competitor binaries show up as <code>N/A</code> instead of stale numbers.
+      </p>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-12">
         <div class="bg-night-light border border-night-lighter rounded-xl p-5">
@@ -268,6 +295,20 @@ function timeWidth(seconds: number) {
             Run the same Semgrep-compatible YAML rules across foxguard, Semgrep, and OpenGrep with <code>--no-builtins --rules</code> for a narrower compatibility check.
           </p>
         </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
+        {frameworkGroups.map((group) => (
+          <div class="bg-night-light border border-night-lighter rounded-xl p-5 text-left">
+            <div class="text-white font-semibold mb-2">{group.title}</div>
+            <p class="text-sm text-ash leading-relaxed mb-4">{group.desc}</p>
+            <div class="flex flex-wrap gap-2 font-mono text-[11px] text-ash">
+              {group.badges.map((badge) => (
+                <span class="bg-night border border-night-lighter rounded-full px-2 py-1">{badge}</span>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
 
       <!-- Local workflow diagram -->
@@ -331,7 +372,7 @@ function timeWidth(seconds: number) {
           { icon: '< 60ms', title: 'Single binary, local-first', desc: 'No JVM, no Python runtime, no network calls. Fast enough for edit-save-commit loops, hooks, and scripts.' },
           { icon: 'hook', title: 'Pre-commit ready', desc: 'Install a repo-local hook with foxguard init and get a starter .foxguard.yml for changed-file scans.' },
           { icon: '.yaml', title: 'Bring your own rules', desc: 'Built-ins are the default. Add a useful Semgrep-compatible YAML subset from a file or directory when needed.' },
-          { icon: '43', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including SSRF client variants, path traversal sinks, auth, session, transport, and framework-specific rules.' },
+          { icon: '54', title: 'Built-in coverage', desc: 'Security checks for JS/TS, Python, and Go, including SSRF client variants, path traversal sinks, auth, session, CSRF, transport, and framework-specific rules.' },
           { icon: 'base', title: 'Baseline adoption', desc: 'Accept existing findings once and focus on new ones with a baseline file.' },
           { icon: 'secret', title: 'Secrets mode', desc: 'Scan for common leaked credentials and private key material with redacted output and binary-safe handling.' },
           { icon: 'SARIF', title: 'CI-friendly output', desc: 'Use terminal output locally or JSON and SARIF in automation.' },

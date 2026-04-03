@@ -155,12 +155,12 @@ See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the supported subset and the in
 
 ## Built-in coverage
 
-foxguard currently ships with 52 built-in code rules across 3 languages:
+foxguard currently ships with 54 built-in code rules across 3 languages:
 
 | Language | Rules | Frameworks |
 |----------|-------|------------|
-| JavaScript/TypeScript | 22 | Express, outbound request checks, JWT flows |
-| Python | 22 | Flask, Django, outbound request checks |
+| JavaScript/TypeScript | 23 | Express, outbound request checks, JWT flows |
+| Python | 23 | Flask, Django, outbound request checks |
 | Go | 8 | Gin, net/http request flows, TLS transport checks |
 
 Examples of included checks:
@@ -174,6 +174,12 @@ Examples of included checks:
 - Path traversal across file and response-file operations
 - Unsafe deserialization
 - Auth, session, and framework misconfigurations
+
+Framework-oriented highlights:
+
+- Express and Node apps: session secret handling, cookie flags, direct response writes, JWT hardcoding, JWT `none` algorithm, JWT expiry bypass, and JWT decode-without-verify
+- Flask and Django apps: hardcoded secret keys, debug mode, session cookie flags, CSRF cookie flags, and `@csrf_exempt`
+- Gin and net/http services: trusted proxy config, request timeouts, outbound request misuse, and TLS verification bypass
 
 ## GitHub Action
 
@@ -193,7 +199,7 @@ The benchmark suite supports two modes:
 
 Built-ins are the default product path. `compat` exists to answer the narrower same-rules question fairly.
 
-Benchmark outputs are written locally as `benchmarks/results-default.md` and `benchmarks/results-compat.md`. Rust + tree-sitter + rayon. See [`benchmarks/README.md`](./benchmarks/README.md) for methodology and commands.
+Benchmark outputs are written locally as `benchmarks/results-default.md` and `benchmarks/results-compat.md`. Rust + tree-sitter + rayon. See [`benchmarks/README.md`](./benchmarks/README.md) for methodology, commands, and notes about missing competitor binaries.
 
 For the homepage-style visual comparison, use `default` mode. For compatibility checks, use `compat`.
 
