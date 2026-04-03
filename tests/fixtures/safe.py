@@ -24,6 +24,8 @@ db_password = os.environ.get("DB_PASSWORD", "")
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "")
 SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
 requests.get("https://api.example.com/health")
 os.remove("/tmp/fixed-name.txt")
 

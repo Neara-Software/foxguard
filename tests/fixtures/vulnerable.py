@@ -19,6 +19,12 @@ app.secret_key = "my-hardcoded-flask-secret"
 # py/session-cookie-secure-disabled
 SESSION_COOKIE_SECURE = False
 
+# py/session-cookie-httponly-disabled
+SESSION_COOKIE_HTTPONLY = False
+
+# py/session-cookie-samesite-disabled
+SESSION_COOKIE_SAMESITE = "None"
+
 # py/no-ssrf
 requests.get(request.args["url"])
 

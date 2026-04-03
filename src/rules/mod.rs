@@ -58,6 +58,7 @@ impl RuleRegistry {
         registry.register(Box::new(javascript::ExpressCookieNoSameSite));
         registry.register(Box::new(javascript::ExpressDirectResponseWrite));
         registry.register(Box::new(javascript::JwtHardcodedSecret));
+        registry.register(Box::new(javascript::JwtNoneAlgorithm));
 
         // Register Python rules
         registry.register(Box::new(python::NoEval));
@@ -76,6 +77,8 @@ impl RuleRegistry {
         registry.register(Box::new(python::DjangoSecretKeyHardcoded));
         registry.register(Box::new(python::FlaskSecretKeyHardcoded));
         registry.register(Box::new(python::SessionCookieSecureDisabled));
+        registry.register(Box::new(python::SessionCookieHttpOnlyDisabled));
+        registry.register(Box::new(python::SessionCookieSameSiteDisabled));
 
         // Register Go rules
         registry.register(Box::new(go::NoSqlInjection));

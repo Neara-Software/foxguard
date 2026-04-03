@@ -70,7 +70,10 @@ const cookieOpts3 = { cookie: { secure: true, httpOnly: true } };
 // 20. js/jwt-hardcoded-secret (High)
 const token = jwt.sign({ sub: userId }, "hardcoded-jwt-secret");
 
-// 21. js/express-direct-response-write (High)
+// 21. js/jwt-none-algorithm (High)
+const insecureToken = jwt.verify(token, publicKey, { algorithms: ["none"] });
+
+// 22. js/express-direct-response-write (High)
 function handler(req, res) {
   res.send(req.query.name);
 }
