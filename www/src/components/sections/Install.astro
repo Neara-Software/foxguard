@@ -1,0 +1,64 @@
+---
+import CopyButton from '../ui/CopyButton.astro';
+---
+
+<section class="py-20" id="install">
+  <div class="section-divider mb-20"></div>
+  <div class="max-w-3xl mx-auto px-6">
+    <div class="text-center mb-12">
+      <h2 class="font-heading text-2xl sm:text-3xl text-noir-50 mb-3">Install</h2>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10">
+      <div class="bg-noir-900 border border-noir-800 rounded-xl p-5">
+        <div class="font-mono text-[10px] uppercase tracking-wider text-noir-600 mb-3">npm / npx</div>
+        <div class="flex items-center justify-between bg-noir-950 border border-noir-800 rounded-md px-4 py-2.5 font-mono text-sm text-fox">
+          <code>npx foxguard .</code>
+          <CopyButton text="npx foxguard ." />
+        </div>
+      </div>
+      <div class="bg-noir-900 border border-noir-800 rounded-xl p-5">
+        <div class="font-mono text-[10px] uppercase tracking-wider text-noir-600 mb-3">Rust / Cargo</div>
+        <div class="flex items-center justify-between bg-noir-950 border border-noir-800 rounded-md px-4 py-2.5 font-mono text-sm text-fox">
+          <code>cargo install foxguard</code>
+          <CopyButton text="cargo install foxguard" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick start -->
+    <div class="bg-noir-900 border border-noir-800 rounded-xl p-5">
+      <div class="font-mono text-[10px] uppercase tracking-wider text-noir-600 mb-4">Quick start</div>
+      <div class="flex flex-col gap-2.5 font-mono text-[12px]">
+        <div class="flex items-start gap-3">
+          <span class="text-noir-600 select-none shrink-0">1.</span>
+          <div>
+            <code class="text-noir-300">foxguard init</code>
+            <span class="text-noir-600 ml-2">pre-commit hook + config</span>
+          </div>
+        </div>
+        <div class="flex items-start gap-3">
+          <span class="text-noir-600 select-none shrink-0">2.</span>
+          <div>
+            <code class="text-noir-300">foxguard .</code>
+            <span class="text-noir-600 ml-2">scan everything</span>
+          </div>
+        </div>
+        <div class="flex items-start gap-3">
+          <span class="text-noir-600 select-none shrink-0">3.</span>
+          <div>
+            <code class="text-noir-300">foxguard --changed .</code>
+            <span class="text-noir-600 ml-2">scan only modified files</span>
+          </div>
+        </div>
+        <div class="flex items-start gap-3">
+          <span class="text-noir-600 select-none shrink-0">4.</span>
+          <div>
+            <code class="text-noir-300">foxguard secrets --changed .</code>
+            <span class="text-noir-600 ml-2">check for leaked credentials</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
