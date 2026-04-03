@@ -161,7 +161,7 @@ See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the supported subset and the in
 
 ## Built-in coverage
 
-foxguard currently ships with 98 built-in code rules across 7 languages:
+foxguard currently ships with 118 built-in code rules across 9 languages:
 
 | Language | Rules | Frameworks |
 |----------|-------|------------|
@@ -172,6 +172,8 @@ foxguard currently ships with 98 built-in code rules across 7 languages:
 | Java | 10 | Spring CSRF/CORS, XXE, deserialization |
 | PHP | 10 | Laravel, file inclusion, unserialize, extract |
 | Rust | 10 | unsafe blocks, transmute, TLS, unwrap |
+| C# | 10 | .NET, ASP.NET CORS, LDAP, XXE |
+| Swift | 10 | iOS keychain, transport security, WebView |
 
 Examples of included checks:
 

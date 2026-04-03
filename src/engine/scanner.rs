@@ -16,6 +16,8 @@ fn detect_language(path: &Path) -> Option<Language> {
         "java" => Some(Language::Java),
         "php" => Some(Language::Php),
         "rs" => Some(Language::Rust),
+        "cs" => Some(Language::CSharp),
+        "swift" => Some(Language::Swift),
         _ => None,
     }
 }

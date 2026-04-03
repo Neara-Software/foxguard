@@ -1,3 +1,4 @@
+pub mod csharp;
 pub mod go;
 pub mod java;
 pub mod javascript;
@@ -6,6 +7,7 @@ pub mod python;
 pub mod ruby;
 pub mod rust_lang;
 pub mod semgrep_compat;
+pub mod swift;
 
 use crate::{Finding, Language, Severity};
 use std::path::Path;
@@ -142,6 +144,30 @@ impl RuleRegistry {
         registry.register(Box::new(ruby::NoHtmlSafe));
         registry.register(Box::new(ruby::NoHardcodedSecret));
         registry.register(Box::new(ruby::NoWeakCrypto));
+
+        // Register C# rules
+        registry.register(Box::new(csharp::NoSqlInjection));
+        registry.register(Box::new(csharp::NoCommandInjection));
+        registry.register(Box::new(csharp::NoUnsafeDeserialization));
+        registry.register(Box::new(csharp::NoSsrf));
+        registry.register(Box::new(csharp::NoPathTraversal));
+        registry.register(Box::new(csharp::NoWeakCrypto));
+        registry.register(Box::new(csharp::NoHardcodedSecret));
+        registry.register(Box::new(csharp::NoXxe));
+        registry.register(Box::new(csharp::NoLdapInjection));
+        registry.register(Box::new(csharp::NoCorsStar));
+
+        // Register Swift rules
+        registry.register(Box::new(swift::NoHardcodedSecret));
+        registry.register(Box::new(swift::NoCommandInjection));
+        registry.register(Box::new(swift::NoWeakCrypto));
+        registry.register(Box::new(swift::NoInsecureTransport));
+        registry.register(Box::new(swift::NoEvalJs));
+        registry.register(Box::new(swift::NoSqlInjection));
+        registry.register(Box::new(swift::NoInsecureKeychain));
+        registry.register(Box::new(swift::NoTlsDisabled));
+        registry.register(Box::new(swift::NoPathTraversal));
+        registry.register(Box::new(swift::NoSsrf));
 
         // Register Rust rules
         registry.register(Box::new(rust_lang::UnsafeBlock));

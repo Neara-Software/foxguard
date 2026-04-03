@@ -87,6 +87,18 @@ export const frameworkGroups: FrameworkGroup[] = [
     badges: ['unsafe', 'transmute', 'tls', 'unwrap'],
     ruleCount: 10,
   },
+  {
+    title: 'C# / .NET',
+    desc: 'SQL injection, deserialization, XXE, LDAP injection, CORS.',
+    badges: ['sql', 'xxe', 'ldap', 'cors'],
+    ruleCount: 10,
+  },
+  {
+    title: 'Swift / iOS',
+    desc: 'Keychain security, transport security, JS injection, TLS.',
+    badges: ['keychain', 'tls', 'transport', 'webview'],
+    ruleCount: 10,
+  },
 ];
 
 export interface CompatFeature {

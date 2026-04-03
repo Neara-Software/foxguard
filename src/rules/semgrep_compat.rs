@@ -776,6 +776,8 @@ fn map_language(lang_str: &str) -> Option<Language> {
         "java" => Some(Language::Java),
         "php" => Some(Language::Php),
         "rust" | "rs" => Some(Language::Rust),
+        "csharp" | "c#" | "cs" => Some(Language::CSharp),
+        "swift" => Some(Language::Swift),
         _ => None,
     }
 }

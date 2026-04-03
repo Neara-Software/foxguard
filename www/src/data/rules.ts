@@ -130,6 +130,32 @@ const rustRules: Rule[] = [
   { id: 'rs/no-unwrap-in-lib', cwe: 'CWE-248', desc: 'unwrap()/expect() may panic at runtime', severity: 'medium' },
 ];
 
+const csharpRules: Rule[] = [
+  { id: 'cs/no-sql-injection', cwe: 'CWE-89', desc: 'SQL injection via string concatenation in query methods', severity: 'critical' },
+  { id: 'cs/no-command-injection', cwe: 'CWE-78', desc: 'Command injection via Process.Start with dynamic input', severity: 'critical' },
+  { id: 'cs/no-unsafe-deserialization', cwe: 'CWE-502', desc: 'Unsafe deserialization via BinaryFormatter or JavaScriptSerializer', severity: 'critical' },
+  { id: 'cs/no-ssrf', cwe: 'CWE-918', desc: 'SSRF via HttpClient or WebRequest with dynamic URL', severity: 'high' },
+  { id: 'cs/no-path-traversal', cwe: 'CWE-22', desc: 'Path traversal via File/StreamReader with dynamic path', severity: 'high' },
+  { id: 'cs/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak crypto (MD5, SHA1, DES, RC2)', severity: 'medium' },
+  { id: 'cs/no-hardcoded-secret', cwe: 'CWE-798', desc: 'Hardcoded secret or credential detected', severity: 'high' },
+  { id: 'cs/no-xxe', cwe: 'CWE-611', desc: 'XML parser without external entity protection', severity: 'high' },
+  { id: 'cs/no-ldap-injection', cwe: 'CWE-90', desc: 'LDAP injection via string concatenation in filter', severity: 'high' },
+  { id: 'cs/no-cors-star', cwe: 'CWE-942', desc: 'CORS configured with AllowAnyOrigin', severity: 'medium' },
+];
+
+const swiftRules: Rule[] = [
+  { id: 'swift/no-hardcoded-secret', cwe: 'CWE-798', desc: 'Hardcoded secret or credential detected', severity: 'high' },
+  { id: 'swift/no-command-injection', cwe: 'CWE-78', desc: 'Command injection via Process with dynamic arguments', severity: 'critical' },
+  { id: 'swift/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak hash (CC_MD5, CC_SHA1)', severity: 'medium' },
+  { id: 'swift/no-insecure-transport', cwe: 'CWE-319', desc: 'HTTP URL detected (insecure transport)', severity: 'high' },
+  { id: 'swift/no-eval-js', cwe: 'CWE-95', desc: 'JavaScript injection via evaluateJavaScript with dynamic input', severity: 'critical' },
+  { id: 'swift/no-sql-injection', cwe: 'CWE-89', desc: 'SQL injection via string interpolation', severity: 'critical' },
+  { id: 'swift/no-insecure-keychain', cwe: 'CWE-311', desc: 'Keychain item accessible when device is unlocked', severity: 'high' },
+  { id: 'swift/no-tls-disabled', cwe: 'CWE-295', desc: 'TLS certificate validation disabled', severity: 'high' },
+  { id: 'swift/no-path-traversal', cwe: 'CWE-22', desc: 'Path traversal via FileManager with dynamic path', severity: 'high' },
+  { id: 'swift/no-ssrf', cwe: 'CWE-918', desc: 'SSRF via URLSession with dynamic URL', severity: 'high' },
+];
+
 export const ruleGroups: RuleGroup[] = [
   { name: 'JavaScript / TypeScript', slug: 'js', rules: jsRules },
   { name: 'Python', slug: 'py', rules: pyRules },
@@ -138,6 +164,8 @@ export const ruleGroups: RuleGroup[] = [
   { name: 'Java', slug: 'java', rules: javaRules },
   { name: 'PHP', slug: 'php', rules: phpRules },
   { name: 'Rust', slug: 'rs', rules: rustRules },
+  { name: 'C#', slug: 'cs', rules: csharpRules },
+  { name: 'Swift', slug: 'swift', rules: swiftRules },
 ];
 
 export const totalRules = ruleGroups.reduce((sum, g) => sum + g.rules.length, 0);

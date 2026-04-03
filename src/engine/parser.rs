@@ -12,6 +12,8 @@ pub fn parse_file(source: &str, language: Language) -> Option<tree_sitter::Tree>
         Language::Java => tree_sitter_java::LANGUAGE.into(),
         Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
         Language::Rust => tree_sitter_rust::LANGUAGE.into(),
+        Language::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+        Language::Swift => tree_sitter_swift::LANGUAGE.into(),
     };
 
     parser.set_language(&ts_language).ok()?;
