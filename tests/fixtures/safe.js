@@ -39,6 +39,7 @@ const cookieOptions = { cookie: { secure: true, httpOnly: true, sameSite: "lax" 
 const token = jwt.sign({ sub: "123" }, process.env.JWT_SECRET);
 const verified = jwt.verify(token, publicKey, { algorithms: ["HS256"] });
 const verifiedExpiry = jwt.verify(token, publicKey, { ignoreExpiration: false });
+const parsedHeader = JSON.parse(Buffer.from(token.split(".")[0], "base64").toString("utf8"));
 
 // Safe: static outbound request
 fetch("https://api.example.com/health");
@@ -49,4 +50,4 @@ res.sendFile("/srv/app/public/logo.svg");
 // Safe: safe regex
 const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-module.exports = { getUser, setContent, hashData, readConfig, cookieOptions, token, verified, verifiedExpiry };
+module.exports = { getUser, setContent, hashData, readConfig, cookieOptions, token, verified, verifiedExpiry, parsedHeader };

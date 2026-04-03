@@ -5,6 +5,7 @@ import pickle
 import requests
 import yaml
 from flask import Flask, redirect, request
+from django.views.decorators.csrf import csrf_exempt
 
 # py/no-hardcoded-secret
 password = "supersecret123"
@@ -33,6 +34,11 @@ CSRF_COOKIE_HTTPONLY = False
 
 # py/csrf-cookie-samesite-disabled
 CSRF_COOKIE_SAMESITE = "None"
+
+# py/csrf-exempt
+@csrf_exempt
+def webhook(request):
+    return "ok"
 
 # py/no-ssrf
 requests.get(request.args["url"])

@@ -1427,7 +1427,58 @@ impl Rule for JwtIgnoreExpiration {
     }
 }
 
-// ─── Rule 20: no-cors-star ─────────────────────────────────────────────────
+// ─── Rule 20: jwt-decode-without-verify ────────────────────────────────────
+
+pub struct JwtDecodeWithoutVerify;
+
+impl Rule for JwtDecodeWithoutVerify {
+    fn id(&self) -> &str {
+        "js/jwt-decode-without-verify"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-347")
+    }
+    fn description(&self) -> &str {
+        "JWT decoded without signature verification"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "call_expression" {
+                return;
+            }
+
+            let Some(func) = node.child_by_field_name("function") else {
+                return;
+            };
+            let func_text = &src[func.byte_range()];
+            if func_text != "jwt.decode" && func_text != "jsonwebtoken.decode" {
+                return;
+            }
+
+            findings.push(make_finding(
+                self.id(),
+                self.severity(),
+                self.cwe(),
+                "JWT decoded without verification — use jwt.verify() when authenticity matters",
+                node,
+                src,
+            ));
+        });
+
+        findings
+    }
+}
+
+// ─── Rule 21: no-cors-star ─────────────────────────────────────────────────
 
 pub struct NoCorsStar;
 

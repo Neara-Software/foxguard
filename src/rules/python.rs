@@ -1460,3 +1460,45 @@ impl Rule for CsrfCookieSameSiteDisabled {
         findings
     }
 }
+
+// ─── Rule 21: csrf-exempt ──────────────────────────────────────────────────
+
+pub struct CsrfExempt;
+
+impl Rule for CsrfExempt {
+    fn id(&self) -> &str {
+        "py/csrf-exempt"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-352")
+    }
+    fn description(&self) -> &str {
+        "View marked csrf_exempt"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            let text = &src[node.byte_range()];
+            if node.kind() == "decorator" && text.contains("csrf_exempt") {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "@csrf_exempt disables CSRF protection — prefer scoped exemptions or validated alternative controls",
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}

@@ -23,6 +23,7 @@ const jsRules = [
   { id: 'js/jwt-hardcoded-secret', cwe: 'CWE-798', desc: 'JWT signing or verification with a hardcoded secret', severity: 'high' },
   { id: 'js/jwt-none-algorithm', cwe: 'CWE-347', desc: 'JWT configured to use the none algorithm', severity: 'high' },
   { id: 'js/jwt-ignore-expiration', cwe: 'CWE-613', desc: 'JWT verification configured to ignore token expiration', severity: 'high' },
+  { id: 'js/jwt-decode-without-verify', cwe: 'CWE-347', desc: 'JWT decoded without signature verification', severity: 'high' },
 ];
 
 const pyRules = [
@@ -47,6 +48,7 @@ const pyRules = [
   { id: 'py/csrf-cookie-secure-disabled', cwe: 'CWE-614', desc: 'CSRF_COOKIE_SECURE disabled in source', severity: 'medium' },
   { id: 'py/csrf-cookie-httponly-disabled', cwe: 'CWE-1004', desc: 'CSRF_COOKIE_HTTPONLY disabled in source', severity: 'medium' },
   { id: 'py/csrf-cookie-samesite-disabled', cwe: 'CWE-352', desc: 'CSRF_COOKIE_SAMESITE disabled in source', severity: 'medium' },
+  { id: 'py/csrf-exempt', cwe: 'CWE-352', desc: 'View marked csrf_exempt', severity: 'high' },
 ];
 
 const goRules = [
