@@ -149,6 +149,7 @@ foxguard currently supports a useful Semgrep-compatible subset for local rule lo
 That subset now includes regex clauses such as `pattern-regex` and `pattern-not-regex` in addition to the AST-style operators listed in [`COMPATIBILITY.md`](./COMPATIBILITY.md).
 It also supports rule-level path scoping with `paths.include` and `paths.exclude`.
 It now also supports `metavariable-regex` for regex-constraining bound metavariables inside `patterns`.
+It also supports `pattern-not-inside` for excluding matches that appear inside known-safe wrapper contexts.
 
 See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the supported subset and the intended built-ins-first workflow.
 

@@ -200,3 +200,35 @@ rules:
     );
     assert!(findings[0].snippet.contains("user_input"));
 }
+
+#[test]
+fn test_pattern_not_inside_support_on_fixture() {
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(
+        br#"
+rules:
+  - id: redirect-outside-helpers
+    patterns:
+      - pattern: redirect(...)
+      - pattern-not-inside: |
+          def safe_redirect(...):
+            ...
+    message: redirect outside helper
+    severity: WARNING
+    languages: [python]
+"#,
+    )
+    .unwrap();
+
+    let source = "def safe_redirect(url):\n    return redirect(url)\n\ndef do_redirect(url):\n    return redirect(url)\n";
+    let tree = parse_file(source, Language::Python).unwrap();
+    let rules = parse_semgrep_file(file.path()).unwrap();
+    let findings = rules[0].check(source, &tree);
+
+    assert_eq!(
+        findings.len(),
+        1,
+        "expected pattern-not-inside to suppress helper-wrapped redirect"
+    );
+    assert_eq!(findings[0].line, 5);
+}

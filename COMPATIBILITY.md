@@ -48,6 +48,7 @@ Pattern operators:
 - `pattern-either`
 - `pattern-not`
 - `pattern-not-regex`
+- `pattern-not-inside`
 - `pattern-inside`
 - `patterns`
 

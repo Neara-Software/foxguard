@@ -29,6 +29,8 @@ pub struct SemgrepRuleYaml {
     pub pattern_not_regex: Option<String>,
     #[serde(default, rename = "pattern-inside")]
     pub pattern_inside: Option<String>,
+    #[serde(default, rename = "pattern-not-inside")]
+    pub pattern_not_inside: Option<String>,
     #[serde(default)]
     pub patterns: Option<Vec<PatternClause>>,
     pub message: String,
@@ -60,6 +62,8 @@ pub struct PatternClause {
     pub pattern_not_regex: Option<String>,
     #[serde(default, rename = "pattern-inside")]
     pub pattern_inside: Option<String>,
+    #[serde(default, rename = "pattern-not-inside")]
+    pub pattern_not_inside: Option<String>,
     #[serde(default, rename = "pattern-either")]
     pub pattern_either: Option<Vec<PatternEntry>>,
     #[serde(default, rename = "metavariable-regex")]
@@ -127,6 +131,7 @@ pub enum PatternMatcher {
         positives: Vec<PatternMatcher>,
         negatives: Vec<NegativeMatcher>,
         inside: Option<String>,
+        not_inside: Option<String>,
         metavariable_regexes: Vec<MetavariableRegexConstraint>,
     },
 }
@@ -282,12 +287,23 @@ fn match_pattern_in_tree(
             positives,
             negatives,
             inside,
+            not_inside,
             metavariable_regexes,
         } => {
             // If we have an inside pattern, only search within matching contexts
             let search_roots = if let Some(inside_pat) = inside {
                 let inside_matches = match_single_pattern(inside_pat, root, source, lang);
                 inside_matches
+                    .iter()
+                    .map(|m| (m.start_byte, m.end_byte))
+                    .collect::<Vec<_>>()
+            } else {
+                vec![]
+            };
+
+            let excluded_roots = if let Some(not_inside_pat) = not_inside {
+                let excluded_matches = match_single_pattern(not_inside_pat, root, source, lang);
+                excluded_matches
                     .iter()
                     .map(|m| (m.start_byte, m.end_byte))
                     .collect::<Vec<_>>()
@@ -317,6 +333,14 @@ fn match_pattern_in_tree(
             if !search_roots.is_empty() {
                 results.retain(|r| {
                     search_roots
+                        .iter()
+                        .any(|(start, end)| r.start_byte >= *start && r.end_byte <= *end)
+                });
+            }
+
+            if !excluded_roots.is_empty() {
+                results.retain(|r| {
+                    !excluded_roots
                         .iter()
                         .any(|(start, end)| r.start_byte >= *start && r.end_byte <= *end)
                 });
@@ -758,6 +782,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml) -> Result<PatternMatcher, String> {
         let mut positives = Vec::new();
         let mut negatives = Vec::new();
         let mut inside = None;
+        let mut not_inside = None;
         let mut metavariable_regexes = Vec::new();
 
         for clause in clauses {
@@ -776,6 +801,9 @@ fn build_matcher(yaml: &SemgrepRuleYaml) -> Result<PatternMatcher, String> {
             if let Some(ref pi) = clause.pattern_inside {
                 inside = Some(pi.clone());
             }
+            if let Some(ref pni) = clause.pattern_not_inside {
+                not_inside = Some(pni.clone());
+            }
             if let Some(ref pe) = clause.pattern_either {
                 let matchers = build_either_matchers(pe)?;
                 positives.push(PatternMatcher::Either(matchers));
@@ -789,6 +817,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml) -> Result<PatternMatcher, String> {
             positives,
             negatives,
             inside,
+            not_inside,
             metavariable_regexes,
         });
     }
@@ -812,7 +841,11 @@ fn build_matcher(yaml: &SemgrepRuleYaml) -> Result<PatternMatcher, String> {
         negatives.push(NegativeMatcher::Regex(compile_regex(regex)?));
     }
 
-    if positives.len() == 1 && negatives.is_empty() && yaml.pattern_inside.is_none() {
+    if positives.len() == 1
+        && negatives.is_empty()
+        && yaml.pattern_inside.is_none()
+        && yaml.pattern_not_inside.is_none()
+    {
         return Ok(positives.into_iter().next().unwrap());
     }
 
@@ -821,6 +854,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml) -> Result<PatternMatcher, String> {
             positives,
             negatives,
             inside: yaml.pattern_inside.clone(),
+            not_inside: yaml.pattern_not_inside.clone(),
             metavariable_regexes: Vec::new(),
         });
     }
@@ -1151,5 +1185,29 @@ rules:
         let findings = rules[0].check(source, &tree);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].line, 1);
+    }
+
+    #[test]
+    fn test_pattern_not_inside_excludes_nested_matches() {
+        let yaml = r#"
+rules:
+  - id: redirect-outside-helpers
+    patterns:
+      - pattern: redirect(...)
+      - pattern-not-inside: |
+          def safe_redirect(...):
+            ...
+    message: redirect outside helper
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "def safe_redirect(url):\n    return redirect(url)\n\ndef do_redirect(url):\n    return redirect(url)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 5);
     }
 }
