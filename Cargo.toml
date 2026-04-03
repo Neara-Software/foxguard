@@ -2,7 +2,7 @@
 name = "foxguard"
 version = "0.1.0"
 edition = "2021"
-description = "Fast local security guard for changed files, built-in rules, and Semgrep-compatible YAML."
+description = "Security scanner as fast as a linter. 118 built-in rules, 9 languages, sub-second scans."
 license = "MIT"
 repository = "https://github.com/peaktwilight/foxguard"
 homepage = "https://foxguard.dev"
