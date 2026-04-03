@@ -36,11 +36,18 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+  badge-label:
+    description: "Custom label for the badge (default: foxguard)"
+    required: false
+    default: "foxguard"
+
 outputs:
   findings-count:
     description: "Number of findings detected"
   sarif-file:
     description: "Path to the SARIF output file"
+  badge-json:
+    description: "Path to shields.io endpoint JSON file for dynamic badges"
 
 runs:
   using: "composite"
@@ -55,4 +62,5 @@ runs:
         INPUT_FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
         INPUT_UPLOAD_SARIF: ${{ inputs.upload-sarif }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_BADGE_LABEL: ${{ inputs.badge-label }}
       run: ${{ github.action_path }}/entrypoint.sh

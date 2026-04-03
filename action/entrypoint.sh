@@ -107,6 +107,32 @@ echo "sarif-file=${SARIF_FILE}" >> "${GITHUB_OUTPUT:-/dev/null}"
 
 echo "Findings: ${FINDINGS_COUNT}"
 
+# ─── Generate badge JSON (shields.io endpoint format) ────────────────────────
+
+BADGE_LABEL="${INPUT_BADGE_LABEL:-foxguard}"
+BADGE_FILE="${RUNNER_TEMP:-/tmp}/foxguard-badge.json"
+
+if [ "${FINDINGS_COUNT}" = "0" ]; then
+    BADGE_MESSAGE="clean"
+    BADGE_COLOR="2dd4bf"
+else
+    BADGE_MESSAGE="${FINDINGS_COUNT} issue(s)"
+    BADGE_COLOR="f59e0b"
+fi
+
+cat > "${BADGE_FILE}" <<BADGE_EOF
+{
+  "schemaVersion": 1,
+  "label": "${BADGE_LABEL}",
+  "message": "${BADGE_MESSAGE}",
+  "color": "${BADGE_COLOR}",
+  "namedLogo": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSI+PHBhdGggZD0iTTggOEwyMCAyOEwzMiAyMEw0NCAyOEw1NiA4TDUyIDMyTDQ0IDQ0TDM2IDUySDI4TDIwIDQ0TDEyIDMyTDggOFoiIGZpbGw9IiNGNTlFMEIiIGZpbGwtb3BhY2l0eT0iMC4yNSIgc3Ryb2tlPSIjRjU5RTBCIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48Y2lyY2xlIGN4PSIyNCIgY3k9IjMyIiByPSIyLjUiIGZpbGw9IiNGNTlFMEIiLz48Y2lyY2xlIGN4PSI0MCIgY3k9IjMyIiByPSIyLjUiIGZpbGw9IiNGNTlFMEIiLz48L3N2Zz4="
+}
+BADGE_EOF
+
+echo "badge-json=${BADGE_FILE}" >> "${GITHUB_OUTPUT:-/dev/null}"
+echo "Badge JSON written to: ${BADGE_FILE}"
+
 # ─── Upload SARIF ────────────────────────────────────────────────────────────
 
 if [ "${FORMAT}" = "sarif" ] && [ "${UPLOAD_SARIF}" = "true" ] && [ -f "${SARIF_FILE}" ] && [ -s "${SARIF_FILE}" ]; then
