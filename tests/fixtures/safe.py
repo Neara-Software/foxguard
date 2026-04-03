@@ -31,6 +31,8 @@ CSRF_COOKIE_HTTPONLY = True
 CSRF_COOKIE_SAMESITE = "Lax"
 WTF_CSRF_ENABLED = True
 WTF_CSRF_CHECK_DEFAULT = True
+ALLOWED_HOSTS = ["example.com", "api.example.com"]
+SECURE_SSL_REDIRECT = True
 requests.get("https://api.example.com/health")
 os.remove("/tmp/fixed-name.txt")
 

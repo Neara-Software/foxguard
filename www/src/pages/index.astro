@@ -53,6 +53,8 @@ const pyRules = [
   { id: 'py/csrf-exempt', cwe: 'CWE-352', desc: 'View marked csrf_exempt', severity: 'high' },
   { id: 'py/wtf-csrf-disabled', cwe: 'CWE-352', desc: 'Flask-WTF CSRF protection disabled in source', severity: 'high' },
   { id: 'py/wtf-csrf-check-default-disabled', cwe: 'CWE-352', desc: 'Flask-WTF default CSRF checks disabled in source', severity: 'high' },
+  { id: 'py/django-allowed-hosts-wildcard', cwe: 'CWE-346', desc: 'Django ALLOWED_HOSTS allows all hosts', severity: 'medium' },
+  { id: 'py/secure-ssl-redirect-disabled', cwe: 'CWE-319', desc: 'Django SECURE_SSL_REDIRECT disabled in source', severity: 'medium' },
 ];
 
 const goRules = [

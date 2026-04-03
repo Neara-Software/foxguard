@@ -46,6 +46,12 @@ WTF_CSRF_ENABLED = False
 # py/wtf-csrf-check-default-disabled
 WTF_CSRF_CHECK_DEFAULT = False
 
+# py/django-allowed-hosts-wildcard
+ALLOWED_HOSTS = ["*"]
+
+# py/secure-ssl-redirect-disabled
+SECURE_SSL_REDIRECT = False
+
 # py/no-ssrf
 requests.get(request.args["url"])
 

@@ -165,8 +165,8 @@ fn test_vulnerable_py_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        28,
-        "vulnerable.py should have 28 findings, got {}",
+        30,
+        "vulnerable.py should have 30 findings, got {}",
         findings.len()
     );
 
@@ -200,6 +200,8 @@ fn test_vulnerable_py_finds_all_rules() {
         "py/csrf-exempt",
         "py/wtf-csrf-disabled",
         "py/wtf-csrf-check-default-disabled",
+        "py/django-allowed-hosts-wildcard",
+        "py/secure-ssl-redirect-disabled",
     ];
 
     for rule in &expected_rules {
