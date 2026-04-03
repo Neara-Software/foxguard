@@ -81,3 +81,5 @@ That makes them closer to compatibility smoke tests than a comprehensive securit
 ## Results
 
 After running `./benchmarks/run.sh`, see `results-default.md` or `results-compat.md` in this directory for the latest local snapshot.
+
+If Semgrep or OpenGrep is unavailable on the machine where you run the suite, the corresponding result columns will show `N/A` rather than stale cached numbers.
