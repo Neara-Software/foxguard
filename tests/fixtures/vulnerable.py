@@ -25,6 +25,15 @@ SESSION_COOKIE_HTTPONLY = False
 # py/session-cookie-samesite-disabled
 SESSION_COOKIE_SAMESITE = "None"
 
+# py/csrf-cookie-secure-disabled
+CSRF_COOKIE_SECURE = False
+
+# py/csrf-cookie-httponly-disabled
+CSRF_COOKIE_HTTPONLY = False
+
+# py/csrf-cookie-samesite-disabled
+CSRF_COOKIE_SAMESITE = "None"
+
 # py/no-ssrf
 requests.get(request.args["url"])
 

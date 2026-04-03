@@ -73,7 +73,10 @@ const token = jwt.sign({ sub: userId }, "hardcoded-jwt-secret");
 // 21. js/jwt-none-algorithm (High)
 const insecureToken = jwt.verify(token, publicKey, { algorithms: ["none"] });
 
-// 22. js/express-direct-response-write (High)
+// 22. js/jwt-ignore-expiration (High)
+const expiredToken = jwt.verify(token, publicKey, { ignoreExpiration: true });
+
+// 23. js/express-direct-response-write (High)
 function handler(req, res) {
   res.send(req.query.name);
 }

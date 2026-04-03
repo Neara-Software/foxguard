@@ -155,12 +155,12 @@ See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for the supported subset and the in
 
 ## Built-in coverage
 
-foxguard currently ships with 46 built-in code rules across 3 languages:
+foxguard currently ships with 50 built-in code rules across 3 languages:
 
 | Language | Rules | Frameworks |
 |----------|-------|------------|
-| JavaScript/TypeScript | 20 | Express, outbound request checks, JWT flows |
-| Python | 18 | Flask, Django, outbound request checks |
+| JavaScript/TypeScript | 21 | Express, outbound request checks, JWT flows |
+| Python | 21 | Flask, Django, outbound request checks |
 | Go | 8 | Gin, net/http request flows, TLS transport checks |
 
 Examples of included checks:

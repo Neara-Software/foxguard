@@ -1286,3 +1286,177 @@ impl Rule for SessionCookieSameSiteDisabled {
         findings
     }
 }
+
+// ─── Rule 18: csrf-cookie-secure-disabled ─────────────────────────────────
+
+pub struct CsrfCookieSecureDisabled;
+
+impl Rule for CsrfCookieSecureDisabled {
+    fn id(&self) -> &str {
+        "py/csrf-cookie-secure-disabled"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-614")
+    }
+    fn description(&self) -> &str {
+        "CSRF_COOKIE_SECURE disabled in source code"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "assignment" {
+                return;
+            }
+
+            let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) else {
+                return;
+            };
+
+            let left_text = &src[left.byte_range()];
+            let right_text = &src[right.byte_range()];
+            let is_csrf_cookie_secure =
+                left_text == "CSRF_COOKIE_SECURE" || left_text.contains("CSRF_COOKIE_SECURE");
+            if is_csrf_cookie_secure && right_text == "False" {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "CSRF_COOKIE_SECURE = False — CSRF cookies may be sent over HTTP",
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}
+
+// ─── Rule 19: csrf-cookie-httponly-disabled ───────────────────────────────
+
+pub struct CsrfCookieHttpOnlyDisabled;
+
+impl Rule for CsrfCookieHttpOnlyDisabled {
+    fn id(&self) -> &str {
+        "py/csrf-cookie-httponly-disabled"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-1004")
+    }
+    fn description(&self) -> &str {
+        "CSRF_COOKIE_HTTPONLY disabled in source code"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "assignment" {
+                return;
+            }
+
+            let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) else {
+                return;
+            };
+
+            let left_text = &src[left.byte_range()];
+            let right_text = &src[right.byte_range()];
+            let is_csrf_cookie_httponly =
+                left_text == "CSRF_COOKIE_HTTPONLY" || left_text.contains("CSRF_COOKIE_HTTPONLY");
+            if is_csrf_cookie_httponly && right_text == "False" {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "CSRF_COOKIE_HTTPONLY = False — CSRF cookies may be exposed to client-side scripts",
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}
+
+// ─── Rule 20: csrf-cookie-samesite-disabled ───────────────────────────────
+
+pub struct CsrfCookieSameSiteDisabled;
+
+impl Rule for CsrfCookieSameSiteDisabled {
+    fn id(&self) -> &str {
+        "py/csrf-cookie-samesite-disabled"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-352")
+    }
+    fn description(&self) -> &str {
+        "CSRF_COOKIE_SAMESITE disabled in source code"
+    }
+    fn language(&self) -> Language {
+        Language::Python
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "assignment" {
+                return;
+            }
+
+            let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) else {
+                return;
+            };
+
+            let left_text = &src[left.byte_range()];
+            let right_text = &src[right.byte_range()];
+            let is_csrf_cookie_samesite =
+                left_text == "CSRF_COOKIE_SAMESITE" || left_text.contains("CSRF_COOKIE_SAMESITE");
+            let disabled = right_text == "None"
+                || right_text == "\"None\""
+                || right_text == "'None'"
+                || right_text == "\"none\""
+                || right_text == "'none'"
+                || right_text == "False";
+            if is_csrf_cookie_samesite && disabled {
+                findings.push(make_finding(
+                    self.id(),
+                    self.severity(),
+                    self.cwe(),
+                    "CSRF_COOKIE_SAMESITE disabled — set it to 'Lax' or 'Strict' to reduce CSRF risk",
+                    node,
+                    src,
+                ));
+            }
+        });
+
+        findings
+    }
+}

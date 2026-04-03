@@ -1359,7 +1359,75 @@ impl Rule for JwtNoneAlgorithm {
     }
 }
 
-// ─── Rule 19: no-cors-star ─────────────────────────────────────────────────
+// ─── Rule 19: jwt-ignore-expiration ────────────────────────────────────────
+
+pub struct JwtIgnoreExpiration;
+
+impl Rule for JwtIgnoreExpiration {
+    fn id(&self) -> &str {
+        "js/jwt-ignore-expiration"
+    }
+    fn severity(&self) -> Severity {
+        Severity::High
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-613")
+    }
+    fn description(&self) -> &str {
+        "JWT verification configured to ignore token expiration"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() != "call_expression" {
+                return;
+            }
+
+            let Some(func) = node.child_by_field_name("function") else {
+                return;
+            };
+            let func_text = &src[func.byte_range()];
+            if func_text != "jwt.verify" && func_text != "jsonwebtoken.verify" {
+                return;
+            }
+
+            let Some(args) = node.child_by_field_name("arguments") else {
+                return;
+            };
+            let Some(options_arg) = args.named_child(2) else {
+                return;
+            };
+            if options_arg.kind() != "object" {
+                return;
+            }
+
+            let options_text = &src[options_arg.byte_range()];
+            let ignores_expiration = options_text.contains("ignoreExpiration: true")
+                || options_text.contains("ignoreExpiration:true");
+            if !ignores_expiration {
+                return;
+            }
+
+            findings.push(make_finding(
+                self.id(),
+                self.severity(),
+                self.cwe(),
+                "JWT verification ignores expiration — reject expired tokens instead of setting ignoreExpiration: true",
+                node,
+                src,
+            ));
+        });
+
+        findings
+    }
+}
+
+// ─── Rule 20: no-cors-star ─────────────────────────────────────────────────
 
 pub struct NoCorsStar;
 
