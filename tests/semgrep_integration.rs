@@ -168,3 +168,35 @@ rules:
     assert!(!rule.applies_to_path(Path::new("tests/main.py")));
     assert!(!rule.applies_to_path(Path::new("src/generated/main.py")));
 }
+
+#[test]
+fn test_metavariable_regex_support_on_fixture() {
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(
+        br#"
+rules:
+  - id: user-input-only
+    patterns:
+      - pattern: '"..." + $VAR'
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: ^user_input$
+    message: user input only
+    severity: ERROR
+    languages: [python]
+"#,
+    )
+    .unwrap();
+
+    let rules = parse_semgrep_file(file.path()).unwrap();
+    let source = "query = \"SELECT \" + user_input\nquery2 = \"SELECT \" + safe_value\n";
+    let tree = parse_file(source, Language::Python).unwrap();
+    let findings = rules[0].check(source, &tree);
+
+    assert_eq!(
+        findings.len(),
+        1,
+        "expected metavariable-regex to keep user_input only"
+    );
+    assert!(findings[0].snippet.contains("user_input"));
+}

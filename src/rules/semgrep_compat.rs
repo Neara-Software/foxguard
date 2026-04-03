@@ -62,6 +62,8 @@ pub struct PatternClause {
     pub pattern_inside: Option<String>,
     #[serde(default, rename = "pattern-either")]
     pub pattern_either: Option<Vec<PatternEntry>>,
+    #[serde(default, rename = "metavariable-regex")]
+    pub metavariable_regex: Option<SemgrepMetavariableRegexClause>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,6 +85,12 @@ pub struct SemgrepPaths {
     pub include: Vec<String>,
     #[serde(default)]
     pub exclude: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SemgrepMetavariableRegexClause {
+    pub metavariable: String,
+    pub regex: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -119,6 +127,7 @@ pub enum PatternMatcher {
         positives: Vec<PatternMatcher>,
         negatives: Vec<NegativeMatcher>,
         inside: Option<String>,
+        metavariable_regexes: Vec<MetavariableRegexConstraint>,
     },
 }
 
@@ -132,6 +141,12 @@ pub enum NegativeMatcher {
 pub struct PathFilter {
     include: Option<GlobSet>,
     exclude: Option<GlobSet>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MetavariableRegexConstraint {
+    metavariable: String,
+    regex: Regex,
 }
 
 impl Rule for SemgrepRule {
@@ -214,6 +229,21 @@ impl PathFilter {
     }
 }
 
+impl MetavariableRegexConstraint {
+    fn from_yaml(clause: &SemgrepMetavariableRegexClause) -> Result<Self, String> {
+        Ok(Self {
+            metavariable: clause.metavariable.clone(),
+            regex: compile_regex(&clause.regex)?,
+        })
+    }
+
+    fn matches(&self, bindings: &HashMap<String, String>) -> bool {
+        bindings
+            .get(&self.metavariable)
+            .is_some_and(|value| self.regex.is_match(value))
+    }
+}
+
 // ─── Pattern Matching Engine ────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -225,6 +255,7 @@ struct MatchRange {
     end_line: usize,
     end_column: usize,
     snippet: String,
+    bindings: HashMap<String, String>,
 }
 
 type MatchResult = Vec<MatchRange>;
@@ -251,6 +282,7 @@ fn match_pattern_in_tree(
             positives,
             negatives,
             inside,
+            metavariable_regexes,
         } => {
             // If we have an inside pattern, only search within matching contexts
             let search_roots = if let Some(inside_pat) = inside {
@@ -269,12 +301,7 @@ fn match_pattern_in_tree(
                 let matches = match_pattern_in_tree(pos, root, source, lang);
                 candidates = Some(match candidates {
                     None => matches,
-                    Some(prev) => {
-                        // Intersection: keep only matches that overlap in source.
-                        prev.into_iter()
-                            .filter(|p| matches.iter().any(|m| ranges_overlap(p, m)))
-                            .collect()
-                    }
+                    Some(prev) => intersect_match_sets(prev, matches),
                 });
             }
 
@@ -293,6 +320,10 @@ fn match_pattern_in_tree(
                         .iter()
                         .any(|(start, end)| r.start_byte >= *start && r.end_byte <= *end)
                 });
+            }
+
+            for constraint in metavariable_regexes {
+                results.retain(|r| constraint.matches(&r.bindings));
             }
 
             results
@@ -344,6 +375,7 @@ fn match_regex_pattern(regex: &Regex, source: &str) -> MatchResult {
                 end_line,
                 end_column,
                 snippet: get_source_line(source, matched.start()),
+                bindings: HashMap::new(),
             }
         })
         .collect()
@@ -396,6 +428,7 @@ fn walk_and_match(
             end_line: end.row + 1,
             end_column: end.column + 1,
             snippet: get_source_line(source, node.start_byte()),
+            bindings,
         });
         // Don't recurse into children of a matched node to avoid duplicates
         return;
@@ -645,6 +678,49 @@ fn ranges_overlap(left: &MatchRange, right: &MatchRange) -> bool {
     left.start_byte < right.end_byte && right.start_byte < left.end_byte
 }
 
+fn merge_bindings(
+    left: &HashMap<String, String>,
+    right: &HashMap<String, String>,
+) -> Option<HashMap<String, String>> {
+    let mut merged = left.clone();
+
+    for (key, value) in right {
+        if let Some(existing) = merged.get(key) {
+            if existing != value {
+                return None;
+            }
+        } else {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+
+    Some(merged)
+}
+
+fn intersect_match_sets(left: Vec<MatchRange>, right: Vec<MatchRange>) -> Vec<MatchRange> {
+    let mut merged = Vec::new();
+
+    for left_match in left {
+        for right_match in &right {
+            if !ranges_overlap(&left_match, right_match) {
+                continue;
+            }
+
+            let Some(bindings) = merge_bindings(&left_match.bindings, &right_match.bindings) else {
+                continue;
+            };
+
+            let mut combined = left_match.clone();
+            combined.bindings = bindings;
+            merged.push(combined);
+        }
+    }
+
+    merged.sort_by_key(|r| (r.start_byte, r.end_byte));
+    merged.dedup_by_key(|r| (r.start_byte, r.end_byte));
+    merged
+}
+
 fn match_negative_pattern(
     negative: &NegativeMatcher,
     root: tree_sitter::Node,
@@ -682,6 +758,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml) -> Result<PatternMatcher, String> {
         let mut positives = Vec::new();
         let mut negatives = Vec::new();
         let mut inside = None;
+        let mut metavariable_regexes = Vec::new();
 
         for clause in clauses {
             if let Some(ref p) = clause.pattern {
@@ -703,12 +780,16 @@ fn build_matcher(yaml: &SemgrepRuleYaml) -> Result<PatternMatcher, String> {
                 let matchers = build_either_matchers(pe)?;
                 positives.push(PatternMatcher::Either(matchers));
             }
+            if let Some(ref mr) = clause.metavariable_regex {
+                metavariable_regexes.push(MetavariableRegexConstraint::from_yaml(mr)?);
+            }
         }
 
         return Ok(PatternMatcher::Combined {
             positives,
             negatives,
             inside,
+            metavariable_regexes,
         });
     }
 
@@ -740,6 +821,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml) -> Result<PatternMatcher, String> {
             positives,
             negatives,
             inside: yaml.pattern_inside.clone(),
+            metavariable_regexes: Vec::new(),
         });
     }
 
@@ -1041,6 +1123,30 @@ rules:
         let rules = parse_semgrep_file(f.path()).unwrap();
 
         let source = "password = \"supersecret\"\nnot_password = \"safe\"\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 1);
+    }
+
+    #[test]
+    fn test_metavariable_regex_filters_bound_matches() {
+        let yaml = r#"
+rules:
+  - id: user-input-only
+    patterns:
+      - pattern: '"..." + $VAR'
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: ^user_input$
+    message: user input only
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "query = \"SELECT \" + user_input\nquery2 = \"SELECT \" + safe_value\n";
         let tree = parse_file(source, Language::Python).unwrap();
         let findings = rules[0].check(source, &tree);
         assert_eq!(findings.len(), 1);

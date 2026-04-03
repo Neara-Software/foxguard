@@ -56,6 +56,10 @@ Rule scoping:
 - `paths.include`
 - `paths.exclude`
 
+Metavariable filtering:
+
+- `metavariable-regex`
+
 Language mapping:
 
 - JavaScript / TypeScript

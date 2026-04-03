@@ -14,6 +14,7 @@ Secrets mode also supports path-scoped excludes and per-rule ignores for fixture
 foxguard can also auto-discover a repo config file such as `.foxguard.yml` for shared baselines, rule paths, and secrets defaults.
 The Semgrep-compatible subset also supports regex clauses like `pattern-regex` and `pattern-not-regex`.
 It also supports rule-level path filters like `paths.include` and `paths.exclude`.
+It also supports `metavariable-regex` for filtering bound metavariables in structural rules.
 
 Local-first workflow:
 
