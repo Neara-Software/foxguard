@@ -103,7 +103,7 @@ impl Rule for NoSqlInjection {
     fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
         let mut findings = Vec::new();
         let sql_pattern =
-            Regex::new(r"(?i)(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|EXEC)\s").unwrap();
+            Regex::new(r"(?i)(SELECT\s+.{0,40}\s+FROM|INSERT\s+INTO|UPDATE\s+.{0,40}\s+SET|DELETE\s+FROM|DROP\s+TABLE|ALTER\s+TABLE|CREATE\s+TABLE|EXEC\s+)").unwrap();
 
         walk_tree(tree.root_node(), source, &mut |node, src| {
             // Detect: "SELECT ... WHERE id = " + userId (binary_expression with +)
