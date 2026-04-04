@@ -71,6 +71,58 @@ pub fn scan_paths_with_root(root: &Path, paths: &[PathBuf], registry: &RuleRegis
     scan_files(scan_root(root), files, registry)
 }
 
+/// Check if a file path is in a directory that typically contains
+/// test fixtures, vendored code, or generated assets.
+fn is_noise_path(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    let noise_dirs = [
+        "/vendor/",
+        "/node_modules/",
+        "/__fixtures__/",
+        "/__mocks__/",
+        "/dist/",
+        "/build/",
+        "/.next/",
+        "/coverage/",
+        "/.cache/",
+    ];
+    for dir in &noise_dirs {
+        if path_str.contains(dir) {
+            return true;
+        }
+    }
+    // Skip .min.js / .min.css files
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+    if name.contains(".min.") {
+        return true;
+    }
+    false
+}
+
+/// Detect minified files: very long lines suggest bundled/compiled code.
+fn is_minified(source: &str) -> bool {
+    // If file is small, it's not minified
+    if source.len() < 2000 {
+        return false;
+    }
+    // Check the first line — minified files usually have one huge line
+    if let Some(first_newline) = source.find('\n') {
+        if first_newline > 1000 {
+            return true;
+        }
+    } else {
+        // No newline at all and file is over 2KB — definitely minified
+        return source.len() > 2000;
+    }
+    // Check average line length
+    let line_count = source.bytes().filter(|b| *b == b'\n').count().max(1);
+    let avg_line_len = source.len() / line_count;
+    avg_line_len > 300
+}
+
 fn scan_files(
     scan_root: &Path,
     files: Vec<(PathBuf, Language)>,
@@ -81,9 +133,19 @@ fn scan_files(
     let findings = Mutex::new(Vec::new());
 
     files.par_iter().for_each(|(path, language)| {
+        // Skip files in test/vendor/fixture directories
+        if is_noise_path(path) {
+            return;
+        }
+
         let Ok(source) = std::fs::read_to_string(path) else {
             return;
         };
+
+        // Skip minified files (likely bundled/compiled assets)
+        if is_minified(&source) {
+            return;
+        }
 
         let Some(tree) = super::parser::parse_file(&source, *language) else {
             return;
