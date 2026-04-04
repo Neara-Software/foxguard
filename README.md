@@ -20,6 +20,10 @@
 
 ---
 
+<p align="center">
+  <img src="assets/demo.gif" alt="foxguard demo" width="640" />
+</p>
+
 Most security scanners take 10–30 seconds. foxguard finishes in under one. Fast enough to run on every save, not just in CI.
 
 ```sh
