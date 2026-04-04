@@ -1750,3 +1750,74 @@ impl Rule for NoCorsStar {
         findings
     }
 }
+
+// ─── Rule: no-unsafe-format-string ───────────────────────────────────────────
+
+pub struct NoUnsafeFormatString;
+
+impl Rule for NoUnsafeFormatString {
+    fn id(&self) -> &str {
+        "js/no-unsafe-format-string"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+    fn cwe(&self) -> Option<&str> {
+        Some("CWE-134")
+    }
+    fn description(&self) -> &str {
+        "Template literal with variables in console/logging function may enable log injection"
+    }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
+
+    fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        walk_tree(tree.root_node(), source, &mut |node, src| {
+            if node.kind() == "call_expression" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let func_text = &src[func.byte_range()];
+                    // console.error, console.log, console.warn, console.info, util.format
+                    if matches!(
+                        func_text,
+                        "console.error"
+                            | "console.log"
+                            | "console.warn"
+                            | "console.info"
+                            | "util.format"
+                    ) {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            let mut cursor = args.walk();
+                            for arg in args.children(&mut cursor) {
+                                if arg.kind() == "template_string" {
+                                    // Check if template string has interpolation
+                                    let mut has_interpolation = false;
+                                    let mut inner_cursor = arg.walk();
+                                    for child in arg.children(&mut inner_cursor) {
+                                        if child.kind() == "template_substitution" {
+                                            has_interpolation = true;
+                                            break;
+                                        }
+                                    }
+                                    if has_interpolation {
+                                        findings.push(make_finding(
+                                            self.id(),
+                                            self.severity(),
+                                            self.cwe(),
+                                            "Template literal with variables in logging function — user-controlled values may forge log entries",
+                                            node,
+                                            src,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        findings
+    }
+}

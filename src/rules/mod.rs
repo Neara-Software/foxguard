@@ -70,6 +70,7 @@ impl RuleRegistry {
         registry.register(Box::new(javascript::JwtIgnoreExpiration));
         registry.register(Box::new(javascript::JwtDecodeWithoutVerify));
         registry.register(Box::new(javascript::JwtVerifyMissingAlgorithms));
+        registry.register(Box::new(javascript::NoUnsafeFormatString));
 
         // Register Python rules
         registry.register(Box::new(python::NoEval));
