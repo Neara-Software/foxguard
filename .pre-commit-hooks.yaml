@@ -1,0 +1,15 @@
+- id: foxguard
+  name: foxguard
+  description: Security scanner as fast as a linter
+  entry: foxguard --changed
+  language: system
+  pass_filenames: false
+  always_run: true
+
+- id: foxguard-secrets
+  name: foxguard-secrets
+  description: Scan for leaked credentials
+  entry: foxguard secrets --changed
+  language: system
+  pass_filenames: false
+  always_run: true
