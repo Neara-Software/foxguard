@@ -84,7 +84,9 @@ impl Rule for NoEval {
             };
 
             if let Some(name) = method_name {
-                if name == "eval" || name == "instance_eval" || name == "class_eval" {
+                // Only flag eval and instance_eval — class_eval/module_eval are
+                // standard Ruby metaprogramming patterns used by every framework
+                if name == "eval" || name == "instance_eval" {
                     findings.push(make_finding(
                         self.id(),
                         self.severity(),
