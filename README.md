@@ -55,8 +55,9 @@ WARNING 2 issues found: 1 critical, 1 high, 0 medium, 0 low
 ## Install
 
 ```sh
-npx foxguard .          # no install needed
-cargo install foxguard  # or via Rust
+npx foxguard .                      # no install needed
+brew install peaktwilight/tap/foxguard  # or via Homebrew
+cargo install foxguard              # or via Rust
 ```
 
 ## Built-in coverage
