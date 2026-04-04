@@ -7,7 +7,7 @@
 <p align="center">
   <strong>Security scanner as fast as a linter.</strong>
   <br/>
-  118 built-in rules &middot; 9 languages &middot; single Rust binary &middot; sub-second scans
+  118 built-in rules &middot; 10 languages &middot; single Rust binary &middot; sub-second scans
   <br/><br/>
   <a href="https://foxguard.dev">foxguard.dev</a> &middot; <a href="https://www.npmjs.com/package/foxguard">npm</a> &middot; <a href="https://crates.io/crates/foxguard">crates.io</a>
 </p>
@@ -46,7 +46,7 @@ WARNING 2 issues found: 1 critical, 1 high, 0 medium, 0 low
 
 - **Sub-second scans** — Rust + tree-sitter + rayon. No JVM, no Python runtime, no network calls.
 - **118 built-in rules** — SQL injection, XSS, SSRF, command injection, hardcoded secrets, weak crypto, deserialization, and framework-specific checks.
-- **9 languages** — JavaScript, TypeScript, Python, Go, Ruby, Java, PHP, Rust, C#, Swift.
+- **10 languages** — JavaScript, TypeScript, Python, Go, Ruby, Java, PHP, Rust, C#, Swift.
 - **Secrets scanning** — AWS keys, GitHub/GitLab/Slack/Stripe tokens, private keys. Redacted output.
 - **Semgrep-compatible** — Load your existing YAML rules with `--rules`. No vendor lock-in.
 - **Pre-commit ready** — `foxguard init` installs a hook. Scans only changed files with `--changed`.
