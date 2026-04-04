@@ -4,52 +4,42 @@ import CopyButton from '../ui/CopyButton.astro';
 
 <section class="py-20" id="install">
   <div class="section-divider mb-20"></div>
-  <div class="max-w-3xl mx-auto px-6">
+  <div class="max-w-2xl mx-auto px-6">
     <div class="text-center mb-12">
       <h2 class="font-heading text-2xl sm:text-3xl text-noir-50 mb-3">Install</h2>
     </div>
 
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-      <div class="bg-noir-900 border border-noir-800 rounded-xl p-5">
-        <div class="font-mono text-[10px] uppercase tracking-wider text-noir-600 mb-3">npm / npx</div>
-        <div class="flex items-center justify-between bg-noir-950 border border-noir-800 rounded-md px-4 py-2.5 font-mono text-sm text-fox">
-          <code>npx foxguard .</code>
+    <!-- Install commands -->
+    <div class="bg-noir-900 border border-noir-800 rounded-xl p-5 mb-4">
+      <div class="flex flex-col gap-3 font-mono text-sm">
+        <div class="flex items-center justify-between bg-noir-950 border border-noir-800 rounded-md px-4 py-2.5">
+          <code class="text-fox">npx foxguard .</code>
           <CopyButton text="npx foxguard ." />
         </div>
-      </div>
-      <div class="bg-noir-900 border border-noir-800 rounded-xl p-5">
-        <div class="font-mono text-[10px] uppercase tracking-wider text-noir-600 mb-3">Homebrew</div>
-        <div class="flex items-center justify-between bg-noir-950 border border-noir-800 rounded-md px-4 py-2.5 font-mono text-[11px] text-fox">
-          <code>brew install peaktwilight/tap/foxguard</code>
+        <div class="flex items-center justify-between bg-noir-950 border border-noir-800 rounded-md px-4 py-2.5">
+          <code class="text-fox">brew install peaktwilight/tap/foxguard</code>
           <CopyButton text="brew install peaktwilight/tap/foxguard" />
         </div>
-      </div>
-      <div class="bg-noir-900 border border-noir-800 rounded-xl p-5">
-        <div class="font-mono text-[10px] uppercase tracking-wider text-noir-600 mb-3">Rust / Cargo</div>
-        <div class="flex items-center justify-between bg-noir-950 border border-noir-800 rounded-md px-4 py-2.5 font-mono text-sm text-fox">
-          <code>cargo install foxguard</code>
+        <div class="flex items-center justify-between bg-noir-950 border border-noir-800 rounded-md px-4 py-2.5">
+          <code class="text-fox">cargo install foxguard</code>
           <CopyButton text="cargo install foxguard" />
         </div>
       </div>
     </div>
 
     <!-- VS Code -->
-    <div class="bg-noir-900 border border-noir-800 rounded-xl p-5 mb-10">
-      <div class="flex items-center justify-between">
-        <div>
-          <div class="font-mono text-[10px] uppercase tracking-wider text-noir-600 mb-1">Editor</div>
-          <div class="text-sm text-noir-300">VS Code / Cursor extension — scans on save, shows findings as underlines</div>
-        </div>
-        <a
-          href="https://marketplace.visualstudio.com/items?itemName=peaktwilight.foxguard"
-          target="_blank"
-          rel="noopener"
-          class="shrink-0 btn-ghost text-xs no-underline hover:no-underline ml-4"
-        >
-          Install
-        </a>
+    <a
+      href="https://marketplace.visualstudio.com/items?itemName=peaktwilight.foxguard"
+      target="_blank"
+      rel="noopener"
+      class="flex items-center justify-between bg-noir-900 border border-noir-800 rounded-xl p-5 mb-10 no-underline hover:no-underline hover:border-noir-700 transition-colors"
+    >
+      <div>
+        <div class="font-mono text-[10px] uppercase tracking-wider text-noir-600 mb-1">VS Code / Cursor</div>
+        <div class="text-sm text-noir-300">Scans on save, shows findings as underlines</div>
       </div>
-    </div>
+      <span class="shrink-0 text-fox text-sm font-medium ml-4">Install &rarr;</span>
+    </a>
 
     <!-- Quick start -->
     <div class="bg-noir-900 border border-noir-800 rounded-xl p-5">
