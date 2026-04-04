@@ -107,6 +107,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo publish
+        continue-on-error: true
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -134,7 +135,7 @@ jobs:
           echo "Publishing foxguard@${TAG}"
 
       - name: Publish
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         working-directory: packages/npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
