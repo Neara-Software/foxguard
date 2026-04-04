@@ -1,0 +1,46 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+
+const posts = (await getCollection('blog')).sort((a, b) =>
+  new Date(b.data.date).getTime() - new Date(a.data.date).getTime()
+);
+---
+
+<Base title="Blog — foxguard" description="Notes on security scanning, rule development, and what we find in real codebases.">
+  <main class="pt-16 pb-24">
+    <div class="max-w-2xl mx-auto px-6">
+
+      <header class="mb-16">
+        <a href="/" class="text-noir-600 text-sm hover:text-noir-400 transition-colors no-underline mb-6 block">&larr; foxguard.dev</a>
+        <h1 class="font-heading text-2xl sm:text-3xl text-noir-50 tracking-tight mb-3">Blog</h1>
+        <p class="text-noir-500 text-sm leading-relaxed">Notes on security scanning, what we find in real codebases, and how the rules work.</p>
+      </header>
+
+      <ul class="space-y-10 list-none pl-0">
+        {posts.map((post) => {
+          const displayDate = new Date(post.data.date + 'T00:00:00').toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          });
+          return (
+            <li>
+              <a href={`/blog/${post.id}`} class="group block no-underline">
+                <time datetime={post.data.date} class="text-xs text-noir-600 font-mono">{displayDate}</time>
+                <h2 class="text-lg font-semibold text-noir-100 mt-1 mb-2 group-hover:text-fox transition-colors">{post.data.title}</h2>
+                <p class="text-sm text-noir-500 leading-relaxed">{post.data.description}</p>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+
+    </div>
+  </main>
+
+  <footer class="py-8 text-center text-[11px] text-noir-600 font-mono">
+    <div class="section-divider mb-8"></div>
+    <a href="/" class="text-noir-500 hover:text-fox transition-colors no-underline">foxguard.dev</a>
+  </footer>
+</Base>

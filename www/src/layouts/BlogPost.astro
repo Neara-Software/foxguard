@@ -1,0 +1,170 @@
+---
+import Base from './Base.astro';
+
+interface Props {
+  title: string;
+  date: string;
+  description: string;
+  readTime?: string;
+}
+
+const { title, date, description, readTime } = Astro.props;
+
+const displayDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+});
+---
+
+<Base title={`${title} — foxguard`} description={description}>
+  <main class="pt-16 pb-24">
+    <article class="max-w-2xl mx-auto px-6">
+
+      <header class="mb-12">
+        <a href="/blog" class="text-noir-600 text-sm hover:text-noir-400 transition-colors no-underline mb-6 block">&larr; blog</a>
+        <div class="flex items-center gap-3 text-sm text-noir-600 mb-4">
+          <time datetime={date}>{displayDate}</time>
+          {readTime && (
+            <>
+              <span>&middot;</span>
+              <span>{readTime}</span>
+            </>
+          )}
+        </div>
+        <h1 class="font-heading text-2xl sm:text-3xl text-noir-50 tracking-tight leading-tight mb-4">
+          {title}
+        </h1>
+        <p class="text-lg text-noir-400 leading-relaxed">
+          {description}
+        </p>
+      </header>
+
+      <div class="blog-prose">
+        <slot />
+      </div>
+
+    </article>
+  </main>
+
+  <footer class="py-8 text-center text-[11px] text-noir-600 font-mono">
+    <div class="section-divider mb-8"></div>
+    <a href="/" class="text-noir-500 hover:text-fox transition-colors no-underline">foxguard.dev</a>
+  </footer>
+</Base>
+
+<style is:global>
+  .blog-prose h2 {
+    font-family: var(--font-heading);
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-noir-50);
+    margin-top: 2.5rem;
+    margin-bottom: 1rem;
+    letter-spacing: -0.01em;
+  }
+
+  .blog-prose h3 {
+    font-family: var(--font-heading);
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--color-noir-100);
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .blog-prose p {
+    color: var(--color-noir-400);
+    line-height: 1.75;
+    margin-bottom: 1.25rem;
+  }
+
+  .blog-prose strong {
+    color: var(--color-noir-100);
+    font-weight: 600;
+  }
+
+  .blog-prose a {
+    color: var(--color-fox-light);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .blog-prose a:hover {
+    color: var(--color-fox);
+  }
+
+  .blog-prose ul, .blog-prose ol {
+    color: var(--color-noir-400);
+    padding-left: 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .blog-prose ul { list-style-type: disc; }
+  .blog-prose ol { list-style-type: decimal; }
+  .blog-prose li {
+    line-height: 1.75;
+    margin-bottom: 0.375rem;
+  }
+
+  .blog-prose code {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    background: var(--color-noir-800);
+    color: var(--color-fox-light);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+  }
+
+  .blog-prose pre {
+    background: var(--color-noir-900);
+    border: 1px solid var(--color-noir-800);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+  }
+  .blog-prose pre code {
+    background: none;
+    color: var(--color-noir-300);
+    padding: 0;
+    font-size: 0.8rem;
+    line-height: 1.7;
+  }
+
+  .blog-prose blockquote {
+    border-left: 2px solid var(--color-fox);
+    padding-left: 1rem;
+    margin: 1.5rem 0;
+    color: var(--color-noir-500);
+    font-style: italic;
+  }
+
+  .blog-prose table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5rem 0;
+    font-size: 0.875rem;
+  }
+  .blog-prose th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-noir-700);
+    color: var(--color-noir-200);
+    font-weight: 600;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .blog-prose td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-noir-800);
+    color: var(--color-noir-400);
+  }
+
+  .blog-prose hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--color-noir-700) 20%, var(--color-noir-700) 80%, transparent);
+    margin: 2.5rem 0;
+  }
+</style>
