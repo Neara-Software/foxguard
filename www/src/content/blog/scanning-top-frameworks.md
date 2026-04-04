@@ -13,11 +13,11 @@ I ran [foxguard](https://github.com/peaktwilight/foxguard) against the latest HE
 
 | Repository | Files | Time | Findings |
 |---|---|---|---|
-| Express.js | 141 | 0.16s | 61 |
+| Express.js | 141 | 0.15s | 60 |
 | Flask | 83 | 0.12s | 40 |
 | Gin | 99 | 0.08s | 26 |
 | Laravel | 29 | 0.01s | 1 |
-| Rails (actionpack) | 356 | 0.48s | 173 |
+| Rails (actionpack) | 356 | 0.30s | 173 |
 | Spring Petclinic | 47 | 0.02s | 4 |
 | Next.js (with-supabase) | 44 | 0.03s | 0 |
 
