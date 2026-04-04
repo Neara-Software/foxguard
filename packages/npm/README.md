@@ -1,52 +1,28 @@
 # foxguard
 
-Fast local security guard for changed files, built-in rules, and Semgrep-compatible YAML. Written in Rust.
-
-This is the npm wrapper for foxguard. It downloads the correct prebuilt binary for your platform from GitHub Releases.
-
-foxguard scans JS/TS, Python, and Go with built-in security rules by default and can load a useful Semgrep-compatible YAML subset with `--rules`.
-Built-ins now cover local code risks like SSRF client variants, file/path traversal sinks, session/cookie misconfig, transport misconfig, and framework-specific auth issues.
-Current built-ins include Express/JWT/session lifecycle checks on JavaScript plus Flask/Django session, CSRF, Flask-WTF, host, redirect, and exemption hardening checks on Python.
-
-Use `--rules` to add external rules on top of the built-ins. Use `--no-builtins --rules ...` for an external-rules-only compatibility run.
-
-It also includes a dedicated `secrets` mode for common leaked credentials and private key material, with redacted output, binary-file skipping, and baseline-safe suppression data.
-Secrets mode also supports path-scoped excludes and per-rule ignores for fixtures, generated files, or intentionally fake tokens.
-foxguard can also auto-discover a repo config file such as `.foxguard.yml` for shared baselines, rule paths, and secrets defaults.
-The Semgrep-compatible subset also supports regex clauses like `pattern-regex` and `pattern-not-regex`.
-It also supports rule-level path filters like `paths.include` and `paths.exclude`.
-It also supports `metavariable-regex` for filtering bound metavariables in structural rules.
-It also supports `pattern-not-inside` for excluding safe wrapper contexts.
-
-Local-first workflow:
-
-```sh
-npx foxguard --changed .
-npx foxguard secrets --changed .
-npx foxguard baseline --output .foxguard/baseline.json
-npx foxguard init
-```
-
-`foxguard init` also writes a starter `.foxguard.yml` when the repo does not already have one.
-
-## Usage
+Security scanner as fast as a linter. 100+ built-in rules, 10 languages, sub-second scans.
 
 ```sh
 npx foxguard .
 ```
 
-Or install globally:
+## What it does
 
-```sh
-npm install -g foxguard
-foxguard .
-```
+Scans your code for security vulnerabilities — SQL injection, XSS, SSRF, hardcoded secrets, command injection, weak crypto, unsafe deserialization, and framework-specific checks.
+
+**Languages:** JavaScript, TypeScript, Python, Go, Ruby, Java, PHP, Rust, C#, Swift.
 
 ## How it works
 
-1. If foxguard is installed via `cargo install foxguard`, the npm wrapper uses that binary directly.
-2. Otherwise, it downloads the prebuilt binary for your platform from GitHub Releases.
-3. The binary is cached in `node_modules/.cache/foxguard/` for subsequent runs.
+This is the npm wrapper. It downloads the correct prebuilt Rust binary for your platform from GitHub Releases and caches it locally.
+
+```sh
+npx foxguard .                    # scan everything
+npx foxguard --changed .          # only modified files
+npx foxguard secrets .            # leaked credentials
+npx foxguard --format sarif .     # SARIF for GitHub Code Scanning
+npx foxguard init                 # install pre-commit hook
+```
 
 ## Supported platforms
 
@@ -54,6 +30,8 @@ foxguard .
 - Linux (x64, arm64)
 - Windows (x64)
 
-## Full documentation
+## More
 
-See the [main repository](https://github.com/peaktwilight/foxguard) for full documentation, rules reference, and configuration options.
+- [GitHub](https://github.com/peaktwilight/foxguard)
+- [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=peaktwilight.foxguard)
+- [foxguard.dev](https://foxguard.dev)

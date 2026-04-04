@@ -63,6 +63,8 @@ brew install peaktwilight/tap/foxguard # Homebrew (macOS/Linux)
 cargo install foxguard                 # crates.io
 ```
 
+**Editor:** Install the [VS Code extension](https://marketplace.visualstudio.com/items?itemName=peaktwilight.foxguard) — scans on save, shows findings as underlines.
+
 ## Performance
 
 Real-world benchmarks on local codebases:
@@ -141,6 +143,19 @@ npx foxguard@latest secrets .                      # secrets
 ```md
 [![foxguard](https://img.shields.io/badge/foxguard-clean-2dd4bf?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSI+PHBhdGggZD0iTTggOEwyMCAyOEwzMiAyMEw0NCAyOEw1NiA4TDUyIDMyTDQ0IDQ0TDM2IDUySDI4TDIwIDQ0TDEyIDMyTDggOFoiIGZpbGw9IiNGNTlFMEIiIGZpbGwtb3BhY2l0eT0iMC4zIiBzdHJva2U9IiNGNTlFMEIiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjxjaXJjbGUgY3g9IjI0IiBjeT0iMzIiIHI9IjIuNSIgZmlsbD0iI0Y1OUUwQiIvPjxjaXJjbGUgY3g9IjQwIiBjeT0iMzIiIHI9IjIuNSIgZmlsbD0iI0Y1OUUwQiIvPjwvc3ZnPg==)](https://github.com/peaktwilight/foxguard)
 ```
+
+### Pre-commit
+
+```yaml
+repos:
+  - repo: https://github.com/peaktwilight/foxguard
+    rev: v0.3.2
+    hooks:
+      - id: foxguard
+      - id: foxguard-secrets
+```
+
+Or run `foxguard init` to install a git hook directly.
 
 ## Configuration
 

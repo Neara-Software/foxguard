@@ -30,9 +30,35 @@ cargo clippy -- -D warnings  # lint
 cargo fmt                # format
 ```
 
+## Project structure
+
+```
+src/              # Rust source
+  rules/          # One file per language (javascript.rs, python.rs, etc.)
+  engine/         # Scanner, parser
+  report/         # Terminal, JSON, SARIF output
+  secrets.rs      # Secrets scanning
+www/              # foxguard.dev (Astro)
+  src/data/       # Rule data for the website
+  src/content/    # Blog posts (markdown)
+vscode-extension/ # VS Code extension
+packages/npm/     # npm wrapper (downloads binary)
+action/           # GitHub Action
+demo/             # Remotion demo video
+benchmarks/       # Benchmark suite
+```
+
+## Releasing
+
+```sh
+./scripts/release.sh 0.4.0
+```
+
+This bumps all versions (Cargo, npm, VS Code), builds, tests, commits, tags, pushes, and publishes to npm + VS Code Marketplace. GitHub Release builds binaries from the tag.
+
 ## Pull requests
 
 - One feature or fix per PR
 - Include tests for new rules
 - Run `cargo fmt` and `cargo clippy` before submitting
-- Update the website data files if rule counts change (`www/src/data/`)
+- Update website data files if rule counts change (`www/src/data/`)

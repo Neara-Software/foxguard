@@ -1,33 +1,46 @@
 # foxguard for VS Code
 
-Security scanner as fast as a linter. Scans your code on save and shows findings as inline diagnostics.
+Security scanner as fast as a linter. Scans your code on every save and shows findings as underlines.
 
 ## Features
 
-- Runs `foxguard` on each file save
-- Shows findings as VS Code diagnostics (error, warning, info squiggles)
-- Supports JavaScript, TypeScript, Python, Go, Ruby, Java, PHP, Rust, C#, and Swift
-- Manual scan via the **foxguard: Scan Current File** command
+- Scans on file save and open — instant feedback
+- Status bar shows finding count
+- Supports JS/TS, Python, Go, Ruby, Java, PHP, Rust, C#, Swift
+- Critical/High → red underline, Medium → yellow, Low → blue
+- Rule IDs link to documentation
+- Workspace scan via command palette or `Cmd+Shift+G`
 
 ## Requirements
 
-Install foxguard:
+foxguard must be installed:
 
 ```sh
+brew install peaktwilight/tap/foxguard
+# or
 npm install -g foxguard
-```
-
-Or use [cargo](https://foxguard.dev):
-
-```sh
+# or
 cargo install foxguard
 ```
 
-The extension auto-detects the binary from PATH, or falls back to `npx foxguard`.
+The extension auto-detects foxguard from PATH, or falls back to npx.
 
-## Configuration
+## Settings
 
-| Setting             | Default | Description                          |
-| ------------------- | ------- | ------------------------------------ |
-| `foxguard.path`     | `""`    | Custom path to the foxguard binary   |
-| `foxguard.severity` | `low`   | Minimum severity to show (low/medium/high/critical) |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `foxguard.path` | (auto) | Custom path to foxguard binary |
+| `foxguard.severity` | `low` | Minimum severity to display |
+
+## Commands
+
+| Command | Shortcut | Description |
+|---------|----------|-------------|
+| foxguard: Scan Current File | `Cmd+Shift+G` | Scan the active file |
+| foxguard: Scan Workspace | | Scan the entire project |
+
+## Links
+
+- [GitHub](https://github.com/peaktwilight/foxguard)
+- [foxguard.dev](https://foxguard.dev)
+- [Blog](https://foxguard.dev/blog)
