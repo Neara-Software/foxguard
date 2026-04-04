@@ -2,7 +2,7 @@
   "name": "foxguard",
   "displayName": "foxguard",
   "description": "Security scanner as fast as a linter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "peaktwilight",
   "license": "MIT",
   "repository": {
@@ -10,6 +10,7 @@
     "url": "https://github.com/peaktwilight/foxguard.git"
   },
   "homepage": "https://foxguard.dev",
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -26,6 +27,18 @@
       {
         "command": "foxguard.scanFile",
         "title": "foxguard: Scan Current File"
+      },
+      {
+        "command": "foxguard.scanWorkspace",
+        "title": "foxguard: Scan Workspace"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "foxguard.scanFile",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g",
+        "when": "editorFocus"
       }
     ],
     "configuration": {
