@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/peaktwilight/foxguard/actions/workflows/ci.yml"><img src="https://github.com/peaktwilight/foxguard/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/peaktwilight/foxguard"><img src="assets/badge.svg" alt="foxguard: clean" /></a>
+  <a href="https://github.com/peaktwilight/foxguard"><img src="https://img.shields.io/badge/foxguard-clean-2dd4bf" alt="foxguard: clean" /></a>
   <a href="https://www.npmjs.com/package/foxguard"><img src="https://img.shields.io/npm/v/foxguard?color=d97706&label=npm" alt="npm" /></a>
 </p>
 
