@@ -170,7 +170,7 @@ Adding a rule is one struct implementing a trait. See [`CONTRIBUTING.md`](./CONT
 
 ---
 
-*Built by [Peak Twilight](https://doruk.ch) — also building [pwnkit](https://pwnkit.com), [vibecheck](https://vibechecked.doruk.ch), [unfuck](https://unfcked.doruk.ch), [whatdiditdo](https://whatdiditdo.doruk.ch)*
+*Built by [Peak Twilight](https://doruk.ch)*
 
 ## License
 
