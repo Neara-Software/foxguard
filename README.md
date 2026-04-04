@@ -25,7 +25,9 @@
   <img src="assets/demo.gif" alt="foxguard vs semgrep side-by-side" width="640" />
 </p>
 
-Most security scanners take 10-30 seconds. foxguard finishes in under one.
+Security scanners are slow. 10 seconds, 30 seconds, sometimes a minute. So developers don't run them locally — they get pushed to CI, findings pile up in PRs, and nobody looks at them.
+
+foxguard fixes this by being fast enough that you never notice it's there. Same scan, 0.03 seconds instead of 10. You can run it on every save, every commit, every push. Security feedback becomes instant.
 
 ```sh
 npx foxguard .
@@ -43,16 +45,15 @@ src/utils/config.py
 WARNING 2 issues in 5 files (0.03s): 1 critical, 1 high, 0 medium, 0 low
 ```
 
-## Why
+## How
 
-- **0.03s, not 10s** — Rust + tree-sitter + rayon. No JVM, no Python runtime, no network calls. No waiting.
-- **119 built-in rules** — SQL injection, XSS, SSRF, command injection, hardcoded secrets, weak crypto, unsafe deserialization, log injection, and framework-specific checks.
-- **10 languages** — JavaScript, TypeScript, Python, Go, Ruby, Java, PHP, Rust, C#, Swift.
-- **Secrets scanning** — AWS keys, GitHub/GitLab/Slack/Stripe tokens, private keys. Redacted output.
-- **Semgrep-compatible** — Load your existing YAML rules with `--rules`. No vendor lock-in.
-- **Pre-commit hook** — `foxguard init`. Scans only changed files with `--changed`.
-- **CI-ready** — Terminal, JSON, SARIF. GitHub Code Scanning integration out of the box.
-- **Dogfoods itself** — foxguard scans its own Rust source in CI on every push.
+Rust + [tree-sitter](https://tree-sitter.github.io/) for AST parsing + [rayon](https://github.com/rayon-rs/rayon) for parallelism. No JVM startup, no Python interpreter, no network calls, no rule download step. Just a native binary that reads your files and reports findings.
+
+119 built-in rules across 10 languages. SQL injection, XSS, SSRF, command injection, hardcoded secrets, weak crypto, unsafe deserialization, log injection, and framework-specific checks for Express, Django, Rails, Spring, Laravel, Gin, .NET, and iOS.
+
+Also scans for leaked credentials (AWS keys, GitHub/GitLab/Slack/Stripe tokens, private keys) with redacted output. Loads Semgrep-compatible YAML rules with `--rules` if you have existing ones. Outputs terminal, JSON, or SARIF for GitHub Code Scanning.
+
+foxguard dogfoods itself — it scans its own Rust source in CI on every push.
 
 ## Install
 
