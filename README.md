@@ -100,7 +100,7 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: peaktwilight/foxguard/action@v0.1.0
+      - uses: peaktwilight/foxguard/action@v0.2.1
         with:
           path: .
           severity: medium
@@ -113,9 +113,9 @@ Findings show up in **Security → Code Scanning**.
 ### Any CI
 
 ```sh
-npx foxguard@0.1.0 .                          # scan
-npx foxguard@0.1.0 --format sarif . > out.sarif  # SARIF output
-npx foxguard@0.1.0 secrets .                   # secrets scan
+npx foxguard@latest .                          # scan
+npx foxguard@latest --format sarif . > out.sarif  # SARIF output
+npx foxguard@latest secrets .                   # secrets scan
 ```
 
 ### Badge

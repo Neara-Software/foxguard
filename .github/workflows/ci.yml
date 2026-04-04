@@ -127,11 +127,11 @@ jobs:
           node-version: 20
 
       - name: npx foxguard --version
-        run: npx foxguard@0.1.0 --version
+        run: npx foxguard@latest --version
 
       - name: npx foxguard scans test fixtures
         run: |
-          if npx foxguard@0.1.0 tests/fixtures/ 2>&1; then
+          if npx foxguard@latest tests/fixtures/ 2>&1; then
             echo "::error::Expected findings in fixtures"
             exit 1
           else
@@ -139,10 +139,10 @@ jobs:
           fi
 
       - name: npx foxguard clean scan
-        run: npx foxguard@0.1.0 --severity high src/
+        run: npx foxguard@latest --severity high src/
 
       - name: npx foxguard SARIF output
-        run: npx foxguard@0.1.0 --severity high --format sarif src/ > /dev/null
+        run: npx foxguard@latest --severity high --format sarif src/ > /dev/null
 
   dist-cargo:
     name: Distribution (cargo install)
