@@ -5,6 +5,14 @@ use rayon::prelude::*;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Instant;
+
+/// Result of a scan with metadata.
+pub struct ScanResult {
+    pub findings: Vec<Finding>,
+    pub files_scanned: usize,
+    pub duration: std::time::Duration,
+}
 
 /// Detect language from file extension.
 fn detect_language(path: &Path) -> Option<Language> {
@@ -22,8 +30,8 @@ fn detect_language(path: &Path) -> Option<Language> {
     }
 }
 
-/// Scan a directory (or single file) and return all findings.
-pub fn scan_directory(root: &str, registry: &RuleRegistry) -> Vec<Finding> {
+/// Scan a directory (or single file) and return findings with metadata.
+pub fn scan_directory(root: &str, registry: &RuleRegistry) -> ScanResult {
     let root_path = Path::new(root);
 
     let files: Vec<_> = if root_path.is_file() {
@@ -50,16 +58,12 @@ pub fn scan_directory(root: &str, registry: &RuleRegistry) -> Vec<Finding> {
 }
 
 /// Scan an explicit list of paths.
-pub fn scan_paths(paths: &[PathBuf], registry: &RuleRegistry) -> Vec<Finding> {
+pub fn scan_paths(paths: &[PathBuf], registry: &RuleRegistry) -> ScanResult {
     scan_paths_with_root(Path::new("."), paths, registry)
 }
 
 /// Scan an explicit list of paths relative to a scan root.
-pub fn scan_paths_with_root(
-    root: &Path,
-    paths: &[PathBuf],
-    registry: &RuleRegistry,
-) -> Vec<Finding> {
+pub fn scan_paths_with_root(root: &Path, paths: &[PathBuf], registry: &RuleRegistry) -> ScanResult {
     let files = paths
         .iter()
         .filter_map(|path| detect_language(path).map(|lang| (path.clone(), lang)))
@@ -71,7 +75,9 @@ fn scan_files(
     scan_root: &Path,
     files: Vec<(PathBuf, Language)>,
     registry: &RuleRegistry,
-) -> Vec<Finding> {
+) -> ScanResult {
+    let start = Instant::now();
+    let file_count = files.len();
     let findings = Mutex::new(Vec::new());
 
     files.par_iter().for_each(|(path, language)| {
@@ -108,7 +114,11 @@ fn scan_files(
             .then(a.line.cmp(&b.line))
             .then(a.column.cmp(&b.column))
     });
-    results
+    ScanResult {
+        findings: results,
+        files_scanned: file_count,
+        duration: start.elapsed(),
+    }
 }
 
 fn scan_root(path: &Path) -> &Path {

@@ -2,7 +2,7 @@ use clap::Parser;
 use foxguard::baseline::{load_baseline, suppress_with_baseline, write_baseline};
 use foxguard::cli::{BaselineArgs, Cli, Command, InitArgs, OutputFormat, ScanArgs, SecretsArgs};
 use foxguard::config::{apply_scan_defaults, apply_secrets_defaults, load_for_scan};
-use foxguard::engine::{scan_directory, scan_paths_with_root};
+use foxguard::engine::{scan_directory, scan_paths_with_root, ScanResult};
 use foxguard::git::changed_files;
 use foxguard::rules::semgrep_compat::load_semgrep_rules;
 use foxguard::rules::RuleRegistry;
@@ -104,13 +104,13 @@ fn collect_changed_targets(path: &str, changed: bool) -> Result<Option<Vec<PathB
     Ok(Some(files))
 }
 
-fn scan_findings(scan: &ScanArgs) -> Result<Vec<foxguard::Finding>, i32> {
+fn scan_findings(scan: &ScanArgs) -> Result<ScanResult, i32> {
     validate_scan_inputs(scan)?;
 
     let registry = build_registry(scan);
     let targets = collect_changed_targets(&scan.path, scan.changed)?;
 
-    let mut findings = if let Some(files) = targets {
+    let mut result = if let Some(files) = targets {
         scan_paths_with_root(Path::new(&scan.path), &files, &registry)
     } else {
         scan_directory(&scan.path, &registry)
@@ -119,10 +119,10 @@ fn scan_findings(scan: &ScanArgs) -> Result<Vec<foxguard::Finding>, i32> {
     // Filter by severity if specified
     if let Some(ref min_severity) = scan.severity {
         let min = min_severity.to_severity();
-        findings.retain(|f| f.severity >= min);
+        result.findings.retain(|f| f.severity >= min);
     }
 
-    Ok(findings)
+    Ok(result)
 }
 
 fn run_scan(scan: &ScanArgs) -> i32 {
@@ -131,10 +131,14 @@ fn run_scan(scan: &ScanArgs) -> i32 {
         Err(code) => return code,
     };
 
-    let mut findings = match scan_findings(&scan) {
-        Ok(findings) => findings,
+    let result = match scan_findings(&scan) {
+        Ok(result) => result,
         Err(code) => return code,
     };
+
+    let files_scanned = result.files_scanned;
+    let duration = result.duration;
+    let mut findings = result.findings;
 
     if let Some(ref path) = scan.write_baseline {
         if let Err(e) = write_baseline(Path::new(path), &findings) {
@@ -158,7 +162,9 @@ fn run_scan(scan: &ScanArgs) -> i32 {
     findings = suppress_with_baseline(findings, baseline.as_ref());
 
     match scan.format {
-        OutputFormat::Terminal => foxguard::report::terminal::print_findings(&findings),
+        OutputFormat::Terminal => {
+            foxguard::report::terminal::print_findings(&findings, files_scanned, duration);
+        }
         OutputFormat::Json => foxguard::report::json::print_json(&findings),
         OutputFormat::Sarif => foxguard::report::sarif::print_sarif(&findings),
     }
@@ -178,19 +184,19 @@ fn run_baseline(args: &BaselineArgs) -> i32 {
     scan.write_baseline = None;
     scan.baseline = None;
 
-    let findings = match scan_findings(&scan) {
-        Ok(findings) => findings,
+    let result = match scan_findings(&scan) {
+        Ok(result) => result,
         Err(code) => return code,
     };
 
-    if let Err(e) = write_baseline(Path::new(&args.output), &findings) {
+    if let Err(e) = write_baseline(Path::new(&args.output), &result.findings) {
         eprintln!("Error: {}", e);
         return 2;
     }
 
     eprintln!(
         "Wrote baseline with {} finding(s) to {}",
-        findings.len(),
+        result.findings.len(),
         args.output
     );
     0
@@ -254,7 +260,9 @@ fn run_secrets(args: &SecretsArgs) -> i32 {
     findings = suppress_with_baseline(findings, baseline.as_ref());
 
     match args.format {
-        OutputFormat::Terminal => foxguard::report::terminal::print_findings(&findings),
+        OutputFormat::Terminal => {
+            foxguard::report::terminal::print_findings(&findings, 0, std::time::Duration::ZERO);
+        }
         OutputFormat::Json => foxguard::report::json::print_json(&findings),
         OutputFormat::Sarif => foxguard::report::sarif::print_sarif(&findings),
     }

@@ -1,9 +1,18 @@
 use crate::{Finding, Severity};
 use colored::Colorize;
 
-pub fn print_findings(findings: &[Finding]) {
+pub fn print_findings(findings: &[Finding], files_scanned: usize, duration: std::time::Duration) {
     if findings.is_empty() {
-        println!("{}", "No security issues found.".green().bold());
+        if files_scanned > 0 {
+            println!(
+                "{}  Scanned {} files in {:.2}s",
+                "No security issues found.".green().bold(),
+                files_scanned.to_string().bold(),
+                duration.as_secs_f64(),
+            );
+        } else {
+            println!("{}", "No security issues found.".green().bold());
+        }
         return;
     }
 
@@ -63,10 +72,21 @@ pub fn print_findings(findings: &[Finding]) {
         .filter(|f| f.severity == Severity::Low)
         .count();
 
+    let stats = if files_scanned > 0 {
+        format!(
+            " in {} files ({:.2}s)",
+            files_scanned,
+            duration.as_secs_f64()
+        )
+    } else {
+        String::new()
+    };
+
     println!(
-        "\n{} {} found: {} critical, {} high, {} medium, {} low",
+        "\n{} {}{}: {} critical, {} high, {} medium, {} low",
         "WARNING".yellow(),
         format!("{} issues", findings.len()).bold(),
+        stats.dimmed(),
         critical.to_string().red().bold(),
         high.to_string().red(),
         medium.to_string().yellow(),
