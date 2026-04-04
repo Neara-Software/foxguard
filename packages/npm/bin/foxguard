@@ -65,7 +65,12 @@ function findCargoInstall() {
       encoding: "utf8",
     }).trim();
     if (result && !result.includes("node_modules")) {
-      return result;
+      // Resolve symlinks to avoid finding ourselves (the npm wrapper)
+      const resolved = fs.realpathSync(result);
+      const thisScript = fs.realpathSync(__filename);
+      if (resolved !== thisScript) {
+        return result;
+      }
     }
   } catch {}
 
