@@ -8,14 +8,17 @@ VERSION="${1:?Usage: ./scripts/release.sh <version>}"
 
 echo "=== Releasing foxguard v${VERSION} ==="
 
-# 1. Bump versions
+# 1. Bump all versions
 echo "Bumping versions..."
 sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
-cd packages/npm && node -e "
-  const pkg = require('./package.json');
-  pkg.version = '${VERSION}';
-  require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-" && cd ../..
+
+for pkg in packages/npm/package.json vscode-extension/package.json; do
+  node -e "
+    const pkg = require('./${pkg}');
+    pkg.version = '${VERSION}';
+    require('fs').writeFileSync('${pkg}', JSON.stringify(pkg, null, 2) + '\n');
+  "
+done
 
 # 2. Build and test
 echo "Building..."
@@ -26,7 +29,7 @@ cargo fmt --check
 
 # 3. Commit, tag, push
 echo "Committing..."
-git add Cargo.toml packages/npm/package.json
+git add Cargo.toml packages/npm/package.json vscode-extension/package.json
 git commit -m "v${VERSION}"
 git push
 git tag "v${VERSION}"
@@ -46,5 +49,5 @@ echo ""
 echo "=== v${VERSION} released ==="
 echo "  GitHub Release: building (check Actions)"
 echo "  npm: foxguard@${VERSION}"
-echo "  VS Code: peaktwilight.foxguard"
-echo "  Homebrew: update homebrew-tap manually"
+echo "  VS Code: peaktwilight.foxguard@${VERSION}"
+echo "  Homebrew: update homebrew-tap Formula manually"

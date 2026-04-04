@@ -2,7 +2,7 @@
   "name": "foxguard",
   "displayName": "foxguard",
   "description": "Security scanner as fast as a linter",
-  "version": "0.2.0",
+  "version": "0.3.2",
   "publisher": "peaktwilight",
   "license": "MIT",
   "repository": {
