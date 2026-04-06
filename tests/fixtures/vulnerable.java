@@ -53,6 +53,11 @@ public class Vulnerable {
         DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
     }
 
+    // java/spring-csrf-disabled
+    void csrf() {
+        http.csrf().disable();
+    }
+
     // java/spring-cors-permissive
     void cors() {
         registry.allowedOrigins("*");

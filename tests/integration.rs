@@ -248,6 +248,258 @@ fn test_vulnerable_go_finds_all_rules() {
     }
 }
 
+#[test]
+fn test_vulnerable_java_finds_all_rules() {
+    let output = foxguard_cmd()
+        .args(["tests/fixtures/vulnerable.java", "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(!output.status.success());
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert_eq!(
+        findings.len(),
+        16,
+        "vulnerable.java should have 16 findings, got {}",
+        findings.len()
+    );
+
+    let rule_ids: std::collections::HashSet<&str> = findings
+        .iter()
+        .filter_map(|f| f["rule_id"].as_str())
+        .collect();
+
+    let expected_rules = [
+        "java/no-sql-injection",
+        "java/no-command-injection",
+        "java/no-unsafe-deserialization",
+        "java/no-ssrf",
+        "java/no-path-traversal",
+        "java/no-weak-crypto",
+        "java/no-hardcoded-secret",
+        "java/no-xxe",
+        "java/spring-csrf-disabled",
+        "java/spring-cors-permissive",
+    ];
+
+    for rule in &expected_rules {
+        assert!(rule_ids.contains(rule), "missing expected rule: {}", rule);
+    }
+}
+
+#[test]
+fn test_vulnerable_php_finds_all_rules() {
+    let output = foxguard_cmd()
+        .args(["tests/fixtures/vulnerable.php", "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(!output.status.success());
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert_eq!(
+        findings.len(),
+        20,
+        "vulnerable.php should have 20 findings, got {}",
+        findings.len()
+    );
+
+    let rule_ids: std::collections::HashSet<&str> = findings
+        .iter()
+        .filter_map(|f| f["rule_id"].as_str())
+        .collect();
+
+    let expected_rules = [
+        "php/no-eval",
+        "php/no-command-injection",
+        "php/no-sql-injection",
+        "php/no-unserialize",
+        "php/no-file-inclusion",
+        "php/no-weak-crypto",
+        "php/no-hardcoded-secret",
+        "php/no-ssrf",
+        "php/no-extract",
+        "php/no-preg-eval",
+    ];
+
+    for rule in &expected_rules {
+        assert!(rule_ids.contains(rule), "missing expected rule: {}", rule);
+    }
+}
+
+#[test]
+fn test_vulnerable_ruby_finds_all_rules() {
+    let output = foxguard_cmd()
+        .args(["tests/fixtures/vulnerable.rb", "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(!output.status.success());
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert_eq!(
+        findings.len(),
+        18,
+        "vulnerable.rb should have 18 findings, got {}",
+        findings.len()
+    );
+
+    let rule_ids: std::collections::HashSet<&str> = findings
+        .iter()
+        .filter_map(|f| f["rule_id"].as_str())
+        .collect();
+
+    let expected_rules = [
+        "rb/no-eval",
+        "rb/no-command-injection",
+        "rb/no-sql-injection",
+        "rb/no-mass-assignment",
+        "rb/no-unsafe-deserialization",
+        "rb/no-open-redirect",
+        "rb/no-csrf-skip",
+        "rb/no-html-safe",
+        "rb/no-hardcoded-secret",
+        "rb/no-weak-crypto",
+    ];
+
+    for rule in &expected_rules {
+        assert!(rule_ids.contains(rule), "missing expected rule: {}", rule);
+    }
+}
+
+#[test]
+fn test_vulnerable_csharp_finds_all_rules() {
+    let output = foxguard_cmd()
+        .args(["tests/fixtures/vulnerable.cs", "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(!output.status.success());
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert_eq!(
+        findings.len(),
+        15,
+        "vulnerable.cs should have 15 findings, got {}",
+        findings.len()
+    );
+
+    let rule_ids: std::collections::HashSet<&str> = findings
+        .iter()
+        .filter_map(|f| f["rule_id"].as_str())
+        .collect();
+
+    let expected_rules = [
+        "cs/no-sql-injection",
+        "cs/no-command-injection",
+        "cs/no-unsafe-deserialization",
+        "cs/no-ssrf",
+        "cs/no-path-traversal",
+        "cs/no-weak-crypto",
+        "cs/no-hardcoded-secret",
+        "cs/no-xxe",
+        "cs/no-ldap-injection",
+        "cs/no-cors-star",
+    ];
+
+    for rule in &expected_rules {
+        assert!(rule_ids.contains(rule), "missing expected rule: {}", rule);
+    }
+}
+
+#[test]
+fn test_vulnerable_swift_finds_all_rules() {
+    let output = foxguard_cmd()
+        .args(["tests/fixtures/vulnerable.swift", "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(!output.status.success());
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert_eq!(
+        findings.len(),
+        19,
+        "vulnerable.swift should have 19 findings, got {}",
+        findings.len()
+    );
+
+    let rule_ids: std::collections::HashSet<&str> = findings
+        .iter()
+        .filter_map(|f| f["rule_id"].as_str())
+        .collect();
+
+    let expected_rules = [
+        "swift/no-hardcoded-secret",
+        "swift/no-command-injection",
+        "swift/no-weak-crypto",
+        "swift/no-insecure-transport",
+        "swift/no-eval-js",
+        "swift/no-sql-injection",
+        "swift/no-insecure-keychain",
+        "swift/no-tls-disabled",
+        "swift/no-path-traversal",
+        "swift/no-ssrf",
+    ];
+
+    for rule in &expected_rules {
+        assert!(rule_ids.contains(rule), "missing expected rule: {}", rule);
+    }
+}
+
+#[test]
+fn test_vulnerable_rust_finds_all_rules() {
+    let output = foxguard_cmd()
+        .args(["tests/fixtures/vulnerable.rs", "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(!output.status.success());
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+
+    assert_eq!(
+        findings.len(),
+        18,
+        "vulnerable.rs should have 18 findings, got {}",
+        findings.len()
+    );
+
+    let rule_ids: std::collections::HashSet<&str> = findings
+        .iter()
+        .filter_map(|f| f["rule_id"].as_str())
+        .collect();
+
+    let expected_rules = [
+        "rs/unsafe-block",
+        "rs/transmute-usage",
+        "rs/no-command-injection",
+        "rs/no-sql-injection",
+        "rs/no-weak-hash",
+        "rs/no-hardcoded-secret",
+        "rs/tls-verify-disabled",
+        "rs/no-ssrf",
+        "rs/no-path-traversal",
+        "rs/no-unwrap-in-lib",
+    ];
+
+    for rule in &expected_rules {
+        assert!(rule_ids.contains(rule), "missing expected rule: {}", rule);
+    }
+}
+
 // ─── Safe file detection ────────────────────────────────────────────────────
 
 #[test]

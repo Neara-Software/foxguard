@@ -30,12 +30,14 @@ const jsRules: Rule[] = [
   { id: 'js/express-cookie-no-httponly', cwe: 'CWE-1004', desc: 'Cookie config missing httpOnly flag', severity: 'medium' },
   { id: 'js/express-cookie-no-samesite', cwe: 'CWE-352', desc: 'Cookie config missing a safe sameSite setting', severity: 'medium' },
   { id: 'js/express-session-saveuninitialized-true', cwe: 'CWE-359', desc: 'express-session configured with saveUninitialized: true', severity: 'medium' },
+  { id: 'js/express-session-resave-true', cwe: 'CWE-384', desc: 'express-session configured with resave: true', severity: 'medium' },
   { id: 'js/express-direct-response-write', cwe: 'CWE-79', desc: 'XSS via res.send/res.write with user input', severity: 'high' },
   { id: 'js/jwt-hardcoded-secret', cwe: 'CWE-798', desc: 'JWT signing or verification with a hardcoded secret', severity: 'high' },
   { id: 'js/jwt-none-algorithm', cwe: 'CWE-347', desc: 'JWT configured to use the none algorithm', severity: 'high' },
   { id: 'js/jwt-ignore-expiration', cwe: 'CWE-613', desc: 'JWT verification configured to ignore token expiration', severity: 'high' },
   { id: 'js/jwt-decode-without-verify', cwe: 'CWE-347', desc: 'JWT decoded without signature verification', severity: 'high' },
   { id: 'js/jwt-verify-missing-algorithms', cwe: 'CWE-347', desc: 'JWT verification without an explicit algorithms allowlist', severity: 'high' },
+  { id: 'js/no-unsafe-format-string', cwe: 'CWE-134', desc: 'Template literal with variables in logging function may enable log injection', severity: 'medium' },
 ];
 
 const pyRules: Rule[] = [
@@ -169,3 +171,4 @@ export const ruleGroups: RuleGroup[] = [
 ];
 
 export const totalRules = ruleGroups.reduce((sum, g) => sum + g.rules.length, 0);
+export const productLanguageCount = 10;
