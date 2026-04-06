@@ -4,6 +4,8 @@ Fast local security guard for changed files, built-in rules, and Semgrep-compati
 
 foxguard supports a focused Semgrep-compatible YAML subset for local rule loading.
 
+That supported subset is regression-tested in-repo and parity-checked in CI against the real `semgrep` CLI.
+
 The product default is still built-in rules. Compatibility mode exists to help teams adopt foxguard without throwing away existing rule work on day one.
 
 ## Recommended usage

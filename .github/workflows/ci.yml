@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  NODE_VERSION: "22.12.0"
 
 jobs:
   fmt:
@@ -59,6 +60,82 @@ jobs:
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-test-
       - run: cargo test
+
+  semgrep-parity:
+    name: Semgrep Parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-cargo-semgrep-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ubuntu-cargo-semgrep-
+      - name: Install semgrep
+        run: pip install semgrep
+      - name: Run Semgrep parity suite
+        run: cargo test --test semgrep_parity
+
+  website:
+    name: Website Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: www
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: www/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  vscode-extension:
+    name: VS Code Extension
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: vscode-extension/package-lock.json
+      - run: npm ci
+      - run: npm run compile
+
+  npm-package:
+    name: npm Package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/npm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm pack --dry-run
+
+  scripts:
+    name: Script Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: bash -n action/entrypoint.sh
+      - run: bash -n benchmarks/run.sh
+      - run: bash -n scripts/release.sh
 
   build:
     name: Build Release
@@ -112,4 +189,3 @@ jobs:
           else
             echo "Fixtures correctly detected — foxguard found issues as expected"
           fi
-

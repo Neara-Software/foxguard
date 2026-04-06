@@ -65,6 +65,8 @@ cargo install foxguard                 # crates.io
 
 **Editor:** Install the [VS Code extension](https://marketplace.visualstudio.com/items?itemName=peaktwilight.foxguard) — scans on save, shows findings as underlines.
 
+**Dev tooling:** Frontend/tooling surfaces in this repo use Node `22.12.0` (see `.nvmrc`).
+
 ## Performance
 
 Real-world benchmarks on local codebases:
@@ -177,7 +179,9 @@ secrets:
 
 ## Semgrep compatibility
 
-Load existing Semgrep/OpenGrep YAML rules with `--rules`. Supports `pattern`, `pattern-regex`, `pattern-either`, `pattern-not`, `pattern-inside`, `pattern-not-inside`, `metavariable-regex`, and `paths.include/exclude`. See [`COMPATIBILITY.md`](./COMPATIBILITY.md).
+Load existing Semgrep/OpenGrep YAML rules with `--rules`. Supports `pattern`, `pattern-regex`, `pattern-either`, `pattern-not`, `pattern-inside`, `pattern-not-inside`, `metavariable-regex`, and `paths.include/exclude`. This supported subset is parity-tested in CI against the real `semgrep` CLI. See [`COMPATIBILITY.md`](./COMPATIBILITY.md).
+
+foxguard does not currently aim to support multiple unrelated external rule formats. The compatibility target is the focused Semgrep/OpenGrep YAML subset above.
 
 ## Contributing
 

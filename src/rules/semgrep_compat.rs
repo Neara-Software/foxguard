@@ -519,6 +519,13 @@ fn match_node(
         return false;
     }
 
+    if let Some(pattern_gap) = operator_token(pattern, pat_src) {
+        match operator_token(target, target_src) {
+            Some(target_gap) if target_gap == pattern_gap => {}
+            _ => return false,
+        }
+    }
+
     // ── Match children, handling ... ellipsis ──
     let pat_children = named_children(pattern);
     let target_children = named_children(target);
@@ -535,6 +542,28 @@ fn match_node(
 fn named_children(node: tree_sitter::Node) -> Vec<tree_sitter::Node> {
     let mut cursor = node.walk();
     node.named_children(&mut cursor).collect()
+}
+
+fn operator_token(node: tree_sitter::Node, source: &str) -> Option<String> {
+    if !matches!(
+        node.kind(),
+        "binary_expression" | "binary_operator" | "boolean_operator" | "comparison_operator"
+    ) {
+        return None;
+    }
+
+    let children = named_children(node);
+    if children.len() < 2 {
+        return None;
+    }
+
+    let gap = &source[children[0].end_byte()..children[1].start_byte()];
+    let normalized = gap
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '$')
+        .collect::<String>();
+
+    (!normalized.is_empty()).then_some(normalized)
 }
 
 /// Check if a pattern child sequence at index `pi` represents a split metavariable

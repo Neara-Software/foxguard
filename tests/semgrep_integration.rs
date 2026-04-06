@@ -56,13 +56,30 @@ fn test_sql_injection_rule() {
     let rules = parse_semgrep_file(Path::new("tests/semgrep_rules/sql-injection.yaml")).unwrap();
     assert_eq!(rules.len(), 1);
 
-    let source = std::fs::read_to_string(FIXTURE).unwrap();
-    let tree = parse_file(&source, Language::Python).unwrap();
+    let source = "query = \"SELECT * FROM users WHERE name = '\" + user_input\n";
+    let tree = parse_file(source, Language::Python).unwrap();
     let findings = rules[0].check(&source, &tree);
 
-    assert!(
-        !findings.is_empty(),
+    assert_eq!(
+        findings.len(),
+        1,
         "Should detect SQL injection via string concatenation"
+    );
+}
+
+#[test]
+fn test_sql_injection_rule_does_not_match_percent_formatting() {
+    let rules = parse_semgrep_file(Path::new("tests/semgrep_rules/sql-injection.yaml")).unwrap();
+    assert_eq!(rules.len(), 1);
+
+    let source = "cursor.execute(\"SELECT * FROM users WHERE name = '%s'\" % user_input)\n";
+    let tree = parse_file(source, Language::Python).unwrap();
+    let findings = rules[0].check(source, &tree);
+
+    assert!(
+        findings.is_empty(),
+        "String-concatenation pattern should not match percent formatting, got {} findings",
+        findings.len()
     );
 }
 
