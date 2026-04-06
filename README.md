@@ -187,6 +187,13 @@ Adding a rule is one struct implementing a trait. See [`CONTRIBUTING.md`](./CONT
 
 *Built by [Peak Twilight](https://doruk.ch)*
 
+## Part of the open-source modern SOC
+
+foxguard is one piece of a three-part open-source security stack:
+- **[pwnkit](https://github.com/peaktwilight/pwnkit)** — AI agent pentester (detect)
+- **[foxguard](https://github.com/peaktwilight/foxguard)** — Rust security scanner (prevent)
+- **[opensoar](https://github.com/opensoar-hq/opensoar-core)** — Python-native SOAR platform (respond)
+
 ## License
 
 MIT
