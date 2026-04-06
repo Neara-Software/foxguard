@@ -3,7 +3,8 @@
 
 # Node
 node_modules/
-package-lock.json
+/package-lock.json
+demo/package-lock.json
 vscode-extension/out/
 vscode-extension/*.vsix
 
