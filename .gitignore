@@ -4,6 +4,8 @@
 # Node
 node_modules/
 package-lock.json
+vscode-extension/out/
+vscode-extension/*.vsix
 
 # Build output
 www/dist/
