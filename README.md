@@ -5,9 +5,9 @@
 <h1 align="center">foxguard</h1>
 
 <p align="center">
-  <strong>Security scanner as fast as a linter.</strong>
+  <strong>Sub-second local security scanning for real codebases.</strong>
   <br/>
-  100+ built-in rules &middot; 10 languages &middot; single Rust binary &middot; sub-second scans
+  100+ built-in rules &middot; 10 languages &middot; single Rust binary &middot; Semgrep-compatible YAML bridge
   <br/><br/>
   <a href="https://foxguard.dev">foxguard.dev</a> &middot; <a href="https://www.npmjs.com/package/foxguard">npm</a> &middot; <a href="https://crates.io/crates/foxguard">crates.io</a>
 </p>
@@ -45,7 +45,22 @@ src/utils/config.py
 WARNING 2 issues in 5 files (0.03s): 1 critical, 1 high, 0 medium, 0 low
 ```
 
-## How
+## Why foxguard
+
+- **Fast enough to leave on.** foxguard is built for local runs, pre-commit hooks, and changed-file scans instead of “security later in CI”.
+- **Useful before you tune anything.** The default value is built-in framework-aware rules for common real-world mistakes across JavaScript, Python, Go, Ruby, Java, PHP, Rust, C#, and Swift.
+- **Adoption-friendly.** If you already have Semgrep/OpenGrep YAML, foxguard can load a focused compatible subset on top of built-ins so migration is incremental instead of all-or-nothing.
+
+## Quick start
+
+```sh
+npx foxguard .                 # scan the repo
+npx foxguard --changed .       # only modified files
+npx foxguard secrets .         # leaked credentials and private keys
+npx foxguard init              # install a local pre-commit hook
+```
+
+## What it is
 
 Rust + [tree-sitter](https://tree-sitter.github.io/) for AST parsing + [rayon](https://github.com/rayon-rs/rayon) for parallelism. No JVM startup, no Python interpreter, no network calls, no rule download step. Just a native binary that reads your files and reports findings.
 
@@ -54,6 +69,18 @@ Rust + [tree-sitter](https://tree-sitter.github.io/) for AST parsing + [rayon](h
 Also scans for leaked credentials (AWS keys, GitHub/GitLab/Slack/Stripe tokens, private keys) with redacted output. Loads Semgrep-compatible YAML rules with `--rules` if you have existing ones. Outputs terminal, JSON, or SARIF for GitHub Code Scanning.
 
 foxguard dogfoods itself — it scans its own Rust source in CI on every push.
+
+## What it is not
+
+foxguard is not trying to be a full Semgrep or OpenGrep drop-in replacement.
+
+The intended model is:
+
+- **foxguard built-ins** for fast local feedback
+- **Semgrep/OpenGrep-compatible YAML subset** as an adoption bridge
+- **Semgrep/OpenGrep themselves** when you need the broadest external rule ecosystem
+
+That boundary is deliberate. It keeps local scans fast, rule support understandable, and compatibility claims testable.
 
 ## Install
 
@@ -65,9 +92,7 @@ cargo install foxguard                 # crates.io
 
 **Editor:** Install the [VS Code extension](https://marketplace.visualstudio.com/items?itemName=peaktwilight.foxguard) — scans on save, shows findings as underlines.
 
-**Dev tooling:** Frontend/tooling surfaces in this repo use Node `22.12.0` (see `.nvmrc`).
-
-## Performance
+## Benchmarks
 
 Real-world benchmarks on local codebases:
 
@@ -95,18 +120,19 @@ Semgrep times measured with cached rules (second run). foxguard has no cache —
 | C# | 10 | .NET, LDAP, XXE, CORS |
 | Swift | 10 | iOS keychain, transport, WebView |
 
-## Usage
+## Why teams adopt it
 
-```sh
-foxguard .                          # scan everything
-foxguard --changed .                # only modified files
-foxguard --severity high .          # filter by severity
-foxguard secrets .                  # leaked credentials
-foxguard secrets --changed .        # secrets on changed files
-foxguard --format sarif .           # SARIF for GitHub Code Scanning
-foxguard --rules ./my-rules .       # add Semgrep-compatible YAML rules
-foxguard init                       # install pre-commit hook
-```
+- **Changed-file scans** for tight local loops
+- **Repo-local baselines** so legacy findings stop blocking adoption
+- **Secrets scanning** alongside code scanning
+- **JSON and SARIF output** for CI and GitHub Code Scanning
+- **Semgrep/OpenGrep YAML subset** when teams already have rule investments
+
+## Compatibility
+
+Load existing Semgrep/OpenGrep YAML rules with `--rules`. Supports `pattern`, `pattern-regex`, `pattern-either`, `pattern-not`, `pattern-inside`, `pattern-not-inside`, `metavariable-regex`, and `paths.include/exclude`. This supported subset is parity-tested in CI against the real `semgrep` CLI. See [`COMPATIBILITY.md`](./COMPATIBILITY.md).
+
+foxguard does not currently aim to support multiple unrelated external rule formats. The compatibility target is the focused Semgrep/OpenGrep YAML subset above.
 
 ## CI Integration
 
@@ -176,12 +202,6 @@ secrets:
   ignore_rules:
     - secret/github-token
 ```
-
-## Semgrep compatibility
-
-Load existing Semgrep/OpenGrep YAML rules with `--rules`. Supports `pattern`, `pattern-regex`, `pattern-either`, `pattern-not`, `pattern-inside`, `pattern-not-inside`, `metavariable-regex`, and `paths.include/exclude`. This supported subset is parity-tested in CI against the real `semgrep` CLI. See [`COMPATIBILITY.md`](./COMPATIBILITY.md).
-
-foxguard does not currently aim to support multiple unrelated external rule formats. The compatibility target is the focused Semgrep/OpenGrep YAML subset above.
 
 ## Contributing
 

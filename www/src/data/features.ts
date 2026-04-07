@@ -9,33 +9,33 @@ export interface Feature {
 export const features: Feature[] = [
   {
     icon: '< 1s',
-    title: 'Single binary',
-    desc: 'No JVM, no Python runtime, no network calls. Rust-native and fast enough for pre-commit hooks.',
+    title: 'Fast enough to stay enabled',
+    desc: 'Single Rust binary. No JVM, no Python runtime, no network calls. Built for local runs and pre-commit hooks.',
   },
   {
     icon: 'hook',
     title: 'Pre-commit ready',
-    desc: 'Run foxguard init to install a repo-local hook and get a starter .foxguard.yml.',
+    desc: 'Run foxguard init to install a repo-local hook and get a starter .foxguard.yml without wiring extra services.',
   },
   {
     icon: '.yaml',
-    title: 'Bring your own rules',
-    desc: 'Load a useful Semgrep-compatible YAML subset on top of built-ins when you need it.',
+    title: 'YAML bridge, not engine sprawl',
+    desc: 'Load a useful Semgrep/OpenGrep-compatible YAML subset on top of built-ins when you need it.',
   },
   {
     icon: 'base',
     title: 'Baselines',
-    desc: 'Accept existing findings once and focus only on new ones with a baseline file.',
+    desc: 'Accept existing findings once and keep the rollout focused on new issues with a baseline file.',
   },
   {
     icon: 'secret',
     title: 'Secrets scanning',
-    desc: 'Detect leaked credentials and private keys with redacted output and binary-safe handling.',
+    desc: 'Detect leaked credentials and private keys with redacted output and binary-safe handling in the same tool.',
   },
   {
     icon: 'SARIF',
     title: 'CI-friendly output',
-    desc: 'Terminal output locally, JSON and SARIF for automation and GitHub Code Scanning.',
+    desc: 'Terminal output locally, JSON and SARIF for automation, policy gates, and GitHub Code Scanning.',
   },
 ];
 

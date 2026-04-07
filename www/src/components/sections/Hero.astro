@@ -1,11 +1,9 @@
 ---
 import TerminalDemo from '../ui/TerminalDemo.astro';
-import { totalRules, ruleGroups } from '../../data/rules';
+import { totalRules } from '../../data/rules';
 
 // JS+TS share rules, C# and Swift are new
 const langCount = 10;
-
-
 ---
 
 <section class="relative pt-10 pb-16 sm:pt-14 sm:pb-24">
@@ -39,12 +37,19 @@ const langCount = 10;
           </h1>
         </div>
 
-        <p class="max-w-md text-lg text-noir-300 mb-2">
-          A security scanner as fast as a linter.
+        <p class="max-w-lg text-lg text-noir-300 mb-2">
+          Local security feedback you actually keep turned on.
         </p>
-        <p class="max-w-md text-sm text-noir-500 leading-relaxed mb-8">
-          {totalRules} built-in rules across {langCount} languages. Fast enough to run on every save. Single Rust binary, no network calls.
+        <p class="max-w-lg text-sm text-noir-500 leading-relaxed mb-6">
+          {totalRules} built-in rules across {langCount} languages, plus a focused Semgrep-compatible YAML bridge when teams already have rule investments. Single Rust binary. No JVM. No network calls.
         </p>
+
+        <div class="flex flex-wrap gap-2 mb-8 font-mono text-[10px] uppercase tracking-[0.12em]">
+          <span class="rounded-full bg-noir-900 px-3 py-1.5 text-noir-400">local-first</span>
+          <span class="rounded-full bg-noir-900 px-3 py-1.5 text-noir-400">built-ins first</span>
+          <span class="rounded-full bg-noir-900 px-3 py-1.5 text-noir-400">yaml bridge</span>
+          <span class="rounded-full bg-noir-900 px-3 py-1.5 text-noir-400">sarif + json</span>
+        </div>
 
         <!-- CTA -->
         <div class="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-8">
@@ -82,7 +87,7 @@ const langCount = 10;
           <div class="w-px h-4 bg-noir-800"></div>
           <div>
             <span class="text-noir-100 text-lg font-heading">&lt;1s</span>
-            <span class="text-noir-600 ml-1.5">typical scan</span>
+            <span class="text-noir-600 ml-1.5">local loop</span>
           </div>
         </div>
 

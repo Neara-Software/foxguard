@@ -1,16 +1,21 @@
 # foxguard
 
-Security scanner as fast as a linter. 100+ built-in rules, 10 languages, sub-second scans.
+Sub-second local security scanning for real codebases.
 
 ```sh
 npx foxguard .
 ```
 
-## What it does
+## Why people use it
 
-Scans your code for security vulnerabilities — SQL injection, XSS, SSRF, hardcoded secrets, command injection, weak crypto, unsafe deserialization, and framework-specific checks.
+- Fast enough to run locally instead of waiting for CI
+- Useful built-in rules out of the box across 10 languages
+- Semgrep-compatible YAML subset when you already have existing rules
+- JSON and SARIF output for automation
 
-**Languages:** JavaScript, TypeScript, Python, Go, Ruby, Java, PHP, Rust, C#, Swift.
+It scans for SQL injection, XSS, SSRF, hardcoded secrets, command injection, weak crypto, unsafe deserialization, and framework-specific mistakes.
+
+**Languages:** JavaScript, TypeScript, Python, Go, Ruby, Java, PHP, Rust, C#, Swift
 
 ## How it works
 
@@ -23,6 +28,14 @@ npx foxguard secrets .            # leaked credentials
 npx foxguard --format sarif .     # SARIF for GitHub Code Scanning
 npx foxguard init                 # install pre-commit hook
 ```
+
+## Scope
+
+foxguard is built around fast local feedback.
+
+- built-in rules are the default product
+- Semgrep/OpenGrep-compatible YAML is the adoption bridge
+- full external-rule-engine parity is intentionally out of scope
 
 ## Supported platforms
 

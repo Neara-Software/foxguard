@@ -20,7 +20,7 @@ const langColors: Record<string, string> = {
     <div class="text-center mb-12">
       <h2 class="font-heading text-2xl sm:text-3xl text-noir-50 mb-3">What it catches</h2>
       <p class="text-noir-500 max-w-xl mx-auto text-sm leading-relaxed">
-        Framework-aware rules across 10 languages. Express sessions, Django CSRF, Rails mass assignment, Spring XXE, iOS keychain, .NET LDAP, and more.
+        Not just generic AST patterns. The default ruleset is biased toward real framework mistakes teams actually ship: Express sessions, Django CSRF, Rails mass assignment, Spring XXE, iOS keychain, .NET LDAP, and more.
       </p>
     </div>
 
@@ -58,9 +58,9 @@ const langColors: Record<string, string> = {
       <div class="flex flex-col sm:flex-row sm:items-start gap-6">
         <div class="sm:flex-1">
           <div class="font-mono text-[10px] uppercase tracking-wider text-noir-600 mb-2">Semgrep compatibility</div>
-          <h3 class="text-noir-100 font-semibold text-sm mb-2">Bring your existing rules</h3>
+          <h3 class="text-noir-100 font-semibold text-sm mb-2">Bring your existing rules without pretending this is full Semgrep</h3>
           <p class="text-xs text-noir-500 leading-relaxed">
-            Load Semgrep-compatible YAML on top of built-ins with <code class="text-noir-400">--rules</code>. Supports the structural matching subset most teams actually use.
+            Load a focused Semgrep/OpenGrep-compatible YAML subset on top of built-ins with <code class="text-noir-400">--rules</code>. The supported surface is explicit, limited, and parity-tested in CI.
           </p>
         </div>
         <div class="flex flex-wrap gap-1.5 sm:max-w-[280px]">

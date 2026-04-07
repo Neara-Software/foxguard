@@ -8,18 +8,21 @@ import BenchmarkChart from '../ui/BenchmarkChart.astro';
     <div class="text-center mb-12">
       <h2 class="font-heading text-2xl sm:text-3xl text-noir-50 mb-3">Linter speed, scanner depth</h2>
       <p class="text-noir-500 max-w-xl mx-auto text-sm leading-relaxed">
-        Most security scanners take 10-30s. foxguard finishes in under a second. Fast enough to run on every save, not just in CI.
+        The point is not winning a benchmark chart. The point is keeping security checks inside the edit loop, where developers will actually run them.
       </p>
     </div>
 
     <BenchmarkChart />
 
     <!-- Workflow -->
-    <div class="mt-16 max-w-lg mx-auto">
+    <div class="mt-16 max-w-2xl mx-auto">
+      <p class="text-center text-[11px] text-noir-600 font-mono uppercase tracking-[0.12em] mb-4">
+        Leave it on. Fix while context is still warm.
+      </p>
       <div class="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-0 font-mono text-xs">
         <div class="bg-noir-900 border border-noir-800 rounded-md px-3.5 py-2.5 text-noir-500">edit</div>
         <svg class="w-5 h-5 text-noir-700 shrink-0 rotate-90 sm:rotate-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
-        <div class="bg-noir-900 border border-fox/20 rounded-md px-3.5 py-2.5 text-fox font-medium">foxguard</div>
+        <div class="bg-fox text-noir-950 rounded-md px-3.5 py-2.5 font-medium">foxguard</div>
         <svg class="w-5 h-5 text-noir-700 shrink-0 rotate-90 sm:rotate-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
         <div class="bg-noir-900 border border-noir-800 rounded-md px-3.5 py-2.5 text-noir-500">fix</div>
         <svg class="w-5 h-5 text-noir-700 shrink-0 rotate-90 sm:rotate-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
