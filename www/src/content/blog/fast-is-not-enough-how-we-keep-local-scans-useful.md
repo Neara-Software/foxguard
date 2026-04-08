@@ -1,6 +1,6 @@
 ---
 title: "Fast is not enough: how we keep local scans useful"
-date: "2026-04-08"
+date: "2026-04-06"
 description: "A local security scanner does not win just by being fast. It wins when developers trust the findings enough to keep it enabled."
 readTime: "5 min read"
 ---

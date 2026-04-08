@@ -1,6 +1,6 @@
 ---
 title: "How to roll out foxguard without blowing up CI"
-date: "2026-04-08"
+date: "2026-04-07"
 description: "The fastest way to get developers to hate a security tool is to drop it into CI with no rollout plan. Here is the boring rollout path that actually works."
 readTime: "5 min read"
 ---
