@@ -189,6 +189,13 @@ jobs:
       - run: npm ci
       - run: npm run compile
       - name: Publish extension
-        run: npx @vscode/vsce publish -p "${VSCE_PAT}"
+        run: |
+          set +e
+          output=$(npx @vscode/vsce publish -p "${VSCE_PAT}" 2>&1)
+          status=$?
+          echo "${output}"
+          if [ "${status}" -ne 0 ] && ! echo "${output}" | grep -q "already exists"; then
+            exit "${status}"
+          fi
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
