@@ -69,6 +69,8 @@ The GitHub `Release` workflow then:
 - creates the GitHub Release
 - publishes crates.io, npm, and the VS Code extension
 
+For the full runbook and recovery rules, see [`RELEASING.md`](./RELEASING.md).
+
 Required GitHub repository secrets:
 
 - `CARGO_REGISTRY_TOKEN`

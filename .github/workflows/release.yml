@@ -152,7 +152,37 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - name: Publish crate
-        run: cargo publish --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+        run: |
+          set +e
+          output=$(cargo publish --token "${{ secrets.CARGO_REGISTRY_TOKEN }}" 2>&1)
+          status=$?
+          set -e
+          echo "${output}"
+          if [ "${status}" -ne 0 ]; then
+            crate_name=$(sed -n 's/^name = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+            crate_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+            published_version=$(python3 - "${crate_name}" <<'PY'
+import json
+import sys
+import urllib.request
+
+name = sys.argv[1]
+url = f"https://crates.io/api/v1/crates/{name}"
+
+try:
+    with urllib.request.urlopen(url, timeout=10) as response:
+        payload = json.load(response)
+    print(payload["crate"]["max_version"])
+except Exception:
+    print("")
+PY
+)
+            if [ "${published_version}" = "${crate_version}" ]; then
+              echo "crates.io already has ${crate_name} ${crate_version}; treating rerun as success"
+              exit 0
+            fi
+            exit "${status}"
+          fi
 
   publish-npm:
     name: Publish npm
@@ -168,7 +198,22 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
       - name: Publish npm package
-        run: npm publish --access public
+        run: |
+          set +e
+          output=$(npm publish --access public 2>&1)
+          status=$?
+          set -e
+          echo "${output}"
+          if [ "${status}" -ne 0 ]; then
+            package_name=$(node -p "require('./package.json').name")
+            package_version=$(node -p "require('./package.json').version")
+            published_version=$(npm view "${package_name}" version 2>/dev/null || true)
+            if [ "${published_version}" = "${package_version}" ]; then
+              echo "npm already has ${package_name} ${package_version}; treating rerun as success"
+              exit 0
+            fi
+            exit "${status}"
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
