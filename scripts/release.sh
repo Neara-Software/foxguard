@@ -1,53 +1,96 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Release script for foxguard
-# Usage: ./scripts/release.sh 0.4.0
+# Prepare a tag-driven release for foxguard.
+# Usage: ./scripts/release.sh 0.3.3
 
 VERSION="${1:?Usage: ./scripts/release.sh <version>}"
+TAG="v${VERSION}"
+BRANCH="$(git branch --show-current)"
 
-echo "=== Releasing foxguard v${VERSION} ==="
+echo "=== Preparing foxguard ${TAG} ==="
 
-# 1. Bump all versions
+if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Version must look like 0.3.3"
+  exit 1
+fi
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "Working tree must be clean before preparing a release"
+  exit 1
+fi
+
+if [ "${BRANCH}" != "main" ]; then
+  echo "Run releases from main (current branch: ${BRANCH})"
+  exit 1
+fi
+
+if git rev-parse "${TAG}" >/dev/null 2>&1; then
+  echo "Tag ${TAG} already exists locally"
+  exit 1
+fi
+
+if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+  echo "Tag ${TAG} already exists on origin"
+  exit 1
+fi
+
 echo "Bumping versions..."
-sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+perl -0pi -e 's/^version = ".*"/version = "'"${VERSION}"'"/m' Cargo.toml
 
 for pkg in packages/npm/package.json vscode-extension/package.json; do
   node -e "
-    const pkg = require('./${pkg}');
-    pkg.version = '${VERSION}';
-    require('fs').writeFileSync('${pkg}', JSON.stringify(pkg, null, 2) + '\n');
+    const fs = require('fs');
+    const path = '${pkg}';
+    const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+    data.version = '${VERSION}';
+    fs.writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
   "
 done
 
-# 2. Build and test
-echo "Building..."
-cargo build --release
-cargo test
-cargo clippy -- -D warnings
+(
+  cd vscode-extension
+  npm install --package-lock-only
+)
+
+echo "Verifying release candidate..."
 cargo fmt --check
+cargo clippy -- -D warnings
+cargo test
+(
+  cd www
+  npm ci
+  npm run build
+)
+(
+  cd vscode-extension
+  npm ci
+  npm run compile
+)
+(
+  cd packages/npm
+  npm pack --dry-run
+)
 
-# 3. Commit, tag, push
-echo "Committing..."
-git add Cargo.toml packages/npm/package.json vscode-extension/package.json
-git commit -m "v${VERSION}"
-git push
-git tag "v${VERSION}"
-git push origin "v${VERSION}"
+echo "Committing release metadata..."
+git add Cargo.toml packages/npm/package.json vscode-extension/package.json vscode-extension/package-lock.json
+git commit -m "Prepare ${TAG} release metadata" -m "Bump crate, npm, and VS Code extension versions to ${VERSION} so the
+tag-driven release workflow can publish a coherent release.
 
-# 4. Publish npm
-echo "Publishing to npm..."
-cd packages/npm && npm publish --access public && cd ../..
+Constraint: Release automation now validates tag-to-version alignment before publishing
+Rejected: Keep manual publish steps in the local script | duplicates the release workflow and increases drift risk
+Confidence: high
+Scope-risk: narrow
+Reversibility: clean
+Directive: Use this script to prepare release metadata, then let the tag-triggered GitHub workflow publish artifacts
+Tested: cargo fmt --check; cargo clippy -- -D warnings; cargo test; npm ci && npm run build (www); npm ci && npm run compile (vscode-extension); npm pack --dry-run (packages/npm)
+Not-tested: Live publish against GitHub Releases, npm, crates.io, and VS Code Marketplace"
 
-# 5. Publish VS Code extension
-echo "Publishing VS Code extension..."
-cd vscode-extension
-npx @vscode/vsce publish -p "${VSCE_PAT:-}"
-cd ..
+echo "Pushing branch and tag..."
+git push origin main
+git tag "${TAG}"
+git push origin "${TAG}"
 
 echo ""
-echo "=== v${VERSION} released ==="
-echo "  GitHub Release: building (check Actions)"
-echo "  npm: foxguard@${VERSION}"
-echo "  VS Code: peaktwilight.foxguard@${VERSION}"
-echo "  Homebrew: update homebrew-tap Formula manually"
+echo "=== ${TAG} queued ==="
+echo "GitHub Actions release workflow will build binaries and publish GitHub, crates.io, npm, and VS Code if the required secrets are configured."

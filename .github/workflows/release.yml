@@ -10,10 +10,56 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  NODE_VERSION: "22.12.0"
 
 jobs:
+  preflight:
+    name: Release Preflight
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Verify release secrets
+        run: |
+          missing=0
+          for name in NPM_TOKEN CARGO_REGISTRY_TOKEN VSCE_PAT; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required release secret: ${name}"
+              missing=1
+            fi
+          done
+          exit "${missing}"
+      - name: Verify tag matches package versions
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          npm_version=$(node -p "require('./packages/npm/package.json').version")
+          vscode_version=$(node -p "require('./vscode-extension/package.json').version")
+          vscode_lock_version=$(node -p "require('./vscode-extension/package-lock.json').version")
+
+          for entry in \
+            "Cargo.toml:${cargo_version}" \
+            "packages/npm/package.json:${npm_version}" \
+            "vscode-extension/package.json:${vscode_version}" \
+            "vscode-extension/package-lock.json:${vscode_lock_version}"
+          do
+            file="${entry%%:*}"
+            version="${entry#*:}"
+            if [ "${version}" != "${tag_version}" ]; then
+              echo "::error::${file} version ${version} does not match tag ${tag_version}"
+              exit 1
+            fi
+          done
+
   build:
     name: Build ${{ matrix.target }}
+    needs: preflight
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -73,8 +119,8 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
-  release:
-    name: Create Release
+  github-release:
+    name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -98,3 +144,51 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  publish-crates:
+    name: Publish crates.io
+    needs: github-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish crate
+        run: cargo publish --locked --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+
+  publish-npm:
+    name: Publish npm
+    needs: github-release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/npm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+      - name: Publish npm package
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-vscode:
+    name: Publish VS Code Extension
+    needs: github-release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: vscode-extension/package-lock.json
+      - run: npm ci
+      - run: npm run compile
+      - name: Publish extension
+        run: npx @vscode/vsce publish -p "${VSCE_PAT}"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

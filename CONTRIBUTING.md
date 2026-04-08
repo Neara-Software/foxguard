@@ -51,10 +51,29 @@ benchmarks/       # Benchmark suite
 ## Releasing
 
 ```sh
-./scripts/release.sh 0.4.0
+./scripts/release.sh 0.3.3
 ```
 
-This bumps all versions (Cargo, npm, VS Code), builds, tests, commits, tags, pushes, and publishes to npm + VS Code Marketplace. GitHub Release builds binaries from the tag.
+This prepares a tag-driven release:
+
+- bumps Cargo, npm, and VS Code extension versions
+- refreshes the tracked VS Code lockfile
+- runs the verification suite
+- commits the release metadata
+- pushes `main` and the `v*` tag
+
+The GitHub `Release` workflow then:
+
+- verifies the tag matches all package versions
+- builds the release binaries
+- creates the GitHub Release
+- publishes crates.io, npm, and the VS Code extension
+
+Required GitHub repository secrets:
+
+- `CARGO_REGISTRY_TOKEN`
+- `NPM_TOKEN`
+- `VSCE_PAT`
 
 ## Pull requests
 
