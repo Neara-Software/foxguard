@@ -73,7 +73,7 @@ cargo test
 )
 
 echo "Committing release metadata..."
-git add Cargo.toml packages/npm/package.json vscode-extension/package.json vscode-extension/package-lock.json
+git add Cargo.toml Cargo.lock packages/npm/package.json vscode-extension/package.json vscode-extension/package-lock.json
 git commit -m "Prepare ${TAG} release metadata" -m "Bump crate, npm, and VS Code extension versions to ${VERSION} so the
 tag-driven release workflow can publish a coherent release.
 
