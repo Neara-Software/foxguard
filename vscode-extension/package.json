@@ -2,7 +2,7 @@
   "name": "foxguard",
   "displayName": "foxguard",
   "description": "Security scanner as fast as a linter",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "publisher": "peaktwilight",
   "license": "MIT",
   "repository": {
@@ -63,16 +63,36 @@
       }
     },
     "languages": [
-      { "id": "javascript" },
-      { "id": "typescript" },
-      { "id": "python" },
-      { "id": "go" },
-      { "id": "ruby" },
-      { "id": "java" },
-      { "id": "php" },
-      { "id": "rust" },
-      { "id": "csharp" },
-      { "id": "swift" }
+      {
+        "id": "javascript"
+      },
+      {
+        "id": "typescript"
+      },
+      {
+        "id": "python"
+      },
+      {
+        "id": "go"
+      },
+      {
+        "id": "ruby"
+      },
+      {
+        "id": "java"
+      },
+      {
+        "id": "php"
+      },
+      {
+        "id": "rust"
+      },
+      {
+        "id": "csharp"
+      },
+      {
+        "id": "swift"
+      }
     ]
   },
   "scripts": {
