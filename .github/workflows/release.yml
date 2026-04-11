@@ -161,22 +161,7 @@ jobs:
           if [ "${status}" -ne 0 ]; then
             crate_name=$(sed -n 's/^name = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
             crate_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
-            published_version=$(python3 - "${crate_name}" <<'PY'
-import json
-import sys
-import urllib.request
-
-name = sys.argv[1]
-url = f"https://crates.io/api/v1/crates/{name}"
-
-try:
-    with urllib.request.urlopen(url, timeout=10) as response:
-        payload = json.load(response)
-    print(payload["crate"]["max_version"])
-except Exception:
-    print("")
-PY
-)
+            published_version=$(curl -fsSL "https://crates.io/api/v1/crates/${crate_name}" | jq -r '.crate.max_version // ""' 2>/dev/null || echo "")
             if [ "${published_version}" = "${crate_version}" ]; then
               echo "crates.io already has ${crate_name} ${crate_version}; treating rerun as success"
               exit 0
