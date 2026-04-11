@@ -13,7 +13,7 @@ env:
 jobs:
   fmt:
     name: Format
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -26,9 +26,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os:
-          - [self-hosted, Linux, X64]
-          - [self-hosted, macOS, ARM64]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -49,9 +47,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os:
-          - [self-hosted, Linux, X64]
-          - [self-hosted, macOS, ARM64]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -67,7 +63,7 @@ jobs:
 
   semgrep-parity:
     name: Semgrep Parity
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -89,7 +85,7 @@ jobs:
 
   website:
     name: Website Build
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: www
@@ -105,7 +101,7 @@ jobs:
 
   vscode-extension:
     name: VS Code Extension
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: vscode-extension
@@ -121,7 +117,7 @@ jobs:
 
   npm-package:
     name: npm Package
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: packages/npm
@@ -134,7 +130,7 @@ jobs:
 
   scripts:
     name: Script Syntax
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - run: bash -n action/entrypoint.sh
@@ -146,9 +142,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os:
-          - [self-hosted, Linux, X64]
-          - [self-hosted, macOS, ARM64]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -165,7 +159,7 @@ jobs:
   dogfood:
     name: Dogfood (foxguard scans itself)
     needs: build
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
