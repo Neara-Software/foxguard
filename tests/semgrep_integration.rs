@@ -58,7 +58,7 @@ fn test_sql_injection_rule() {
 
     let source = "query = \"SELECT * FROM users WHERE name = '\" + user_input\n";
     let tree = parse_file(source, Language::Python).unwrap();
-    let findings = rules[0].check(&source, &tree);
+    let findings = rules[0].check(source, &tree);
 
     assert_eq!(
         findings.len(),

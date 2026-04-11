@@ -2,9 +2,12 @@ use crate::rules::RuleRegistry;
 use crate::{Finding, Language};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
+use regex::Regex;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 /// Result of a scan with metadata.
@@ -12,6 +15,23 @@ pub struct ScanResult {
     pub findings: Vec<Finding>,
     pub files_scanned: usize,
     pub duration: std::time::Duration,
+}
+
+#[derive(Default)]
+struct InlineIgnoreSpec {
+    all_rules: bool,
+    rule_ids: HashSet<String>,
+}
+
+impl InlineIgnoreSpec {
+    fn matches(&self, rule_id: &str) -> bool {
+        self.all_rules || self.rule_ids.contains(rule_id)
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.all_rules |= other.all_rules;
+        self.rule_ids.extend(other.rule_ids);
+    }
 }
 
 /// Detect language from file extension.
@@ -123,6 +143,133 @@ fn is_minified(source: &str) -> bool {
     avg_line_len > 300
 }
 
+fn inline_ignore_regex() -> &'static Regex {
+    static INLINE_IGNORE_REGEX: OnceLock<Regex> = OnceLock::new();
+    INLINE_IGNORE_REGEX.get_or_init(|| {
+        Regex::new(r"^foxguard\s*:\s*ignore(?:\[(?P<rules>[^\]]*)\])?\s*$")
+            .expect("invalid inline ignore regex")
+    })
+}
+
+fn inline_ignore_directives(source: &str, language: Language) -> HashMap<usize, InlineIgnoreSpec> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut directives = HashMap::new();
+
+    for (index, line) in lines.iter().enumerate() {
+        let line_number = index + 1;
+        let Some((comment_only, spec)) = parse_inline_ignore(line, language) else {
+            continue;
+        };
+
+        let target_line = if comment_only {
+            next_code_line(&lines, line_number, language)
+        } else {
+            Some(line_number)
+        };
+
+        if let Some(target_line) = target_line {
+            directives
+                .entry(target_line)
+                .or_insert_with(InlineIgnoreSpec::default)
+                .merge(spec);
+        }
+    }
+
+    directives
+}
+
+fn parse_inline_ignore(line: &str, language: Language) -> Option<(bool, InlineIgnoreSpec)> {
+    let mut markers = comment_markers(language)
+        .iter()
+        .copied()
+        .flat_map(|marker| {
+            let mut positions = Vec::new();
+            let mut start = 0;
+            while let Some(offset) = line[start..].find(marker) {
+                let index = start + offset;
+                positions.push((index, marker));
+                start = index + marker.len();
+            }
+            positions
+        })
+        .collect::<Vec<_>>();
+
+    markers.sort_by_key(|(index, _)| *index);
+
+    for (index, marker) in markers {
+        let comment_text = line[index + marker.len()..].trim();
+        let Some(captures) = inline_ignore_regex().captures(comment_text) else {
+            continue;
+        };
+
+        let mut spec = InlineIgnoreSpec::default();
+        match captures.name("rules").map(|rules| rules.as_str().trim()) {
+            None | Some("") => spec.all_rules = true,
+            Some(rules) => {
+                for rule_id in rules
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|rule| !rule.is_empty())
+                {
+                    spec.rule_ids.insert(rule_id.to_string());
+                }
+                if spec.rule_ids.is_empty() {
+                    spec.all_rules = true;
+                }
+            }
+        }
+
+        let comment_only = line[..index].trim().is_empty();
+        return Some((comment_only, spec));
+    }
+
+    None
+}
+
+fn next_code_line(lines: &[&str], line_number: usize, language: Language) -> Option<usize> {
+    for (index, line) in lines.iter().enumerate().skip(line_number) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || is_comment_only_line(trimmed, language) {
+            continue;
+        }
+        return Some(index + 1);
+    }
+    None
+}
+
+fn is_comment_only_line(trimmed_line: &str, language: Language) -> bool {
+    comment_markers(language)
+        .iter()
+        .any(|marker| trimmed_line.starts_with(marker))
+}
+
+fn comment_markers(language: Language) -> &'static [&'static str] {
+    match language {
+        Language::Python | Language::Ruby => &["#"],
+        Language::Php => &["//", "#"],
+        Language::JavaScript
+        | Language::Go
+        | Language::Java
+        | Language::Rust
+        | Language::CSharp
+        | Language::Swift => &["//"],
+    }
+}
+
+fn apply_inline_ignores(
+    findings: Vec<Finding>,
+    directives: &HashMap<usize, InlineIgnoreSpec>,
+) -> Vec<Finding> {
+    findings
+        .into_iter()
+        .filter(|finding| {
+            directives
+                .get(&finding.line)
+                .is_none_or(|spec| !spec.matches(&finding.rule_id))
+        })
+        .collect()
+}
+
 fn scan_files(
     scan_root: &Path,
     files: Vec<(PathBuf, Language)>,
@@ -147,6 +294,8 @@ fn scan_files(
             return;
         }
 
+        let inline_ignores = inline_ignore_directives(&source, *language);
+
         let Some(tree) = super::parser::parse_file(&source, *language) else {
             return;
         };
@@ -163,6 +312,7 @@ fn scan_files(
             for f in &mut rule_findings {
                 f.file = file_str.clone();
             }
+            let rule_findings = apply_inline_ignores(rule_findings, &inline_ignores);
             if !rule_findings.is_empty() {
                 findings.lock().unwrap().extend(rule_findings);
             }
