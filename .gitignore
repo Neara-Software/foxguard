@@ -21,3 +21,4 @@ demo/out/
 *.local.md
 benchmarks/repos/
 benchmarks/results*.md
+.claude/

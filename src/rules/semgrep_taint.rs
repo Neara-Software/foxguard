@@ -35,6 +35,7 @@
 //! rule* to be skipped (with an explanatory warning) so the user sees a
 //! clear signal rather than a silently-degraded match surface.
 
+use crate::rules::common::get_source_line;
 use crate::rules::python_taint::{self, NodeMatcher, TaintSpec};
 use crate::rules::{FileContext, Rule};
 use crate::{Finding, Language, Severity};
@@ -97,14 +98,6 @@ impl Rule for SemgrepTaintRule {
             })
             .collect()
     }
-}
-
-fn get_source_line(source: &str, byte_offset: usize) -> String {
-    let start = source[..byte_offset].rfind('\n').map_or(0, |p| p + 1);
-    let end = source[byte_offset..]
-        .find('\n')
-        .map_or(source.len(), |p| byte_offset + p);
-    source[start..end].to_string()
 }
 
 // ─── YAML → TaintSpec compilation ─────────────────────────────────────────

@@ -1,86 +1,10 @@
+use crate::rules::common::{get_source_line, make_finding, make_finding_from_offsets, walk_tree};
 use crate::rules::go_taint::{
     self, go_taint_sources, GoImportAliases, NodeMatcher as GoNodeMatcher, TaintSpec as GoTaintSpec,
 };
 use crate::rules::{FileContext, Rule};
 use crate::{Finding, Language, Severity};
 use regex::Regex;
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-fn get_source_line(source: &str, byte_offset: usize) -> String {
-    let start = source[..byte_offset].rfind('\n').map_or(0, |p| p + 1);
-    let end = source[byte_offset..]
-        .find('\n')
-        .map_or(source.len(), |p| byte_offset + p);
-    source[start..end].to_string()
-}
-
-fn walk_tree(
-    node: tree_sitter::Node,
-    source: &str,
-    callback: &mut dyn FnMut(tree_sitter::Node, &str),
-) {
-    callback(node, source);
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        walk_tree(child, source, callback);
-    }
-}
-
-fn make_finding(
-    rule_id: &str,
-    severity: Severity,
-    cwe: Option<&str>,
-    description: &str,
-    node: tree_sitter::Node,
-    source: &str,
-) -> Finding {
-    let start = node.start_position();
-    let end = node.end_position();
-    Finding {
-        rule_id: rule_id.to_string(),
-        severity,
-        cwe: cwe.map(|s| s.to_string()),
-        description: description.to_string(),
-        file: String::new(),
-        line: start.row + 1,
-        column: start.column + 1,
-        end_line: end.row + 1,
-        end_column: end.column + 1,
-        snippet: get_source_line(source, node.start_byte()),
-    }
-}
-
-fn make_finding_from_offsets(
-    rule_id: &str,
-    severity: Severity,
-    cwe: Option<&str>,
-    description: &str,
-    source: &str,
-    start_byte: usize,
-    end_byte: usize,
-) -> Finding {
-    let line = source[..start_byte].bytes().filter(|b| *b == b'\n').count() + 1;
-    let line_start = source[..start_byte].rfind('\n').map_or(0, |idx| idx + 1);
-    let column = source[line_start..start_byte].chars().count() + 1;
-
-    let end_line = source[..end_byte].bytes().filter(|b| *b == b'\n').count() + 1;
-    let end_line_start = source[..end_byte].rfind('\n').map_or(0, |idx| idx + 1);
-    let end_column = source[end_line_start..end_byte].chars().count() + 1;
-
-    Finding {
-        rule_id: rule_id.to_string(),
-        severity,
-        cwe: cwe.map(|s| s.to_string()),
-        description: description.to_string(),
-        file: String::new(),
-        line,
-        column,
-        end_line,
-        end_column,
-        snippet: get_source_line(source, start_byte),
-    }
-}
 
 // ─── Rule 1: no-sql-injection ───────────────────────────────────────────────
 

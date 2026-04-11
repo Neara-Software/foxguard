@@ -1,4 +1,5 @@
 use crate::engine::parser::parse_file;
+use crate::rules::common::get_source_line;
 use crate::rules::Rule;
 use crate::{Finding, Language, Severity};
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -709,14 +710,6 @@ fn is_string_node(node: tree_sitter::Node, _source: &str) -> bool {
             | "raw_string_literal"
             | "template_string"
     )
-}
-
-fn get_source_line(source: &str, byte_offset: usize) -> String {
-    let start = source[..byte_offset].rfind('\n').map_or(0, |p| p + 1);
-    let end = source[byte_offset..]
-        .find('\n')
-        .map_or(source.len(), |p| byte_offset + p);
-    source[start..end].to_string()
 }
 
 fn byte_offset_to_position(source: &str, byte_offset: usize) -> (usize, usize) {

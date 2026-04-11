@@ -1,52 +1,7 @@
+use crate::rules::common::{make_finding, walk_tree};
 use crate::rules::Rule;
 use crate::{Finding, Language, Severity};
 use regex::Regex;
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-fn get_source_line(source: &str, byte_offset: usize) -> String {
-    let start = source[..byte_offset].rfind('\n').map_or(0, |p| p + 1);
-    let end = source[byte_offset..]
-        .find('\n')
-        .map_or(source.len(), |p| byte_offset + p);
-    source[start..end].to_string()
-}
-
-fn walk_tree(
-    node: tree_sitter::Node,
-    source: &str,
-    callback: &mut dyn FnMut(tree_sitter::Node, &str),
-) {
-    callback(node, source);
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        walk_tree(child, source, callback);
-    }
-}
-
-fn make_finding(
-    rule_id: &str,
-    severity: Severity,
-    cwe: Option<&str>,
-    description: &str,
-    node: tree_sitter::Node,
-    source: &str,
-) -> Finding {
-    let start = node.start_position();
-    let end = node.end_position();
-    Finding {
-        rule_id: rule_id.to_string(),
-        severity,
-        cwe: cwe.map(|s| s.to_string()),
-        description: description.to_string(),
-        file: String::new(),
-        line: start.row + 1,
-        column: start.column + 1,
-        end_line: end.row + 1,
-        end_column: end.column + 1,
-        snippet: get_source_line(source, node.start_byte()),
-    }
-}
 
 // ─── Rule 1: no-eval ──────────────────────────────────────────────────────────
 

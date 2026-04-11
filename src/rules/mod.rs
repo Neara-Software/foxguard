@@ -1,3 +1,4 @@
+pub mod common;
 pub mod csharp;
 pub mod go;
 pub mod go_taint;
