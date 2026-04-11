@@ -205,6 +205,30 @@ secrets:
     - secret/github-token
 ```
 
+## Suppressing Deliberate Findings
+
+For one-off, deliberate code patterns, you can suppress code-scan findings inline instead of
+adding them to a baseline.
+
+```js
+// Ignore the next code line for one rule
+// foxguard: ignore[js/no-ssrf]
+fileContent = fetch(userControlledUrl);
+
+// Ignore the current line for one rule
+fileContent = fetch(userControlledUrl); // foxguard: ignore[js/no-ssrf]
+
+// Ignore the current line for all foxguard code findings
+eval(userInput); // foxguard: ignore
+```
+
+Notes:
+
+- Inline ignores currently apply to code scanning findings, not `foxguard secrets`.
+- Rule IDs must match exactly, for example `js/no-ssrf`.
+- Comment-only directives apply to the next non-empty, non-comment code line.
+- Supported comment styles are `//` and `#`, depending on the language.
+
 ## Contributing
 
 Adding a rule is one struct implementing a trait. See [`CONTRIBUTING.md`](./CONTRIBUTING.md).

@@ -263,9 +263,11 @@ fn apply_inline_ignores(
     findings
         .into_iter()
         .filter(|finding| {
-            directives
-                .get(&finding.line)
-                .is_none_or(|spec| !spec.matches(&finding.rule_id))
+            !(finding.line..=finding.end_line).any(|line| {
+                directives
+                    .get(&line)
+                    .is_some_and(|spec| spec.matches(&finding.rule_id))
+            })
         })
         .collect()
 }

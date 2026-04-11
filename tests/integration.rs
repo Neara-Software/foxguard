@@ -847,6 +847,59 @@ fn test_inline_ignore_remains_rule_specific() {
 }
 
 #[test]
+fn test_inline_ignore_without_rule_list_suppresses_all_findings_on_line() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    let target = repo.path().join("ignored-all.js");
+    fs::write(
+        &target,
+        "const user_input = process.argv[2];\neval(user_input); // foxguard: ignore\n",
+    )
+    .expect("failed to write fixture");
+
+    let output = foxguard_cmd()
+        .args([target.to_str().expect("non-utf8 path"), "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(
+        output.status.success(),
+        "ignore without rule list should suppress all findings on the line"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+    assert!(findings.is_empty(), "expected no findings after ignore-all");
+}
+
+#[test]
+fn test_inline_ignore_suppresses_multiline_finding_when_directive_is_on_end_line() {
+    let repo = TempDir::new().expect("failed to create temp dir");
+    let target = repo.path().join("multiline-ignored.js");
+    fs::write(
+        &target,
+        "const user_input = process.argv[2];\neval(\n  user_input // foxguard: ignore[js/no-eval]\n);\n",
+    )
+    .expect("failed to write fixture");
+
+    let output = foxguard_cmd()
+        .args([target.to_str().expect("non-utf8 path"), "-f", "json"])
+        .output()
+        .expect("failed to execute foxguard");
+
+    assert!(
+        output.status.success(),
+        "directive on the end line of a multiline finding should still suppress it"
+    );
+
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("invalid JSON output");
+    assert!(
+        findings.is_empty(),
+        "expected no findings after multiline inline ignore"
+    );
+}
+
+#[test]
 fn test_changed_mode_scans_only_staged_files() {
     let repo = setup_git_repo(&["vulnerable.js", "safe.py"]);
 
