@@ -1,6 +1,6 @@
 # Taint tracking in foxguard
 
-This document describes the intraprocedural taint engine added as a proof of concept for issue #10. It is intended for rule authors and contributors, not end users.
+This document describes foxguard's taint engine. It is intended for rule authors and contributors, not end users.
 
 ## Why taint at all
 
@@ -8,9 +8,9 @@ Pure AST pattern matching can answer "is this dangerous sink used anywhere?" It 
 
 The taint engine answers the second, on a narrower footprint. It lets us ship rules that fire only when there is a provable flow from a known source into a known sink within a single function. Higher precision, lower recall. The two rule classes coexist.
 
-## Scope of the POC
+## Scope
 
-In scope:
+The taint engine supports:
 
 - **Three languages**: Python, JavaScript/TypeScript, and Go, each with its own engine (`src/rules/python_taint.rs`, `src/rules/javascript_taint.rs`, `src/rules/go_taint.rs`) sharing an identical surface (`TaintSpec`, `NodeMatcher`, `TaintFinding`, `analyze_tree`). `.ts` files are parsed through tree-sitter-javascript, so the JS engine also covers TypeScript source.
 - **Intraprocedural**: each function body is analyzed independently.
@@ -26,10 +26,10 @@ In scope:
 - **Same-file interprocedural return propagation (v1)**: a helper whose body returns a tainted expression marks its return as tainted, and bare calls to that helper elsewhere in the same file propagate the taint into the caller. See the dedicated section below for the exact scope.
 - **Supported Python source frameworks**: Flask (`request.data|form|args|values|json|files|cookies`, `request.get_data|get_json`), Django (`request.POST|GET|COOKIES|FILES|META|headers|body`), FastAPI/Starlette (`request.query_params|path_params|headers|cookies`, `await request.body|json|form|stream`), plus CLI-tool sources (`sys.argv`, `sys.stdin.read|readline`, `input()`, `os.environ`, `os.getenv`). Handler parameters named `request` or `req` are treated as implicit sources. Method calls on tainted receivers (e.g. `request.GET.get("x")`, `os.environ.get("X")`) are tracked via subscript access today; the method-call path is handled once issue #27 lands.
 
-Out of scope for this PR, tracked under #10 as follow-ups:
+Known limitations:
 
 - **Multi-hop interprocedural chains**: only one level of helper-call propagation is supported. A helper that itself calls another helper is not tracked through the deeper hop.
-- **Cross-file**: no module boundary crossing.
+- **Cross-file**: Python cross-file taint is supported (v0.5.1+) via function summaries and import resolution. JS and Go cross-file support is in progress.
 - **Instance and class methods in interprocedural summaries**: only top-level `function_declaration`s and `const/let/var foo = ...` arrow/function-expression helpers are summarized. `obj.method()` and `self.helper()` calls are not looked up in the summary map.
 - **Argument taint propagation**: helper summaries are computed with only their parameters' taint sources seeded (via `ParamName`). Passing an already-tainted local into a helper does not influence the helper's return summary — pass 1 analyzes helpers with a conservative view of their parameters.
 - **Per-finding sanitization**: Semgrep's `mode: taint` distinguishes "this specific flow was sanitized" from "the value is now clean"; it can still fire on secondary flows that bypassed the sanitizer along a different path. foxguard's v1 collapses both cases into "clean" and does not track per-finding sanitization state.
@@ -163,7 +163,7 @@ engine to when adding new sources or sinks.
 
 ## Coexistence with conservative rules
 
-Taint rules do not replace direct-sink rules. In the POC, `py/no-pickle` fires on every `pickle.loads` call; `py/taint-pickle-deserialization` fires only on the subset where a flow is provable. A user may see both findings on the same line, with different messages. That is intended — the two rules encode different questions and should be silenced independently if the user wants to suppress one but not the other.
+Taint rules do not replace direct-sink rules. For example, `py/no-pickle` fires on every `pickle.loads` call; `py/taint-pickle-deserialization` fires only on the subset where a flow is provable. A user may see both findings on the same line, with different messages. That is intended — the two rules encode different questions and should be silenced independently if the user wants to suppress one but not the other.
 
 ## Performance
 
