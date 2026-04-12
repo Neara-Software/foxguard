@@ -154,11 +154,15 @@ fn redact_match(line: &str, start: usize, end: usize) -> String {
     redacted
 }
 
-pub fn scan_directory(root: &str) -> Vec<Finding> {
-    scan_directory_with_config(root, &SecretScanConfig::default())
+pub fn scan_directory(root: &str, max_file_size: u64) -> Vec<Finding> {
+    scan_directory_with_config(root, &SecretScanConfig::default(), max_file_size)
 }
 
-pub fn scan_directory_with_config(root: &str, config: &SecretScanConfig) -> Vec<Finding> {
+pub fn scan_directory_with_config(
+    root: &str,
+    config: &SecretScanConfig,
+    max_file_size: u64,
+) -> Vec<Finding> {
     let root_path = Path::new(root);
     let files: Vec<PathBuf> = if root_path.is_file() {
         vec![root_path.to_path_buf()]
@@ -173,17 +177,23 @@ pub fn scan_directory_with_config(root: &str, config: &SecretScanConfig) -> Vec<
             .collect()
     };
 
-    scan_paths_with_config(root_path, &files, config)
+    scan_paths_with_config(root_path, &files, config, max_file_size)
 }
 
-pub fn scan_paths(paths: &[PathBuf]) -> Vec<Finding> {
-    scan_paths_with_config(Path::new("."), paths, &SecretScanConfig::default())
+pub fn scan_paths(paths: &[PathBuf], max_file_size: u64) -> Vec<Finding> {
+    scan_paths_with_config(
+        Path::new("."),
+        paths,
+        &SecretScanConfig::default(),
+        max_file_size,
+    )
 }
 
 pub fn scan_paths_with_config(
     root: &Path,
     paths: &[PathBuf],
     config: &SecretScanConfig,
+    max_file_size: u64,
 ) -> Vec<Finding> {
     let patterns = patterns();
     let mut findings = Vec::new();
@@ -191,6 +201,25 @@ pub fn scan_paths_with_config(
     for path in paths {
         if config.should_skip_path(root, path) {
             continue;
+        }
+
+        match std::fs::metadata(path) {
+            Ok(m) if m.len() > max_file_size => {
+                eprintln!(
+                    "warning: skipping {} ({} bytes exceeds --max-file-size)",
+                    path.display(),
+                    m.len()
+                );
+                continue;
+            }
+            Err(_) => {
+                eprintln!(
+                    "warning: skipping {} (cannot read metadata)",
+                    path.display()
+                );
+                continue;
+            }
+            _ => {}
         }
 
         let Some(source) = read_scannable_text(path) else {

@@ -54,7 +54,7 @@ fn detect_language(path: &Path) -> Option<Language> {
 }
 
 /// Scan a directory (or single file) and return findings with metadata.
-pub fn scan_directory(root: &str, registry: &RuleRegistry) -> ScanResult {
+pub fn scan_directory(root: &str, registry: &RuleRegistry, max_file_size: u64) -> ScanResult {
     let root_path = Path::new(root);
 
     let files: Vec<_> = if root_path.is_file() {
@@ -77,21 +77,26 @@ pub fn scan_directory(root: &str, registry: &RuleRegistry) -> ScanResult {
             .collect()
     };
 
-    scan_files(scan_root(root_path), files, registry)
+    scan_files(scan_root(root_path), files, registry, max_file_size)
 }
 
 /// Scan an explicit list of paths.
-pub fn scan_paths(paths: &[PathBuf], registry: &RuleRegistry) -> ScanResult {
-    scan_paths_with_root(Path::new("."), paths, registry)
+pub fn scan_paths(paths: &[PathBuf], registry: &RuleRegistry, max_file_size: u64) -> ScanResult {
+    scan_paths_with_root(Path::new("."), paths, registry, max_file_size)
 }
 
 /// Scan an explicit list of paths relative to a scan root.
-pub fn scan_paths_with_root(root: &Path, paths: &[PathBuf], registry: &RuleRegistry) -> ScanResult {
+pub fn scan_paths_with_root(
+    root: &Path,
+    paths: &[PathBuf],
+    registry: &RuleRegistry,
+    max_file_size: u64,
+) -> ScanResult {
     let files = paths
         .iter()
         .filter_map(|path| detect_language(path).map(|lang| (path.clone(), lang)))
         .collect();
-    scan_files(scan_root(root), files, registry)
+    scan_files(scan_root(root), files, registry, max_file_size)
 }
 
 /// Check if a file path is in a directory that typically contains
@@ -279,6 +284,7 @@ fn scan_files(
     scan_root: &Path,
     files: Vec<(PathBuf, Language)>,
     registry: &RuleRegistry,
+    max_file_size: u64,
 ) -> ScanResult {
     let start = Instant::now();
     let file_count = files.len();
@@ -289,6 +295,25 @@ fn scan_files(
             // Skip files in test/vendor/fixture directories
             if is_noise_path(path) {
                 return Vec::new();
+            }
+
+            match std::fs::metadata(path) {
+                Ok(m) if m.len() > max_file_size => {
+                    eprintln!(
+                        "warning: skipping {} ({} bytes exceeds --max-file-size)",
+                        path.display(),
+                        m.len()
+                    );
+                    return Vec::new();
+                }
+                Err(_) => {
+                    eprintln!(
+                        "warning: skipping {} (cannot read metadata)",
+                        path.display()
+                    );
+                    return Vec::new();
+                }
+                _ => {}
             }
 
             let Ok(source) = std::fs::read_to_string(path) else {

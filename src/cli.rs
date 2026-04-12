@@ -59,6 +59,10 @@ pub struct ScanArgs {
     /// Show source-to-sink dataflow traces on taint findings
     #[arg(long, default_value_t = false)]
     pub explain: bool,
+
+    /// Maximum file size in bytes to scan (default: 1 MB)
+    #[arg(long, default_value_t = 1_048_576)]
+    pub max_file_size: u64,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -139,6 +143,10 @@ pub struct SecretsArgs {
     /// Ignore a specific built-in secrets rule ID (repeatable)
     #[arg(long = "ignore-rule")]
     pub ignored_rules: Vec<String>,
+
+    /// Maximum file size in bytes to scan (default: 1 MB)
+    #[arg(long, default_value_t = 1_048_576)]
+    pub max_file_size: u64,
 }
 
 #[derive(Subcommand, Debug, Clone)]
