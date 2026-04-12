@@ -14,6 +14,11 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     let cli = Cli::parse();
+
+    // Show banner for terminal output (not JSON/SARIF, not quiet mode)
+    if matches!(cli.scan.format, OutputFormat::Terminal) && !cli.scan.quiet {
+        foxguard::report::terminal::print_banner();
+    }
     let exit_code = match cli.command {
         Some(Command::Init(args)) => run_init(&args),
         Some(Command::Baseline(args)) => run_baseline(&args),
@@ -170,6 +175,7 @@ fn run_scan(scan: &ScanArgs) -> i32 {
     match scan.format {
         OutputFormat::Terminal => {
             if !scan.quiet {
+                foxguard::report::terminal::clear_banner();
                 foxguard::report::terminal::print_findings_with_options(
                     &findings,
                     files_scanned,
