@@ -2,7 +2,7 @@
 name = "foxguard"
 version = "0.5.0"
 edition = "2021"
-description = "Security scanner as fast as a linter. 100+ built-in rules, 10 languages, sub-second scans."
+description = "Security scanner as fast as a linter. 134 built-in rules, 10 languages, sub-second scans."
 license = "MIT"
 repository = "https://github.com/PwnKit-Labs/foxguard"
 homepage = "https://foxguard.dev"

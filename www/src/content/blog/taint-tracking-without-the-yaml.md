@@ -1,7 +1,7 @@
 ---
 title: "Taint tracking, without the YAML"
 date: "2026-04-11"
-description: "foxguard 0.4.0 ships intraprocedural taint tracking for Python, JavaScript, and Go — built into the scanner, not bolted on as YAML rules. Here is what that gets you and where it stops."
+description: "foxguard 0.5.0 ships intraprocedural taint tracking for Python, JavaScript, and Go — built into the scanner, not bolted on as YAML rules. Here is what that gets you and where it stops."
 readTime: "6 min read"
 ---
 
@@ -11,7 +11,7 @@ You write a rule. You declare sources. You declare sinks. You maybe declare sani
 
 That is a lot of infrastructure for a developer to maintain before they catch their first real bug.
 
-**foxguard 0.4.0 ships taint tracking the other way around.**
+**foxguard 0.5.0 ships taint tracking the other way around.**
 
 It is built into the scanner. It knows about Flask, Django, FastAPI, Express, Next.js, Hono, Fastify, SvelteKit, Deno, Gin, and `net/http` out of the box. You install foxguard. You run it. You get taint findings.
 
@@ -97,26 +97,26 @@ Every rule below is built in. You do not configure any of this.
 
 **Python sources.** `request.args`, `request.form`, `request.json`, `request.data`, `request.files`, `request.headers`, `request.cookies` (Flask and Django variants), `Request.query_params` and body readers (FastAPI), CLI `sys.argv`, `input()`, `os.environ.get`, env var reads.
 
-**JavaScript sources.** `req.query`, `req.params`, `req.body`, `req.headers`, `req.cookies` (Express, Fastify), Next.js `searchParams`, Hono `c.req.*`, SvelteKit `url.searchParams`, Deno `Deno.env.get`.
+**JavaScript sources.** `req.query`, `req.params`, `req.body`, `req.headers`, `req.cookies` (Express, Fastify), Next.js `request.nextUrl`, Hono `c.req.*`, SvelteKit `event.url`, `event.params`, Deno `Deno.env.get`.
 
-**Go sources.** `r.URL.Query()`, `r.PostFormValue`, `r.FormValue`, `r.Header.Get`, Gin `c.Query`, `c.PostForm`, `c.GetHeader`.
+**Go sources.** `r.URL.Query()`, `r.PostFormValue`, `r.FormValue`, `r.Header`, Gin `c.Query`, `c.PostForm`, `c.GetHeader`.
 
-**Sinks (all languages).** command execution, SQL execute, `eval` and friends, template rendering, SSRF fetchers, `pickle.loads`, `yaml.load`, deserialization helpers, XPath, LDAP.
+**Sinks (all languages).** command execution, SQL queries, template rendering (SSTI), SSRF fetchers, XPath injection, LDAP injection. **Python additionally:** `eval`, `pickle.loads`, `yaml.load`. **JavaScript additionally:** `eval`, `innerHTML` (XSS).
 
 You get all of that the moment you install foxguard.
 
 ## Where it stops
 
-Honesty matters here. These are the things the 0.4.0 engine does **not** do yet:
+Honesty matters here. These are the things the engine does **not** do yet:
 
 - **Cross-file flow.** If your source is in `routes.py` and your sink is in `db.py`, the engine does not connect them today. Same-file only.
 - **Cross-function with loops.** Tainted data that threads through a list comprehension or a loop back into a sink is tracked on the simple cases, not all of them.
 - **Custom sanitizers.** If you wrap your command execution in a helper that quotes everything via `shlex.quote`, foxguard does not know that helper is safe unless the sanitizer is one of the built-in ones.
 - **Aliasing through containers.** If taint goes into a dict and comes back out with a different key, the engine will miss some of those paths.
 
-Those are deliberate tradeoffs for 0.4.0. Intraprocedural plus same-file interprocedural is the 80/20 point — it catches most of the real request-handler bugs without the precision loss you get from whole-program pointer analysis.
+Those are deliberate tradeoffs. Intraprocedural plus same-file interprocedural is the 80/20 point — it catches most of the real request-handler bugs without the precision loss you get from whole-program pointer analysis.
 
-The gaps above are on the 0.5.0 roadmap. Cross-file summaries, built-in sanitizer library, and `--explain` dataflow traces are tracked as issues.
+Cross-file summaries are on the roadmap. In the meantime, 0.5.0 ships `--explain` for source-to-sink dataflow traces and fix suggestions on every taint finding.
 
 ## Why this belongs in the scanner, not in YAML
 
@@ -124,7 +124,7 @@ The argument for built-in taint tracking is the same argument as built-in framew
 
 - **Zero configuration is the point.** A local scanner that makes you write a rule file before it catches a real bug has already lost the local loop.
 - **Framework semantics are not generic.** `request.args.get("host", "localhost")` is tainted. `request.args.get("host", "localhost").startswith("10.")` is still tainted. `os.environ["FOXGUARD_API_KEY"]` is tainted in some threat models and not in others. The scanner has to know which calls mean what in which framework. That knowledge does not live in YAML, it lives in the rule registry.
-- **The YAML bridge is still there.** If you have existing `mode: taint` rules, foxguard 0.4.0 also loads them — the bridge supports `pattern-sources`, `pattern-sinks`, `pattern-sanitizers`, and `pattern-either` combinations. But the bridge is a migration path, not the primary product.
+- **The YAML bridge is still there.** If you have existing `mode: taint` rules, foxguard 0.5.0 also loads them — the bridge supports `pattern-sources`, `pattern-sinks`, `pattern-sanitizers`, and `pattern-either` combinations. But the bridge is a migration path, not the primary product.
 
 If you want to write your own taint rules, you can. You should not have to just to catch a command injection on Flask.
 
@@ -142,4 +142,4 @@ The YAML is optional. That is how it should be.
 
 ---
 
-*foxguard is an open-source security scanner written in Rust. 130+ built-in rules, 10 languages, intraprocedural taint tracking for Python, JavaScript, and Go, and a focused Semgrep/OpenGrep-compatible YAML bridge. [Try it](https://github.com/PwnKit-Labs/foxguard): `npx foxguard .`*
+*foxguard is an open-source security scanner written in Rust. 134 built-in rules, 10 languages, intraprocedural taint tracking for Python, JavaScript, and Go, and a focused Semgrep/OpenGrep-compatible YAML bridge. [Try it](https://github.com/PwnKit-Labs/foxguard): `npx foxguard .`*
