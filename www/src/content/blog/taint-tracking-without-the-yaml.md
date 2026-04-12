@@ -107,7 +107,7 @@ You get all of that the moment you install foxguard.
 
 ## Cross-file taint (new)
 
-As of 0.5.1, foxguard traces taint **across file boundaries** for Python. If your source is in `views.py` and your sink is in `queries.py`, the engine connects them.
+As of 0.6.0, foxguard traces taint **across file boundaries** for all three taint languages. If your source is in `views.py` and your sink is in `queries.py`, the engine connects them.
 
 It works in two passes: pass 1 builds function-level taint summaries for every file, pass 2 resolves imported calls against those summaries. The whole thing runs in parallel and adds negligible overhead — the Django shop fixture scans in 0.03s.
 
@@ -123,7 +123,7 @@ def run_query(name):
     cur.execute("SELECT * FROM users WHERE name = '" + name + "'")
 ```
 
-JavaScript and Go cross-file support is in progress.
+The same works for JavaScript (`require`/`import` resolution) and Go (same-package function calls).
 
 ## Where it stops
 

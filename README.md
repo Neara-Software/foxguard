@@ -67,7 +67,7 @@ npx foxguard init              # install a local pre-commit hook
 
 Rust + [tree-sitter](https://tree-sitter.github.io/) for AST parsing + [rayon](https://github.com/rayon-rs/rayon) for parallelism. No JVM startup, no Python interpreter, no network calls, no rule download step. Just a native binary that reads your files and reports findings.
 
-150+ built-in rules across 10 languages. SQL injection, XSS, SSRF, command injection, hardcoded secrets, weak crypto, unsafe deserialization, log injection, and framework-specific checks for Express, Django, Rails, Spring, Laravel, Gin, Kotlin, .NET, and iOS. Python, JavaScript, and Go also get an intraprocedural taint engine that follows untrusted input from framework request sources into dangerous sinks.
+150+ built-in rules across 10 languages. SQL injection, XSS, SSRF, command injection, hardcoded secrets, weak crypto, unsafe deserialization, log injection, and framework-specific checks for Express, Django, Rails, Spring, Laravel, Gin, Kotlin, .NET, and iOS. Python, JavaScript, and Go also get a taint engine that follows untrusted input from framework request sources into dangerous sinks — including **across file boundaries** via two-pass function summary analysis.
 
 Also scans for leaked credentials (AWS keys, GitHub/GitLab/Slack/Stripe tokens, private keys) with redacted output. Loads Semgrep-compatible YAML rules with `--rules` if you have existing ones. Outputs terminal, JSON, or SARIF for GitHub Code Scanning.
 
@@ -152,7 +152,7 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: PwnKit-Labs/foxguard/action@v0.5.1
+      - uses: PwnKit-Labs/foxguard/action@v0.6.0
         with:
           path: .
           severity: medium
@@ -181,7 +181,7 @@ npx foxguard@latest secrets .                      # secrets
 ```yaml
 repos:
   - repo: https://github.com/PwnKit-Labs/foxguard
-    rev: v0.5.1
+    rev: v0.6.0
     hooks:
       - id: foxguard
       - id: foxguard-secrets
