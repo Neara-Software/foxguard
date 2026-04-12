@@ -97,7 +97,7 @@ cargo install foxguard                 # crates.io
 
 ## Benchmarks
 
-Reproducible benchmarks via `./benchmarks/run.sh`. Numbers below are from a local run on an Apple Silicon laptop with `foxguard 0.5.1`, `semgrep 1.156.0`, `tokei 14.0.0`. LoC is counted by tokei, scoped to the target language only (no vendored HTML/JSON).
+Reproducible benchmarks via `./benchmarks/run.sh`. Numbers below are from a local run on an Apple Silicon laptop with `foxguard 0.6.1`, `semgrep 1.156.0`, `tokei 14.0.0`. LoC is counted by tokei, scoped to the target language only (no vendored HTML/JSON).
 
 | Repo | Files | LoC | foxguard | Semgrep | Speedup |
 |------|-------|-----|----------|---------|---------|
