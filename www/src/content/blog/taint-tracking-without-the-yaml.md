@@ -1,7 +1,7 @@
 ---
 title: "Taint tracking, without the YAML"
 date: "2026-04-11"
-description: "foxguard 0.5.0 ships intraprocedural taint tracking for Python, JavaScript, and Go — built into the scanner, not bolted on as YAML rules. Here is what that gets you and where it stops."
+description: "foxguard ships intraprocedural taint tracking for Python, JavaScript, and Go — built into the scanner, not bolted on as YAML rules. Here is what that gets you and where it stops."
 readTime: "6 min read"
 ---
 
@@ -136,7 +136,7 @@ The bar for taint tracking in a local scanner is the same bar from the last post
 - precise enough that a finding feels worth reading
 - scoped enough that developers know what to do next
 
-0.4.0 moves foxguard toward that bar on the dataflow axis. Same-file, framework-aware, zero configuration. You install it, you run it, you get real taint findings on real code.
+foxguard moves toward that bar on the dataflow axis. Same-file, framework-aware, zero configuration. You install it, you run it, you get real taint findings on real code.
 
 The YAML is optional. That is how it should be.
 
