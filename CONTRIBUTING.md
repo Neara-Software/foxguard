@@ -4,15 +4,16 @@
 
 Each language has its own rule file in `src/rules/`. To add a new rule:
 
-1. Add a struct implementing the `Rule` trait in the appropriate language file (e.g., `src/rules/javascript.rs`)
-2. Register it in `src/rules/mod.rs` inside `RuleRegistry::new()`
-3. Add a test case to the corresponding fixture in `tests/fixtures/`
-4. Regenerate the website rule inventory: `cargo run --bin gen_rules_ts > www/src/data/rules.ts`
-5. Run `cargo test` and `cargo clippy -- -D warnings`
+1. Add a struct in the appropriate language file (e.g., `src/rules/javascript.rs`)
+2. Use the `impl_rule!` macro to define rule metadata and the check body — see any existing rule for the pattern
+3. Register it in `src/rules/mod.rs` inside `RuleRegistry::new()`
+4. Add a test case to the corresponding fixture in `tests/fixtures/`
+5. Regenerate the website rule inventory: `cargo run --bin gen_rules_ts > www/src/data/rules.ts`
+6. Run `cargo test` and `cargo clippy -- -D warnings`
+
+The `impl_rule!` macro (defined in `src/rules/mod.rs`) eliminates boilerplate — each rule is a one-liner for metadata plus the check logic. Look at any existing rule in `src/rules/go.rs` for the pattern.
 
 The Rust registry is the single source of truth for rule metadata. `www/src/data/rules.ts` is generated from it by `src/bin/gen_rules_ts.rs` and must not be hand-edited. The `rule-inventory-check` CI job and the `rule_inventory` cargo test both fail if the committed file drifts from the generator output.
-
-Look at any existing rule in `src/rules/go.rs` for the pattern — each rule is a struct with `id()`, `severity()`, `cwe()`, `description()`, `language()`, and `check()`.
 
 ## Adding a language
 
@@ -54,7 +55,7 @@ benchmarks/       # Benchmark suite
 ## Releasing
 
 ```sh
-./scripts/release.sh 0.3.3
+./scripts/release.sh 0.6.1
 ```
 
 This prepares a tag-driven release:
