@@ -1,42 +1,88 @@
 ---
 import Base from '../layouts/Base.astro';
+import SiteNav from '../components/ui/SiteNav.astro';
+import InstallTabs from '../components/ui/InstallTabs.astro';
 import Hero from '../components/sections/Hero.astro';
+import WhatItCatches from '../components/sections/WhatItCatches.astro';
 import Speed from '../components/sections/Speed.astro';
 import Coverage from '../components/sections/Coverage.astro';
 import Rules from '../components/sections/Rules.astro';
-import Install from '../components/sections/Install.astro';
 import Footer from '../components/sections/Footer.astro';
 ---
 
 <Base
   title="foxguard — Security scanner as fast as a linter"
-  description="Security scanner as fast as a linter. 170+ built-in rules across 10 languages, secrets scanning, Semgrep-compatible YAML. Single Rust binary."
+  description="174 built-in rules across 10 languages, cross-file taint tracking, sub-second scans. Single Rust binary."
 >
+  <div class="sticky top-0 z-40 bg-noir-950 border-b border-noir-800">
+    <div class="max-w-5xl mx-auto px-6">
+      <SiteNav />
+    </div>
+  </div>
   <Hero />
+  <div class="h-px bg-noir-800"></div>
+  <WhatItCatches />
+  <div class="h-px bg-noir-800"></div>
   <Speed />
+  <div class="h-px bg-noir-800"></div>
   <Coverage />
-  <Install />
+  <div class="h-px bg-noir-800"></div>
   <Rules />
+  <div class="h-px bg-noir-800"></div>
+  <section class="py-24">
+    <div class="max-w-5xl mx-auto px-6 text-center">
+      <h2 class="font-heading text-noir-50 text-3xl sm:text-4xl mb-4">Try it on your codebase</h2>
+      <p class="text-noir-500 text-base mb-8">One command. No config. No signup.</p>
+      <InstallTabs id="cta" />
+      <div class="flex items-center justify-center gap-3 mt-8">
+        <a
+          href="https://github.com/PwnKit-Labs/foxguard"
+          target="_blank"
+          rel="noopener"
+          class="flex items-center gap-2 rounded-lg bg-fox px-5 py-2.5 text-sm font-medium hover:bg-fox-light transition-colors no-underline"
+          style="color:#000;"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          Star on GitHub
+        </a>
+        <a href="/blog" class="rounded-lg border border-noir-700 px-5 py-2.5 text-sm text-noir-300 hover:border-noir-600 hover:text-noir-100 transition-colors no-underline">
+          Read the blog
+        </a>
+      </div>
+    </div>
+  </section>
   <Footer />
 
   <script>
     document.querySelectorAll('.copy-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const text = btn.getAttribute('data-copy') || '';
-        navigator.clipboard.writeText(text);
-        btn.classList.add('text-fox');
-        setTimeout(() => btn.classList.remove('text-fox'), 1200);
+        navigator.clipboard.writeText(text).then(() => {
+          const icon = btn.querySelector('.copy-icon');
+          const check = btn.querySelector('.check-icon');
+          if (icon && check) {
+            icon.classList.add('hidden');
+            check.classList.remove('hidden');
+            setTimeout(() => {
+              icon.classList.remove('hidden');
+              check.classList.add('hidden');
+            }, 1200);
+          }
+        });
       });
     });
 
     const npxBtn = document.getElementById('npx-btn');
     if (npxBtn) {
       npxBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText('npx foxguard .');
-        npxBtn.querySelector('span:nth-child(2)')!.textContent = 'copied!';
-        setTimeout(() => {
-          npxBtn.querySelector('span:nth-child(2)')!.textContent = 'npx foxguard .';
-        }, 1200);
+        navigator.clipboard.writeText('npx foxguard .').then(() => {
+          const label = npxBtn.querySelector('span:nth-child(2)');
+          if (label) {
+            const original = label.textContent;
+            label.textContent = 'copied!';
+            setTimeout(() => { label.textContent = original; }, 1200);
+          }
+        });
       });
     }
   </script>

@@ -1,64 +1,86 @@
 ---
 /**
- * Fake terminal output showing foxguard in action.
- * Shows findings across multiple languages.
+ * Terminal output showing foxguard's new output design.
+ * Matches the actual terminal output with colored severity bars and badges.
  */
 ---
 
-<div class="bg-noir-900 border border-noir-800 rounded-xl overflow-hidden">
-  <div class="flex items-center gap-2 border-b border-noir-800 bg-noir-950 px-4 py-2.5">
+<div class="bg-noir-950 border border-noir-800 rounded-xl overflow-hidden">
+  <div class="flex items-center gap-2 border-b border-noir-800 bg-noir-900/50 px-4 py-2.5">
     <span class="w-2.5 h-2.5 rounded-full bg-[#ef4444]/80"></span>
     <span class="w-2.5 h-2.5 rounded-full bg-[#eab308]/80"></span>
     <span class="w-2.5 h-2.5 rounded-full bg-[#22c55e]/80"></span>
     <span class="font-mono text-[10px] text-noir-600 mx-auto tracking-wider">terminal</span>
   </div>
-  <div class="p-4 sm:p-5 font-mono text-[11px] sm:text-[12px] leading-[1.9] text-left">
-    <div><span class="text-fox-light">$</span> <span class="text-noir-100">foxguard .</span></div>
-    <div class="text-noir-600">Scanning 2,814 files...</div>
-    <div class="h-2.5"></div>
+  <div class="p-4 sm:p-5 font-mono text-[11px] sm:text-[12px] leading-[1.7] text-left">
 
-    <div><span class="text-[#F7DF1E]/70">src/auth/login.js</span><span class="text-noir-600">:14:5</span></div>
-    <div class="pl-4">
-      <span class="text-[#ef4444] font-semibold text-[10px] uppercase tracking-wide">critical</span>
-      <span class="text-noir-300 ml-1.5">js/no-sql-injection</span>
-      <span class="text-noir-600 ml-1.5">CWE-89</span>
+    <!-- Banner -->
+    <div class="mb-3">
+      <span class="text-fox-light font-bold">foxguard</span>
+      <span class="text-noir-600"> v0.6.2</span>
     </div>
-    <div class="h-2.5"></div>
 
-    <div><span class="text-[#3776AB]/70">app/views.py</span><span class="text-noir-600">:42:1</span></div>
-    <div class="pl-4">
-      <span class="text-[#f97316] font-semibold text-[10px] uppercase tracking-wide">high</span>
-      <span class="text-noir-300 ml-1.5">py/no-hardcoded-secret</span>
-      <span class="text-noir-600 ml-1.5">CWE-798</span>
+    <!-- File 1 -->
+    <div class="mb-1">
+      <span class="text-noir-300 font-semibold">src/auth/login.js</span>
+      <span class="text-noir-700"> · </span>
+      <span class="text-noir-600">2 issues</span>
     </div>
-    <div class="h-2.5"></div>
-
-    <div><span class="text-[#CC342D]/70">app/controllers/users.rb</span><span class="text-noir-600">:23:5</span></div>
-    <div class="pl-4">
-      <span class="text-[#ef4444] font-semibold text-[10px] uppercase tracking-wide">critical</span>
-      <span class="text-noir-300 ml-1.5">rb/no-sql-injection</span>
-      <span class="text-noir-600 ml-1.5">CWE-89</span>
+    <div class="mb-3 ml-4 space-y-2">
+      <div>
+        <div>
+          <span class="text-purple-400">█</span>
+          <span class="bg-purple-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-bold ml-0.5">CRITICAL</span>
+          <span class="text-noir-300 ml-1">Untrusted input reaches db.query — SQL injection</span>
+        </div>
+        <div class="text-noir-600 ml-4">js/taint-sql-injection (CWE-89)  line 14:5</div>
+        <div class="text-noir-600 ml-4">db.query("SELECT * FROM users WHERE id = '" + req.param...</div>
+        <div class="ml-4">
+          <span class="text-green-600">Fix:</span>
+          <span class="text-green-700"> Use parameterized queries</span>
+        </div>
+      </div>
+      <div>
+        <div>
+          <span class="text-red-500">█</span>
+          <span class="bg-red-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-bold ml-0.5">HIGH</span>
+          <span class="text-noir-300 ml-1">Hardcoded JWT secret</span>
+        </div>
+        <div class="text-noir-600 ml-4">js/jwt-hardcoded-secret (CWE-798)  line 8:1</div>
+      </div>
     </div>
-    <div class="h-2.5"></div>
 
-    <div><span class="text-[#ED8B00]/70">UserService.java</span><span class="text-noir-600">:67:12</span></div>
-    <div class="pl-4">
-      <span class="text-[#f97316] font-semibold text-[10px] uppercase tracking-wide">high</span>
-      <span class="text-noir-300 ml-1.5">java/no-xxe</span>
-      <span class="text-noir-600 ml-1.5">CWE-611</span>
+    <!-- File 2 -->
+    <div class="mb-1">
+      <span class="text-noir-300 font-semibold">app/views.py</span>
+      <span class="text-noir-700"> · </span>
+      <span class="text-noir-600">1 issue</span>
     </div>
-    <div class="h-2.5"></div>
-
-    <div><span class="text-[#00ADD8]/70">cmd/server.go</span><span class="text-noir-600">:31:3</span></div>
-    <div class="pl-4">
-      <span class="text-[#f97316] font-semibold text-[10px] uppercase tracking-wide">high</span>
-      <span class="text-noir-300 ml-1.5">go/no-ssrf</span>
-      <span class="text-noir-600 ml-1.5">CWE-918</span>
+    <div class="mb-3 ml-4">
+      <div>
+        <span class="text-purple-400">█</span>
+        <span class="bg-purple-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-bold ml-0.5">CRITICAL</span>
+        <span class="text-noir-300 ml-1">request.GET reaches cursor.execute</span>
+      </div>
+      <div class="text-noir-600 ml-4">py/taint-sql-injection (CWE-89)  line 52:12</div>
+      <div class="text-yellow-700 ml-4">source → views.py:51  django.request.GET</div>
+      <div class="text-red-700 ml-4">sink   → views.py:52  cursor.execute (via cross-file call)</div>
+      <div class="ml-4">
+        <span class="text-green-600">Fix:</span>
+        <span class="text-green-700"> Use parameterized queries</span>
+      </div>
     </div>
-    <div class="h-2.5"></div>
 
-    <div class="border-t border-noir-800 pt-3">
-      Found <span class="text-fox-light font-semibold">5 issues</span> in <span class="text-fox-light font-semibold">2,814 files</span> <span class="text-noir-600">(0.92s)</span>
+    <!-- Summary -->
+    <div class="border-t border-noir-800 pt-3 mt-1">
+      <div class="mb-2">
+        <span class="text-noir-100 font-bold">3 issues</span>
+        <span class="text-noir-600"> 1,204 files · 0.14s</span>
+      </div>
+      <div class="flex gap-2">
+        <span class="bg-purple-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">2 critical</span>
+        <span class="bg-red-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">1 high</span>
+      </div>
     </div>
   </div>
 </div>

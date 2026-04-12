@@ -7,9 +7,9 @@ export interface BenchmarkRow {
 }
 
 export const benchmarkRows: BenchmarkRow[] = [
-  { repo: 'express', files: 141, foxguard: 0.284, semgrep: 17.373, opengrep: null },
-  { repo: 'flask', files: 83, foxguard: 0.084, semgrep: 7.325, opengrep: null },
-  { repo: 'gin', files: 99, foxguard: 0.516, semgrep: 8.007, opengrep: null },
+  { repo: 'express', files: 141, foxguard: 0.276, semgrep: 6.086, opengrep: null },
+  { repo: 'flask', files: 83, foxguard: 0.333, semgrep: 6.509, opengrep: null },
+  { repo: 'gin', files: 99, foxguard: 0.499, semgrep: 4.952, opengrep: null },
 ];
 
 export const benchmarkMax = Math.max(

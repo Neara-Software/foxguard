@@ -1,0 +1,116 @@
+---
+interface Props {
+  backLink?: string;
+  backLabel?: string;
+}
+
+const { backLink, backLabel } = Astro.props;
+---
+
+<nav class="flex items-center justify-between py-4">
+  <a href={backLink || "/"} class="flex items-center gap-2.5 text-noir-400 hover:text-noir-100 transition-colors no-underline">
+    <svg class="w-7 h-7" viewBox="0 0 64 64" fill="none">
+      <path d="M8 8L20 28L32 20L44 28L56 8L52 32L44 44L36 52H28L20 44L12 32L8 8Z" fill="#F59E0B" fill-opacity="0.15" stroke="#F59E0B" stroke-width="2" stroke-linejoin="round"/>
+      <circle cx="24" cy="32" r="2.5" fill="#F59E0B"/>
+      <circle cx="40" cy="32" r="2.5" fill="#F59E0B"/>
+    </svg>
+    <span class="font-heading text-noir-50 text-lg">fox<span class="text-fox-light">guard</span></span>
+    {backLabel && <span class="text-noir-600 text-sm">/ {backLabel}</span>}
+  </a>
+
+  <div class="flex items-center gap-5 text-sm">
+    <a href="/#rules" class="hidden sm:block text-noir-500 hover:text-noir-100 transition-colors no-underline">Rules</a>
+    <a href="/blog" class="hidden sm:block text-noir-500 hover:text-noir-100 transition-colors no-underline">Blog</a>
+    <a
+      href="https://github.com/PwnKit-Labs/foxguard"
+      target="_blank"
+      rel="noopener"
+      class="hidden sm:flex items-center gap-1.5 rounded-lg border border-noir-700 px-3 py-1.5 text-noir-300 hover:border-noir-600 hover:text-noir-100 transition-colors no-underline"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+      <span id="nav-star-count">GitHub</span>
+    </a>
+    <script>
+      try {
+        const cached = localStorage.getItem('fg-stars');
+        const cachedAt = localStorage.getItem('fg-stars-at');
+        const el = document.getElementById('nav-star-count');
+
+        // Use cache if less than 1 hour old
+        if (cached && cachedAt && Date.now() - Number(cachedAt) < 3600000) {
+          if (el) el.innerHTML = 'GitHub <span style="color:#A8A29E">' + cached + '</span>';
+        } else {
+          const r = await fetch('https://api.github.com/repos/PwnKit-Labs/foxguard');
+          if (r.ok) {
+            const d = await r.json();
+            if (el && d.stargazers_count) {
+              const count = d.stargazers_count.toLocaleString();
+              el.innerHTML = 'GitHub <span style="color:#A8A29E">' + count + '</span>';
+              localStorage.setItem('fg-stars', count);
+              localStorage.setItem('fg-stars-at', String(Date.now()));
+            }
+          }
+        }
+      } catch(e) {}
+    </script>
+    <button
+      id="nav-free-btn"
+      class="flex items-center gap-1.5 rounded-lg bg-fox px-3.5 py-1.5 font-medium hover:bg-fox-light transition-colors cursor-pointer"
+      style="color: #000;"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Free
+    </button>
+    <script>
+      document.getElementById('nav-free-btn')?.addEventListener('click', () => {
+        const installBox = document.querySelector('[data-install-box]') as HTMLElement;
+        if (!installBox) return;
+
+        const rect = installBox.getBoundingClientRect();
+        const inView = rect.top >= 0 && rect.bottom <= window.innerHeight;
+
+        if (!inView) {
+          installBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        const delay = inView ? 0 : 500;
+        setTimeout(() => {
+          // Create spotlight overlay
+          const overlay = document.createElement('div');
+          overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:30;transition:opacity 0.3s;opacity:0;cursor:pointer;';
+          document.body.appendChild(overlay);
+          requestAnimationFrame(() => overlay.style.opacity = '1');
+
+          // Pop the install box above the overlay
+          installBox.style.position = 'relative';
+          installBox.style.zIndex = '35';
+          installBox.style.borderColor = '#d97706';
+          installBox.style.boxShadow = '0 0 40px rgba(217, 119, 6, 0.5)';
+
+          // Add hint as overlay text below the box (absolute, doesn't push content)
+          const hint = document.createElement('div');
+          hint.style.cssText = 'position:absolute;left:50%;transform:translateX(-50%);z-index:35;font-size:13px;color:#78716C;opacity:0;transition:opacity 0.3s;white-space:nowrap;';
+          hint.textContent = 'paste in your terminal to get started';
+          const boxRect = installBox.getBoundingClientRect();
+          hint.style.top = (boxRect.bottom + window.scrollY + 10) + 'px';
+          document.body.appendChild(hint);
+          requestAnimationFrame(() => hint.style.opacity = '1');
+
+          // Click overlay or install box to dismiss
+          const dismiss = () => {
+            overlay.style.opacity = '0';
+            hint.style.opacity = '0';
+            installBox.style.position = '';
+            installBox.style.zIndex = '';
+            installBox.style.borderColor = '';
+            installBox.style.boxShadow = '';
+            setTimeout(() => { overlay.remove(); hint.remove(); }, 300);
+          };
+          overlay.addEventListener('click', dismiss);
+          installBox.addEventListener('click', dismiss, { once: true });
+          setTimeout(dismiss, 3000);
+        }, 600);
+      });
+    </script>
+  </div>
+</nav>

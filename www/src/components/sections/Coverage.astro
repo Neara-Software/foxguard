@@ -9,70 +9,57 @@ const langColors: Record<string, string> = {
   'Spring / Java': '#ED8B00',
   'PHP / Laravel': '#777BB4',
   'Rust': '#DEA584',
+  'C# / .NET': '#512BD4',
+  'Kotlin / Ktor': '#7F52FF',
+  'Swift / iOS': '#F05138',
 };
 ---
 
-<section class="py-20" id="coverage">
-  <div class="section-divider mb-20"></div>
+<section class="py-24" id="coverage">
   <div class="max-w-5xl mx-auto px-6">
 
-    <!-- Framework cards -->
-    <div class="text-center mb-12">
-      <h2 class="font-heading text-2xl sm:text-3xl text-noir-50 mb-3">What it catches</h2>
-      <p class="text-noir-500 max-w-xl mx-auto text-sm leading-relaxed">
-        The default ruleset is biased toward real framework mistakes teams actually ship: Express sessions, Django CSRF, Rails mass assignment, Spring XXE, iOS keychain, .NET LDAP, and more.
-      </p>
-    </div>
+    <h2 class="font-heading text-noir-50 text-3xl sm:text-4xl mb-4">Framework-aware by default</h2>
+    <p class="text-noir-500 text-base mb-2">Built-in rules for the frameworks teams actually use.</p>
+    <p class="text-noir-500 text-base mb-12">No rule files to download, no config to write.</p>
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-16">
+    <!-- Frameworks -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-px bg-noir-800 rounded-xl overflow-hidden mb-16">
       {frameworkGroups.map((group) => (
-        <div class="bg-noir-900 border border-noir-800 rounded-xl p-4 transition-colors hover:border-noir-700">
-          <div class="flex items-center gap-2 mb-3">
-            <span class="w-2.5 h-2.5 rounded-full shrink-0" style={`background: ${langColors[group.title] || '#78716C'}`}></span>
-            <h3 class="text-noir-100 font-semibold text-sm">{group.title}</h3>
-            <span class="font-mono text-[9px] text-fox ml-auto">{group.ruleCount}</span>
+        <div class="bg-noir-950 p-4">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="w-1.5 h-1.5 rounded-full" style={`background: ${langColors[group.title] || '#78716C'}`}></span>
+            <span class="text-noir-100 text-sm">{group.title}</span>
           </div>
-          <p class="text-[11px] text-noir-500 leading-relaxed mb-3">{group.desc}</p>
-          <div class="flex flex-wrap gap-1">
-            {group.badges.map((badge) => (
-              <span class="rounded bg-noir-950 px-1.5 py-0.5 font-mono text-[9px] text-noir-600">{badge}</span>
-            ))}
-          </div>
+          <span class="text-noir-600 text-xs">{group.ruleCount} rules</span>
         </div>
       ))}
     </div>
 
-    <!-- Features grid -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-16">
+    <!-- Features -->
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-8 mb-16">
       {features.map((f) => (
-        <div class="bg-noir-900 border border-noir-800 rounded-xl p-5 transition-colors hover:border-noir-700">
-          <div class="font-mono text-[10px] font-bold text-fox mb-2.5 tracking-wider uppercase">{f.icon}</div>
-          <h3 class="text-noir-100 font-semibold text-sm mb-1.5">{f.title}</h3>
-          <p class="text-xs text-noir-500 leading-relaxed">{f.desc}</p>
+        <div>
+          <h3 class="text-noir-100 text-sm font-medium mb-2">{f.title}</h3>
+          <p class="text-noir-500 text-sm leading-relaxed">{f.desc}</p>
         </div>
       ))}
     </div>
 
     <!-- Semgrep compat -->
-    <div class="bg-noir-900 border border-noir-800 rounded-xl p-6">
-      <div class="flex flex-col sm:flex-row sm:items-start gap-6">
-        <div class="sm:flex-1">
-          <div class="font-mono text-[10px] uppercase tracking-wider text-noir-600 mb-2">Semgrep compatibility</div>
-          <h3 class="text-noir-100 font-semibold text-sm mb-2">Bring your existing rules without pretending this is full Semgrep</h3>
-          <p class="text-xs text-noir-500 leading-relaxed">
-            Load a focused Semgrep/OpenGrep-compatible YAML subset on top of built-ins with <code class="text-noir-400">--rules</code>. The supported surface is explicit, limited, and parity-tested in CI.
-          </p>
-        </div>
-        <div class="flex flex-wrap gap-1.5 sm:max-w-[280px]">
-          {compatFeatures.map((f) => (
-            <span class:list={[
-              'rounded-md px-2 py-0.5 font-mono text-[10px]',
-              f.supported ? 'bg-fox/10 text-fox' : 'bg-noir-950 text-noir-600'
-            ]}>
-              {f.label}
-            </span>
-          ))}
-        </div>
+    <div>
+      <h3 class="text-noir-100 text-sm font-medium mb-2">Semgrep compatibility</h3>
+      <p class="text-noir-500 text-sm leading-relaxed mb-4">
+        Load existing rules with <code class="text-noir-400">--rules</code>. Focused subset, parity-tested in CI.
+      </p>
+      <div class="flex flex-wrap gap-2">
+        {compatFeatures.map((f) => (
+          <span class:list={[
+            'text-xs',
+            f.supported ? 'text-noir-400' : 'text-noir-700 line-through'
+          ]}>
+            {f.label}
+          </span>
+        ))}
       </div>
     </div>
   </div>

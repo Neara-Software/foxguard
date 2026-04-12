@@ -1,0 +1,54 @@
+---
+interface Props {
+  id?: string;
+}
+const { id = 'install' } = Astro.props;
+---
+
+<div data-install-box class="rounded-xl border border-noir-800 overflow-hidden mx-auto transition-all duration-300" style="width: 300px; max-width: 100%;">
+  <div class="flex border-b border-noir-800">
+    <button data-tab="npx" data-group={id} class={`install-tab-${id} flex-1 px-4 py-2 text-sm text-noir-100 border-b-2 border-fox cursor-pointer`}>npx</button>
+    <button data-tab="cargo" data-group={id} class={`install-tab-${id} flex-1 px-4 py-2 text-sm text-noir-600 border-b-2 border-transparent hover:text-noir-400 transition-colors cursor-pointer`}>cargo</button>
+  </div>
+  <button data-area={id} class="w-full px-5 py-3 font-mono text-sm flex items-center justify-center cursor-pointer hover:bg-noir-900/30 active:scale-95 transition-all">
+    <code data-cmd={id} class="text-fox-light transition-all duration-200">npx foxguard .</code>
+  </button>
+</div>
+
+<script define:vars={{ id }}>
+  const cmds = { npx: 'npx foxguard .', cargo: 'cargo install foxguard' };
+  let currentCmd = 'npx foxguard .';
+
+  function flash() {
+    const cmdEl = document.querySelector(`[data-cmd="${id}"]`);
+    const box = document.querySelector(`[data-area="${id}"]`)?.parentElement;
+    if (!cmdEl || !box) return;
+    navigator.clipboard.writeText(currentCmd);
+    box.classList.remove('copy-flash');
+    box.offsetWidth;
+    box.classList.add('copy-flash');
+    cmdEl.classList.add('text-green-400');
+    cmdEl.classList.remove('text-fox-light');
+    setTimeout(() => {
+      cmdEl.classList.remove('text-green-400');
+      cmdEl.classList.add('text-fox-light');
+    }, 400);
+  }
+
+  document.querySelector(`[data-area="${id}"]`)?.addEventListener('click', flash);
+
+  document.querySelectorAll(`.install-tab-${id}`).forEach(tab => {
+    tab.addEventListener('click', () => {
+      const key = tab.dataset.tab;
+      currentCmd = cmds[key];
+      document.querySelector(`[data-cmd="${id}"]`).textContent = currentCmd;
+      document.querySelectorAll(`.install-tab-${id}`).forEach(t => {
+        t.classList.remove('text-noir-100', 'border-fox');
+        t.classList.add('text-noir-600', 'border-transparent');
+      });
+      tab.classList.add('text-noir-100', 'border-fox');
+      tab.classList.remove('text-noir-600', 'border-transparent');
+      flash();
+    });
+  });
+</script>
