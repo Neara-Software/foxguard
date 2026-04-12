@@ -122,16 +122,29 @@ fn scan_target_branch_files(
 
 /// Two findings are "the same" if they share the same rule_id and snippet content.
 /// We deliberately ignore line numbers since they shift with edits.
+/// File path is normalized to just the filename for comparison since base findings
+/// use temp dir paths while current findings use real paths.
 fn finding_key(finding: &Finding) -> (String, String, String) {
+    // Use just the relative path tail (last 3 components) to match regardless of prefix
+    let path_tail: String = finding
+        .file
+        .split('/')
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("/");
     (
         finding.rule_id.clone(),
-        finding.file.clone(),
+        path_tail,
         finding.snippet.trim().to_string(),
     )
 }
 
 /// Compute new findings: those in current but not in base.
-/// Matching is by (rule_id, relative_file_path, snippet_content).
+/// Matching is by (rule_id, path_tail, snippet_content).
 pub fn diff_findings(current: Vec<Finding>, base: Vec<Finding>) -> DiffResult {
     let total_current = current.len();
 
