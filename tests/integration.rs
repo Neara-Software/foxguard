@@ -911,8 +911,8 @@ fn test_vulnerable_java_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        16,
-        "vulnerable.java should have 16 findings, got {}",
+        22,
+        "vulnerable.java should have 22 findings, got {}",
         findings.len()
     );
 
@@ -932,6 +932,7 @@ fn test_vulnerable_java_finds_all_rules() {
         "java/no-xxe",
         "java/spring-csrf-disabled",
         "java/spring-cors-permissive",
+        "java/no-xss",
     ];
 
     for rule in &expected_rules {
@@ -1037,8 +1038,8 @@ fn test_vulnerable_csharp_finds_all_rules() {
 
     assert_eq!(
         findings.len(),
-        15,
-        "vulnerable.cs should have 15 findings, got {}",
+        17,
+        "vulnerable.cs should have 17 findings, got {}",
         findings.len()
     );
 
