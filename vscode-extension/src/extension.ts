@@ -14,6 +14,7 @@ interface Finding {
   end_line: number;
   end_column: number;
   snippet: string;
+  fix_suggestion?: string;
 }
 
 /** File extensions foxguard supports. */
