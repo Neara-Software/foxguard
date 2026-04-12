@@ -48,7 +48,6 @@ www/              # foxguard.dev (Astro)
 vscode-extension/ # VS Code extension
 packages/npm/     # npm wrapper (downloads binary)
 action/           # GitHub Action
-demo/             # Remotion demo video
 benchmarks/       # Benchmark suite
 ```
 
