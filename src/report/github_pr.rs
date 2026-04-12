@@ -78,22 +78,47 @@ pub fn post_pr_review(
         return Ok(());
     }
 
-    // Build the comments array for the review
+    // Get the PR diff to know which lines are commentable
+    let diff_output = std::process::Command::new("gh")
+        .args([
+            "api",
+            &format!("repos/{repo}/pulls/{pr_number}/files"),
+            "--jq",
+            ".[].filename",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to get PR files: {e}"))?;
+
+    let pr_files: std::collections::HashSet<String> = String::from_utf8_lossy(&diff_output.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .collect();
+
+    // Build the comments array — only for files that are in the PR diff
     let comments: Vec<serde_json::Value> = findings
         .iter()
-        .map(|f| {
+        .filter_map(|f| {
             let path = relative_path(&f.file, scan_root);
-            serde_json::json!({
+            if !pr_files.contains(&path) {
+                return None;
+            }
+            Some(serde_json::json!({
                 "path": path,
                 "line": f.line,
+                "side": "RIGHT",
                 "body": format_comment_body(f),
-            })
+            }))
         })
         .collect();
 
+    if comments.is_empty() {
+        eprintln!("No findings in PR-changed files, skipping review");
+        return Ok(());
+    }
+
     let review_body = serde_json::json!({
         "event": "COMMENT",
-        "body": format!("foxguard found {} finding(s)", findings.len()),
+        "body": format!("**foxguard** found {} issue(s) in this PR", comments.len()),
         "comments": comments,
     });
 
