@@ -80,7 +80,7 @@ Install the extension from the [VS Code Marketplace](https://marketplace.visuals
 To avoid network fetches on every commit, pin the version:
 
 ```json
-{ "command": "npx foxguard@0.5.0 --changed --severity high ." }
+{ "command": "npx foxguard@0.5.1 --changed --severity high ." }
 ```
 
 Or install foxguard globally / via Homebrew and reference the binary directly:
