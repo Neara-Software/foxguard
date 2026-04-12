@@ -295,7 +295,8 @@ function scanDocument(document: vscode.TextDocument): void {
 
             const sev = severityEmoji(f.severity);
             const cweTag = f.cwe ? ` (${f.cwe})` : "";
-            const message = `[${sev}] ${f.description}${cweTag}`;
+            const fixHint = f.fix_suggestion ? `\nFix: ${f.fix_suggestion}` : "";
+            const message = `[${sev}] ${f.description}${cweTag}${fixHint}`;
 
             const diag = new vscode.Diagnostic(
               range,
@@ -403,9 +404,10 @@ async function scanWorkspace(): Promise<void> {
 
                 const sev = severityEmoji(f.severity);
                 const cweTag = f.cwe ? ` (${f.cwe})` : "";
+                const fixHint = f.fix_suggestion ? `\nFix: ${f.fix_suggestion}` : "";
                 const diag = new vscode.Diagnostic(
                   range,
-                  `[${sev}] ${f.description}${cweTag}`,
+                  `[${sev}] ${f.description}${cweTag}${fixHint}`,
                   mapSeverity(f.severity)
                 );
                 diag.source = "foxguard";
