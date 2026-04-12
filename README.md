@@ -7,7 +7,7 @@
 <p align="center">
   <strong>Sub-second local security scanning for real codebases.</strong>
   <br/>
-  134 built-in rules &middot; 10 languages &middot; taint tracking for Python, JavaScript, Go &middot; single Rust binary &middot; Semgrep-compatible YAML bridge
+  150+ built-in rules &middot; 10 languages &middot; taint tracking for Python, JavaScript, Go &middot; single Rust binary &middot; Semgrep-compatible YAML bridge
   <br/><br/>
   <a href="https://foxguard.dev">foxguard.dev</a> &middot; <a href="https://www.npmjs.com/package/foxguard">npm</a> &middot; <a href="https://crates.io/crates/foxguard">crates.io</a>
 </p>
@@ -67,7 +67,7 @@ npx foxguard init              # install a local pre-commit hook
 
 Rust + [tree-sitter](https://tree-sitter.github.io/) for AST parsing + [rayon](https://github.com/rayon-rs/rayon) for parallelism. No JVM startup, no Python interpreter, no network calls, no rule download step. Just a native binary that reads your files and reports findings.
 
-134 built-in rules across 10 languages. SQL injection, XSS, SSRF, command injection, hardcoded secrets, weak crypto, unsafe deserialization, log injection, and framework-specific checks for Express, Django, Rails, Spring, Laravel, Gin, .NET, and iOS. Python, JavaScript, and Go also get an intraprocedural taint engine that follows untrusted input from framework request sources into dangerous sinks.
+150+ built-in rules across 10 languages. SQL injection, XSS, SSRF, command injection, hardcoded secrets, weak crypto, unsafe deserialization, log injection, and framework-specific checks for Express, Django, Rails, Spring, Laravel, Gin, .NET, and iOS. Python, JavaScript, and Go also get an intraprocedural taint engine that follows untrusted input from framework request sources into dangerous sinks.
 
 Also scans for leaked credentials (AWS keys, GitHub/GitLab/Slack/Stripe tokens, private keys) with redacted output. Loads Semgrep-compatible YAML rules with `--rules` if you have existing ones. Outputs terminal, JSON, or SARIF for GitHub Code Scanning.
 
