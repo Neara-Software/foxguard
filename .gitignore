@@ -4,14 +4,12 @@
 # Node
 node_modules/
 /package-lock.json
-demo/package-lock.json
 vscode-extension/out/
 vscode-extension/*.vsix
 
 # Build output
 www/dist/
 www/.astro/
-demo/out/
 
 # OS
 .DS_Store
