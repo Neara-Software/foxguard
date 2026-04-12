@@ -147,10 +147,20 @@ fn patterns() -> &'static [SecretPattern] {
 }
 
 fn redact_match(line: &str, start: usize, end: usize) -> String {
+    // Defensive: snap to nearest char boundary outward so partial codepoints
+    // are redacted, not leaked. (The regex crate guarantees valid boundaries.)
+    let mut s = start;
+    while s > 0 && !line.is_char_boundary(s) {
+        s -= 1;
+    }
+    let mut e = end;
+    while e < line.len() && !line.is_char_boundary(e) {
+        e += 1;
+    }
     let mut redacted = String::with_capacity(line.len());
-    redacted.push_str(&line[..start]);
+    redacted.push_str(&line[..s]);
     redacted.push_str("[REDACTED]");
-    redacted.push_str(&line[end..]);
+    redacted.push_str(&line[e..]);
     redacted
 }
 
@@ -283,4 +293,26 @@ fn read_scannable_text(path: &Path) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_match_mid_codepoint_start() {
+        // U+00E9 (e-acute) is 2 bytes. "pass\u{00e9}key" = pass + [c3 a9] + key.
+        // start=5 (mid-codepoint) snaps backward to 4 so the char gets redacted.
+        let line = "pass\u{00e9}key";
+        let result = redact_match(line, 5, 6);
+        assert_eq!(result, "pass[REDACTED]key");
+    }
+
+    #[test]
+    fn redact_match_mid_codepoint_end() {
+        // end=1 (mid-codepoint of leading 2-byte char) snaps forward to 2.
+        let line = "\u{00e9}secret";
+        let result = redact_match(line, 0, 1);
+        assert_eq!(result, "[REDACTED]secret");
+    }
 }
