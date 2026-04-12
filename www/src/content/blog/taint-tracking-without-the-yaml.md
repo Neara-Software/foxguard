@@ -105,18 +105,35 @@ Every rule below is built in. You do not configure any of this.
 
 You get all of that the moment you install foxguard.
 
+## Cross-file taint (new)
+
+As of 0.5.1, foxguard traces taint **across file boundaries** for Python. If your source is in `views.py` and your sink is in `queries.py`, the engine connects them.
+
+It works in two passes: pass 1 builds function-level taint summaries for every file, pass 2 resolves imported calls against those summaries. The whole thing runs in parallel and adds negligible overhead — the Django shop fixture scans in 0.03s.
+
+```python
+# views.py
+from . import queries
+def search(request):
+    name = request.GET["name"]
+    return queries.run_query(name)   # ← cross-file taint fires here
+
+# queries.py
+def run_query(name):
+    cur.execute("SELECT * FROM users WHERE name = '" + name + "'")
+```
+
+JavaScript and Go cross-file support is in progress.
+
 ## Where it stops
 
 Honesty matters here. These are the things the engine does **not** do yet:
 
-- **Cross-file flow.** If your source is in `routes.py` and your sink is in `db.py`, the engine does not connect them today. Same-file only.
 - **Cross-function with loops.** Tainted data that threads through a list comprehension or a loop back into a sink is tracked on the simple cases, not all of them.
 - **Custom sanitizers.** If you wrap your command execution in a helper that quotes everything via `shlex.quote`, foxguard does not know that helper is safe unless the sanitizer is one of the built-in ones.
 - **Aliasing through containers.** If taint goes into a dict and comes back out with a different key, the engine will miss some of those paths.
 
-Those are deliberate tradeoffs. Intraprocedural plus same-file interprocedural is the 80/20 point — it catches most of the real request-handler bugs without the precision loss you get from whole-program pointer analysis.
-
-Cross-file summaries are on the roadmap. In the meantime, 0.5.0 ships `--explain` for source-to-sink dataflow traces and fix suggestions on every taint finding.
+Those are deliberate tradeoffs. The engine catches most real request-handler bugs without the precision loss you get from whole-program pointer analysis. `--explain` shows source-to-sink dataflow traces, and every taint finding includes a fix suggestion.
 
 ## Why this belongs in the scanner, not in YAML
 
@@ -124,7 +141,7 @@ The argument for built-in taint tracking is the same argument as built-in framew
 
 - **Zero configuration is the point.** A local scanner that makes you write a rule file before it catches a real bug has already lost the local loop.
 - **Framework semantics are not generic.** `request.args.get("host", "localhost")` is tainted. `request.args.get("host", "localhost").startswith("10.")` is still tainted. `os.environ["FOXGUARD_API_KEY"]` is tainted in some threat models and not in others. The scanner has to know which calls mean what in which framework. That knowledge does not live in YAML, it lives in the rule registry.
-- **The YAML bridge is still there.** If you have existing `mode: taint` rules, foxguard 0.5.0 also loads them — the bridge supports `pattern-sources`, `pattern-sinks`, `pattern-sanitizers`, and `pattern-either` combinations. But the bridge is a migration path, not the primary product.
+- **The YAML bridge is still there.** If you have existing `mode: taint` rules, foxguard also loads them — the bridge supports `pattern-sources`, `pattern-sinks`, `pattern-sanitizers`, and `pattern-either` combinations. But the bridge is a migration path, not the primary product.
 
 If you want to write your own taint rules, you can. You should not have to just to catch a command injection on Flask.
 
