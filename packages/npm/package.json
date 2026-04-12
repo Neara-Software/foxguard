@@ -1,7 +1,7 @@
 {
   "name": "foxguard",
   "version": "0.6.0",
-  "description": "Security scanner as fast as a linter. 150+ built-in rules, 10 languages, sub-second scans.",
+  "description": "Security scanner as fast as a linter. 170+ built-in rules, 10 languages, sub-second scans.",
   "license": "MIT",
   "repository": {
     "type": "git",

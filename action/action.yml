@@ -1,5 +1,5 @@
 name: "Foxguard Security Scan"
-description: "Security scanner as fast as a linter. 150+ built-in rules, 10 languages, SARIF output."
+description: "Security scanner as fast as a linter. 170+ built-in rules, 10 languages, SARIF output."
 author: "PwnKit Labs"
 
 branding:

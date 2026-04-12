@@ -29,7 +29,7 @@ The taint engine supports:
 Known limitations:
 
 - **Multi-hop interprocedural chains**: only one level of helper-call propagation is supported. A helper that itself calls another helper is not tracked through the deeper hop.
-- **Cross-file**: Python cross-file taint is supported (v0.5.1+) via function summaries and import resolution. JS and Go cross-file support is in progress.
+- **Cross-file**: Cross-file taint is supported for Python (import resolution), JavaScript (require/import/export default), and Go (same-package) via two-pass function summary analysis.
 - **Instance and class methods in interprocedural summaries**: only top-level `function_declaration`s and `const/let/var foo = ...` arrow/function-expression helpers are summarized. `obj.method()` and `self.helper()` calls are not looked up in the summary map.
 - **Argument taint propagation**: helper summaries are computed with only their parameters' taint sources seeded (via `ParamName`). Passing an already-tainted local into a helper does not influence the helper's return summary — pass 1 analyzes helpers with a conservative view of their parameters.
 - **Per-finding sanitization**: Semgrep's `mode: taint` distinguishes "this specific flow was sanitized" from "the value is now clean"; it can still fire on secondary flows that bypassed the sanitizer along a different path. foxguard's v1 collapses both cases into "clean" and does not track per-finding sanitization state.
