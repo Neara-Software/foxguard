@@ -1,4 +1,4 @@
-use crate::engine::{scan_directory, scan_paths_with_root, ScanResult};
+use crate::engine::{scan_directory_with_notices, scan_paths_with_root_with_notices, ScanResult};
 use crate::rules::RuleRegistry;
 use crate::Finding;
 use std::collections::HashSet;
@@ -68,14 +68,13 @@ fn read_file_at_ref(repo_root: &Path, git_ref: &str, rel_path: &str) -> Result<S
     run_git(repo_root, &["show", &spec])
 }
 
-/// Scan the target branch's version of specific files by writing them to temp files.
-fn scan_target_branch_files(
+fn scan_target_branch_files_with_warnings(
     repo_root: &Path,
     target: &str,
     changed_files: &[PathBuf],
     registry: &RuleRegistry,
     max_file_size: u64,
-) -> Result<ScanResult, String> {
+) -> Result<(ScanResult, Vec<String>), String> {
     let temp_dir =
         tempfile::tempdir().map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
@@ -105,14 +104,17 @@ fn scan_target_branch_files(
     }
 
     if temp_paths.is_empty() {
-        return Ok(ScanResult {
-            findings: Vec::new(),
-            files_scanned: 0,
-            duration: std::time::Duration::ZERO,
-        });
+        return Ok((
+            ScanResult {
+                findings: Vec::new(),
+                files_scanned: 0,
+                duration: std::time::Duration::ZERO,
+            },
+            Vec::new(),
+        ));
     }
 
-    Ok(scan_paths_with_root(
+    Ok(scan_paths_with_root_with_notices(
         temp_dir.path(),
         &temp_paths,
         registry,
@@ -172,6 +174,15 @@ pub fn run_diff(
     registry: &RuleRegistry,
     max_file_size: u64,
 ) -> Result<(ScanResult, DiffResult), String> {
+    Ok(run_diff_with_warnings(scan_path, target, registry, max_file_size)?.0)
+}
+
+pub fn run_diff_with_warnings(
+    scan_path: &str,
+    target: &str,
+    registry: &RuleRegistry,
+    max_file_size: u64,
+) -> Result<((ScanResult, DiffResult), Vec<String>), String> {
     let scan_root = Path::new(scan_path);
     let repo = repo_root(scan_root)?;
 
@@ -180,7 +191,8 @@ pub fn run_diff(
         .map_err(|_| format!("Target ref '{}' does not exist", target))?;
 
     // Scan current working tree
-    let current_result = scan_directory(scan_path, registry, max_file_size, None);
+    let (current_result, mut warnings) =
+        scan_directory_with_notices(scan_path, registry, max_file_size, None);
 
     // Get changed files between target and HEAD
     let changed = changed_files_vs_target(&repo, target)?;
@@ -189,21 +201,25 @@ pub fn run_diff(
         // No changed files — everything is existing
         let total = current_result.findings.len();
         return Ok((
-            ScanResult {
-                findings: Vec::new(),
-                files_scanned: current_result.files_scanned,
-                duration: current_result.duration,
-            },
-            DiffResult {
-                new_findings: Vec::new(),
-                total_current: total,
-                existing_count: total,
-            },
+            (
+                ScanResult {
+                    findings: Vec::new(),
+                    files_scanned: current_result.files_scanned,
+                    duration: current_result.duration,
+                },
+                DiffResult {
+                    new_findings: Vec::new(),
+                    total_current: total,
+                    existing_count: total,
+                },
+            ),
+            warnings,
         ));
     }
 
-    // Scan the target branch versions of changed files
-    let base_result = scan_target_branch_files(&repo, target, &changed, registry, max_file_size)?;
+    let (base_result, base_warnings) =
+        scan_target_branch_files_with_warnings(&repo, target, &changed, registry, max_file_size)?;
+    warnings.extend(base_warnings);
 
     // Only diff findings from changed files (current side)
     let changed_rel: HashSet<String> = changed
@@ -228,16 +244,19 @@ pub fn run_diff(
     let existing_count = diff.existing_count + unchanged_findings.len();
 
     Ok((
-        ScanResult {
-            findings: Vec::new(), // not used; diff_result has everything
-            files_scanned: current_result.files_scanned,
-            duration: current_result.duration,
-        },
-        DiffResult {
-            new_findings: diff.new_findings,
-            total_current,
-            existing_count,
-        },
+        (
+            ScanResult {
+                findings: Vec::new(), // not used; diff_result has everything
+                files_scanned: current_result.files_scanned,
+                duration: current_result.duration,
+            },
+            DiffResult {
+                new_findings: diff.new_findings,
+                total_current,
+                existing_count,
+            },
+        ),
+        warnings,
     ))
 }
 

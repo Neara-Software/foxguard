@@ -1,24 +1,21 @@
 use clap::Parser;
-use foxguard::baseline::{load_baseline, suppress_with_baseline, write_baseline};
+use foxguard::app::{
+    execute_diff, execute_scan, execute_secrets, resolve_scan_args as resolve_app_scan_args,
+    scan_findings,
+};
+use foxguard::baseline::write_baseline;
 use foxguard::cli::{
-    BaselineArgs, Cli, Command, DiffArgs, InitArgs, OutputFormat, ScanArgs, SecretsArgs,
+    BaselineArgs, Cli, Command, DiffArgs, InitArgs, OutputFormat, ScanArgs, SecretsArgs, UiArgs,
 };
-use foxguard::config::{apply_scan_defaults, apply_secrets_defaults, load_for_scan};
-use foxguard::engine::{scan_directory, scan_paths_with_root, PathExcludeMatcher, ScanResult};
-use foxguard::git::changed_files;
-use foxguard::rules::semgrep_compat::load_semgrep_rules;
-use foxguard::rules::RuleRegistry;
-use foxguard::secrets::{
-    scan_directory_with_config as scan_secrets_directory,
-    scan_paths_with_config as scan_secrets_paths, SecretScanConfig,
-};
-use std::path::{Path, PathBuf};
+use foxguard::config::load_for_scan;
+use foxguard::tui::run_scan_ui;
+use std::path::Path;
 
 fn main() {
     let cli = Cli::parse();
 
-    // Show banner for terminal output (not JSON/SARIF, not quiet mode)
-    if matches!(cli.scan.format, OutputFormat::Terminal) && !cli.scan.quiet {
+    if cli.command.is_none() && matches!(cli.scan.format, OutputFormat::Terminal) && !cli.scan.quiet
+    {
         foxguard::report::terminal::print_banner();
     }
     let exit_code = match cli.command {
@@ -26,195 +23,54 @@ fn main() {
         Some(Command::Baseline(args)) => run_baseline(&args),
         Some(Command::Secrets(args)) => run_secrets(&args),
         Some(Command::Diff(args)) => run_diff_cmd(&args),
+        Some(Command::Ui(args)) => run_ui(&args),
         None => run_scan(&cli.scan),
     };
 
     std::process::exit(exit_code);
 }
 
-fn resolve_scan_args(scan: &ScanArgs) -> Result<ScanArgs, i32> {
-    let mut scan = scan.clone();
-    let config = match load_for_scan(Path::new(&scan.path), scan.config.as_deref()) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return Err(2);
-        }
-    };
-    apply_scan_defaults(&mut scan, config.as_ref());
-    Ok(scan)
-}
-
-fn resolve_secrets_args(args: &SecretsArgs) -> Result<SecretsArgs, i32> {
-    let mut args = args.clone();
-    let config = match load_for_scan(Path::new(&args.path), args.config.as_deref()) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return Err(2);
-        }
-    };
-    apply_secrets_defaults(&mut args, config.as_ref());
-    Ok(args)
-}
-
-fn build_registry(scan: &ScanArgs) -> RuleRegistry {
-    let mut registry = if scan.no_builtins {
-        RuleRegistry::empty()
-    } else {
-        RuleRegistry::new()
-    };
-
-    if let Some(ref rules_path) = scan.rules {
-        let path = Path::new(rules_path);
-        let semgrep_rules = load_semgrep_rules(path);
-        let count = semgrep_rules.len();
-        for rule in semgrep_rules {
-            registry.register(rule);
-        }
-        if count > 0 {
-            eprintln!("Loaded {} Semgrep rule(s) from {}", count, rules_path);
-        }
-    }
-
-    registry
-}
-
-fn validate_scan_inputs(scan: &ScanArgs) -> Result<(), i32> {
-    let scan_path = Path::new(&scan.path);
-    if !scan_path.exists() {
-        eprintln!("Error: path '{}' does not exist", scan.path);
-        return Err(2);
-    }
-
-    if let Some(ref rules_path) = scan.rules {
-        let path = Path::new(rules_path);
-        if !path.exists() {
-            eprintln!("Error: rules path '{}' does not exist", rules_path);
-            return Err(2);
-        }
-    }
-
-    Ok(())
-}
-
-fn collect_changed_targets(path: &str, changed: bool) -> Result<Option<Vec<PathBuf>>, i32> {
-    if !changed {
-        return Ok(None);
-    }
-
-    let scan_root = Path::new(path);
-    let files = changed_files(scan_root).map_err(|e| {
-        eprintln!("Error: failed to resolve changed files: {}", e);
-        2
-    })?;
-
-    Ok(Some(files))
-}
-
-fn scan_findings(scan: &ScanArgs) -> Result<ScanResult, i32> {
-    validate_scan_inputs(scan)?;
-
-    let registry = build_registry(scan);
-    let excludes = match PathExcludeMatcher::new(&scan.exclude) {
-        Ok(excludes) => excludes,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return Err(2);
-        }
-    };
-    let targets = collect_changed_targets(&scan.path, scan.changed)?;
-
-    let mut result = if let Some(files) = targets {
-        scan_paths_with_root(
-            Path::new(&scan.path),
-            &files,
-            &registry,
-            scan.max_file_size,
-            Some(&excludes),
-        )
-    } else {
-        scan_directory(&scan.path, &registry, scan.max_file_size, Some(&excludes))
-    };
-
-    // Filter by severity if specified
-    if let Some(ref min_severity) = scan.severity {
-        let min = min_severity.to_severity();
-        result.findings.retain(|f| f.severity >= min);
-    }
-
-    Ok(result)
-}
-
 fn run_scan(scan: &ScanArgs) -> i32 {
-    let scan = match resolve_scan_args(scan) {
-        Ok(scan) => scan,
-        Err(code) => return code,
-    };
-
-    let result = match scan_findings(&scan) {
+    let result = match execute_scan(scan) {
         Ok(result) => result,
-        Err(code) => return code,
-    };
-
-    let files_scanned = result.files_scanned;
-    let duration = result.duration;
-    let mut findings = result.findings;
-
-    if let Some(ref path) = scan.write_baseline {
-        if let Err(e) = write_baseline(Path::new(path), &findings) {
-            eprintln!("Error: {}", e);
+        Err(error) => {
+            eprintln!("Error: {}", error);
             return 2;
         }
-        eprintln!("Wrote baseline to {}", path);
-    }
-
-    let baseline = match scan.baseline.as_ref() {
-        Some(path) => match load_baseline(Path::new(path)) {
-            Ok(baseline) => baseline,
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                return 2;
-            }
-        },
-        None => None,
     };
 
-    findings = suppress_with_baseline(findings, baseline.as_ref());
-
-    if files_scanned == 0 {
-        eprintln!(
-            "Warning: no files with supported extensions found. Supported: .js, .ts, .py, .go, .rb, .java, .php, .rs, .cs, .swift, .kt"
-        );
+    for notice in &result.notices {
+        eprintln!("{}", notice);
     }
 
-    match scan.format {
+    match result.args.format {
         OutputFormat::Terminal => {
-            if !scan.quiet {
+            if !result.args.quiet {
                 foxguard::report::terminal::clear_banner();
                 foxguard::report::terminal::print_findings_with_options(
-                    &findings,
-                    files_scanned,
-                    duration,
-                    scan.explain,
+                    &result.findings,
+                    result.files_scanned,
+                    result.duration,
+                    result.args.explain,
                 );
             }
         }
-        OutputFormat::Json => foxguard::report::json::print_json(&findings),
-        OutputFormat::Sarif => foxguard::report::sarif::print_sarif(&findings),
+        OutputFormat::Json => foxguard::report::json::print_json(&result.findings),
+        OutputFormat::Sarif => foxguard::report::sarif::print_sarif(&result.findings),
     }
 
-    // Post inline PR review comments if --github-pr is set (best-effort)
-    if let Some(pr_number) = scan.github_pr {
-        let scan_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        if let Err(e) =
-            foxguard::report::github_pr::post_pr_review(&findings, pr_number, Some(&scan_root))
-        {
+    if let Some(pr_number) = result.args.github_pr {
+        let scan_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        if let Err(e) = foxguard::report::github_pr::post_pr_review(
+            &result.findings,
+            pr_number,
+            Some(&scan_root),
+        ) {
             eprintln!("Warning: failed to post PR review: {}", e);
         }
     }
 
-    if !findings.is_empty() {
+    if !result.findings.is_empty() {
         return 1;
     }
 
@@ -222,16 +78,22 @@ fn run_scan(scan: &ScanArgs) -> i32 {
 }
 
 fn run_baseline(args: &BaselineArgs) -> i32 {
-    let mut scan = match resolve_scan_args(&args.scan) {
+    let mut scan = match resolve_app_scan_args(&args.scan) {
         Ok(scan) => scan,
-        Err(code) => return code,
+        Err(error) => {
+            eprintln!("Error: {}", error);
+            return 2;
+        }
     };
     scan.write_baseline = None;
     scan.baseline = None;
 
     let result = match scan_findings(&scan) {
         Ok(result) => result,
-        Err(code) => return code,
+        Err(error) => {
+            eprintln!("Error: {}", error);
+            return 2;
+        }
     };
 
     if let Err(e) = write_baseline(Path::new(&args.output), &result.findings) {
@@ -247,72 +109,42 @@ fn run_baseline(args: &BaselineArgs) -> i32 {
     0
 }
 
+fn run_ui(args: &UiArgs) -> i32 {
+    match run_scan_ui(args) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("Error: {}", error);
+            2
+        }
+    }
+}
+
 fn run_secrets(args: &SecretsArgs) -> i32 {
-    let args = match resolve_secrets_args(args) {
-        Ok(args) => args,
-        Err(code) => return code,
-    };
-
-    let scan_path = Path::new(&args.path);
-    if !scan_path.exists() {
-        eprintln!("Error: path '{}' does not exist", args.path);
-        return 2;
-    }
-
-    let config = match SecretScanConfig::from_inputs(
-        scan_path,
-        &args.exclude_paths,
-        args.exclude_path_file.as_deref().map(Path::new),
-        &args.ignored_rules,
-    ) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("Error: {}", e);
+    let result = match execute_secrets(args) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("Error: {}", error);
             return 2;
         }
     };
 
-    let targets = match collect_changed_targets(&args.path, args.changed) {
-        Ok(targets) => targets,
-        Err(code) => return code,
-    };
-
-    let mut findings = if let Some(files) = targets {
-        scan_secrets_paths(scan_path, &files, &config, args.max_file_size)
-    } else {
-        scan_secrets_directory(&args.path, &config, args.max_file_size)
-    };
-
-    if let Some(ref path) = args.write_baseline {
-        if let Err(e) = write_baseline(Path::new(path), &findings) {
-            eprintln!("Error: {}", e);
-            return 2;
-        }
-        eprintln!("Wrote secrets baseline to {}", path);
+    for notice in &result.notices {
+        eprintln!("{}", notice);
     }
 
-    let baseline = match args.baseline.as_ref() {
-        Some(path) => match load_baseline(Path::new(path)) {
-            Ok(baseline) => baseline,
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                return 2;
-            }
-        },
-        None => None,
-    };
-
-    findings = suppress_with_baseline(findings, baseline.as_ref());
-
-    match args.format {
+    match result.args.format {
         OutputFormat::Terminal => {
-            foxguard::report::terminal::print_findings(&findings, 0, std::time::Duration::ZERO);
+            foxguard::report::terminal::print_findings(
+                &result.findings,
+                result.files_scanned,
+                result.duration,
+            );
         }
-        OutputFormat::Json => foxguard::report::json::print_json(&findings),
-        OutputFormat::Sarif => foxguard::report::sarif::print_sarif(&findings),
+        OutputFormat::Json => foxguard::report::json::print_json(&result.findings),
+        OutputFormat::Sarif => foxguard::report::sarif::print_sarif(&result.findings),
     }
 
-    if !findings.is_empty() {
+    if !result.findings.is_empty() {
         return 1;
     }
 
@@ -320,74 +152,30 @@ fn run_secrets(args: &SecretsArgs) -> i32 {
 }
 
 fn run_diff_cmd(args: &DiffArgs) -> i32 {
-    let scan_path = Path::new(&args.path);
-    if !scan_path.exists() {
-        eprintln!("Error: path '{}' does not exist", args.path);
-        return 2;
-    }
-
-    let mut registry = if args.no_builtins {
-        RuleRegistry::empty()
-    } else {
-        RuleRegistry::new()
-    };
-
-    if let Some(ref rules_path) = args.rules {
-        let path = Path::new(rules_path);
-        if !path.exists() {
-            eprintln!("Error: rules path '{}' does not exist", rules_path);
+    let result = match execute_diff(args) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("Error: {}", error);
             return 2;
         }
-        let semgrep_rules = load_semgrep_rules(path);
-        let count = semgrep_rules.len();
-        for rule in semgrep_rules {
-            registry.register(rule);
-        }
-        if count > 0 {
-            eprintln!("Loaded {} Semgrep rule(s) from {}", count, rules_path);
-        }
+    };
+
+    for notice in &result.notices {
+        eprintln!("{}", notice);
     }
 
-    let (scan_result, mut diff_result) =
-        match foxguard::diff::run_diff(&args.path, &args.target, &registry, args.max_file_size) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                return 2;
-            }
-        };
+    let new_count = result.findings.len();
 
-    // Filter by severity if specified
-    if let Some(ref min_severity) = args.severity {
-        let min = min_severity.to_severity();
-        diff_result.new_findings.retain(|f| f.severity >= min);
-    }
-
-    let new_count = diff_result.new_findings.len();
-    let total = diff_result.total_current;
-    let existing = diff_result.existing_count;
-
-    match args.format {
+    match result.args.format {
         OutputFormat::Terminal => {
-            use colored::Colorize;
-            eprintln!(
-                "\n  {} {} {} {} new issue{} ({} total, {} existing)\n",
-                "foxguard diff".truecolor(245, 158, 11).bold(),
-                "vs".dimmed(),
-                args.target.bold(),
-                "\u{00b7}".dimmed(),
-                if new_count == 1 { "" } else { "s" },
-                total,
-                existing,
-            );
             foxguard::report::terminal::print_findings(
-                &diff_result.new_findings,
-                scan_result.files_scanned,
-                scan_result.duration,
+                &result.findings,
+                result.files_scanned,
+                result.duration,
             );
         }
-        OutputFormat::Json => foxguard::report::json::print_json(&diff_result.new_findings),
-        OutputFormat::Sarif => foxguard::report::sarif::print_sarif(&diff_result.new_findings),
+        OutputFormat::Json => foxguard::report::json::print_json(&result.findings),
+        OutputFormat::Sarif => foxguard::report::sarif::print_sarif(&result.findings),
     }
 
     if new_count > 0 {

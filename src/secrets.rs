@@ -173,6 +173,14 @@ pub fn scan_directory_with_config(
     config: &SecretScanConfig,
     max_file_size: u64,
 ) -> Vec<Finding> {
+    scan_directory_with_config_and_notices(root, config, max_file_size).0
+}
+
+pub fn scan_directory_with_config_and_notices(
+    root: &str,
+    config: &SecretScanConfig,
+    max_file_size: u64,
+) -> (Vec<Finding>, Vec<String>) {
     let root_path = Path::new(root);
     let files: Vec<PathBuf> = if root_path.is_file() {
         vec![root_path.to_path_buf()]
@@ -187,7 +195,7 @@ pub fn scan_directory_with_config(
             .collect()
     };
 
-    scan_paths_with_config(root_path, &files, config, max_file_size)
+    scan_paths_with_config_and_notices(root_path, &files, config, max_file_size)
 }
 
 pub fn scan_paths(paths: &[PathBuf], max_file_size: u64) -> Vec<Finding> {
@@ -205,8 +213,18 @@ pub fn scan_paths_with_config(
     config: &SecretScanConfig,
     max_file_size: u64,
 ) -> Vec<Finding> {
+    scan_paths_with_config_and_notices(root, paths, config, max_file_size).0
+}
+
+pub fn scan_paths_with_config_and_notices(
+    root: &Path,
+    paths: &[PathBuf],
+    config: &SecretScanConfig,
+    max_file_size: u64,
+) -> (Vec<Finding>, Vec<String>) {
     let patterns = patterns();
     let mut findings = Vec::new();
+    let mut notices = Vec::new();
 
     for path in paths {
         if config.should_skip_path(root, path) {
@@ -215,18 +233,18 @@ pub fn scan_paths_with_config(
 
         match std::fs::metadata(path) {
             Ok(m) if m.len() > max_file_size => {
-                eprintln!(
+                notices.push(format!(
                     "warning: skipping {} ({} bytes exceeds --max-file-size)",
                     path.display(),
                     m.len()
-                );
+                ));
                 continue;
             }
             Err(_) => {
-                eprintln!(
+                notices.push(format!(
                     "warning: skipping {} (cannot read metadata)",
                     path.display()
-                );
+                ));
                 continue;
             }
             _ => {}
@@ -271,7 +289,7 @@ pub fn scan_paths_with_config(
             .then(a.line.cmp(&b.line))
             .then(a.column.cmp(&b.column))
     });
-    findings
+    (findings, notices)
 }
 
 fn relative_path<'a>(root: &'a Path, path: &'a Path) -> &'a Path {

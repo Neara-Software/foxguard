@@ -12,7 +12,7 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 /// Result of a scan with metadata.
@@ -130,6 +130,15 @@ pub fn scan_directory(
     max_file_size: u64,
     excludes: Option<&PathExcludeMatcher>,
 ) -> ScanResult {
+    scan_directory_with_notices(root, registry, max_file_size, excludes).0
+}
+
+pub fn scan_directory_with_notices(
+    root: &str,
+    registry: &RuleRegistry,
+    max_file_size: u64,
+    excludes: Option<&PathExcludeMatcher>,
+) -> (ScanResult, Vec<String>) {
     let root_path = Path::new(root);
     let scan_root = scan_root(root_path);
 
@@ -186,6 +195,16 @@ pub fn scan_paths_with_root(
     max_file_size: u64,
     excludes: Option<&PathExcludeMatcher>,
 ) -> ScanResult {
+    scan_paths_with_root_with_notices(root, paths, registry, max_file_size, excludes).0
+}
+
+pub fn scan_paths_with_root_with_notices(
+    root: &Path,
+    paths: &[PathBuf],
+    registry: &RuleRegistry,
+    max_file_size: u64,
+    excludes: Option<&PathExcludeMatcher>,
+) -> (ScanResult, Vec<String>) {
     let scan_root = scan_root(root);
     let files = paths
         .iter()
@@ -440,9 +459,10 @@ fn scan_files(
     files: Vec<(PathBuf, Language)>,
     registry: &RuleRegistry,
     max_file_size: u64,
-) -> ScanResult {
+) -> (ScanResult, Vec<String>) {
     let start = Instant::now();
     let file_count = files.len();
+    let warnings = Mutex::new(Vec::new());
 
     let mut rules_by_lang: HashMap<Language, Vec<&dyn crate::rules::Rule>> = HashMap::new();
     for (_, language) in &files {
@@ -655,18 +675,18 @@ fn scan_files(
 
             match std::fs::metadata(path) {
                 Ok(m) if m.len() > max_file_size => {
-                    eprintln!(
+                    warnings.lock().unwrap().push(format!(
                         "warning: skipping {} ({} bytes exceeds --max-file-size)",
                         path.display(),
                         m.len()
-                    );
+                    ));
                     return Vec::new();
                 }
                 Err(_) => {
-                    eprintln!(
+                    warnings.lock().unwrap().push(format!(
                         "warning: skipping {} (cannot read metadata)",
                         path.display()
-                    );
+                    ));
                     return Vec::new();
                 }
                 _ => {}
@@ -841,11 +861,14 @@ fn scan_files(
             .then(a.line.cmp(&b.line))
             .then(a.column.cmp(&b.column))
     });
-    ScanResult {
-        findings: results,
-        files_scanned: file_count,
-        duration: start.elapsed(),
-    }
+    (
+        ScanResult {
+            findings: results,
+            files_scanned: file_count,
+            duration: start.elapsed(),
+        },
+        warnings.into_inner().unwrap_or_default(),
+    )
 }
 
 fn scan_root(path: &Path) -> &Path {
