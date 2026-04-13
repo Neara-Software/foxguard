@@ -21,7 +21,7 @@ const maxTime = Math.max(...benchmarkRows.map(r => r.semgrep));
         <div class="flex items-center gap-3 mb-2">
           <div class="w-14 sm:w-16 text-[10px] sm:text-xs text-noir-400 shrink-0">foxguard</div>
           <div class="flex-1 rounded-full overflow-hidden" style="height:10px;background:rgba(41,37,36,0.5);">
-            <div class="rounded-full" style={`width:${foxPct}%;background:#d97706;`}></div>
+            <div style={`width:${foxPct}%;height:10px;background:#d97706;border-radius:9999px;`}></div>
           </div>
           <span class="text-xs font-mono text-fox shrink-0 w-14 text-right">{row.foxguard.toFixed(3)}s</span>
         </div>
@@ -29,7 +29,7 @@ const maxTime = Math.max(...benchmarkRows.map(r => r.semgrep));
         <div class="flex items-center gap-3">
           <div class="w-14 sm:w-16 text-[10px] sm:text-xs text-noir-600 shrink-0">Semgrep</div>
           <div class="flex-1 rounded-full overflow-hidden" style="height:10px;background:rgba(41,37,36,0.5);">
-            <div class="rounded-full" style={`width:${semPct}%;background:#57534E;`}></div>
+            <div style={`width:${semPct}%;height:10px;background:#57534E;border-radius:9999px;`}></div>
           </div>
           <span class="text-xs font-mono text-noir-500 shrink-0 w-14 text-right">{row.semgrep.toFixed(1)}s</span>
         </div>
