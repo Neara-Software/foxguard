@@ -58,10 +58,14 @@ See [docs/precision.md](docs/precision.md) for per-rule precision tiers and our 
 ## Quick start
 
 ```sh
-npx foxguard .                 # scan the repo
-npx foxguard --changed .       # only modified files
-npx foxguard secrets .         # leaked credentials and private keys
-npx foxguard init              # install a local pre-commit hook
+npx foxguard .                        # scan the repo
+npx foxguard --changed .              # only modified files
+npx foxguard diff main .              # new findings vs target branch
+npx foxguard --explain .              # show source-to-sink dataflow traces
+npx foxguard --quiet .                # exit code only (CI mode)
+npx foxguard --github-pr 42 .         # post findings as PR review comments
+npx foxguard secrets .                # leaked credentials and private keys
+npx foxguard init                     # install a local pre-commit hook
 ```
 
 ## What it is
@@ -71,6 +75,8 @@ Rust + [tree-sitter](https://tree-sitter.github.io/) for AST parsing + [rayon](h
 170+ built-in rules across 10 languages. SQL injection, XSS, SSRF, command injection, hardcoded secrets, weak crypto, unsafe deserialization, log injection, and framework-specific checks for Express, Django, Rails, Spring, Laravel, Gin, Kotlin, .NET, and iOS. Python, JavaScript, and Go also get a taint engine that follows untrusted input from framework request sources into dangerous sinks — including **across file boundaries** via two-pass function summary analysis.
 
 Also scans for leaked credentials (AWS keys, GitHub/GitLab/Slack/Stripe tokens, private keys) with redacted output. Loads Semgrep-compatible YAML rules with `--rules` if you have existing ones. Outputs terminal, JSON, or SARIF for GitHub Code Scanning.
+
+`foxguard diff main` shows only new findings introduced by your changes. `--github-pr` posts findings as inline review comments on pull requests. `--explain` shows source-to-sink dataflow traces with fix suggestions.
 
 foxguard dogfoods itself — it scans its own Rust source in CI on every push.
 
@@ -98,16 +104,16 @@ cargo install foxguard                 # crates.io
 
 ## Benchmarks
 
-Reproducible benchmarks via `./benchmarks/run.sh`. Numbers below are from a local run on an Apple Silicon laptop with `foxguard 0.6.1`, `semgrep 1.156.0`, `tokei 14.0.0`. LoC is counted by tokei, scoped to the target language only (no vendored HTML/JSON).
+Reproducible benchmarks via `./benchmarks/run.sh`. Numbers below are from a local run on an Apple Silicon laptop with `foxguard 0.6.2`, `semgrep 1.156.0`, `tokei 14.0.0`. LoC is counted by tokei, scoped to the target language only (no vendored HTML/JSON).
 
 | Repo | Files | LoC | foxguard | Semgrep | Speedup |
 |------|-------|-----|----------|---------|---------|
-| express (framework) | 141 | 15,804 JS | **0.11s** | 4.80s | **45x** |
-| flask (framework) | 83 | 14,029 Py | **0.08s** | 5.70s | **73x** |
-| gin (framework) | 99 | 17,669 Go | **0.07s** | 4.61s | **63x** |
-| **sentry (production)** | **8,539** | **1,291,606 Py** | **12.19s** | 164.53s | **13x** |
+| express (framework) | 141 | 15,804 JS | **0.276s** | 6.09s | **22x** |
+| flask (framework) | 83 | 14,029 Py | **0.333s** | 6.51s | **20x** |
+| gin (framework) | 99 | 17,669 Go | **0.499s** | 4.95s | **10x** |
+| **sentry (production)** | **8,539** | **1,291,606 Py** | **35.4s** | 194.0s | **5x** |
 
-Sentry is the larger-corpus stress target added under issue #8: a real production monitoring platform at ~1.3M Python LoC. foxguard scans the whole tree in ~12 seconds (~106k LoC/sec); Semgrep with `--config auto` takes ~2m45s on the same tree. Run on one machine — your numbers will vary; reproduce locally with `./benchmarks/run.sh`.
+Sentry is the larger-corpus stress target: a real production monitoring platform at ~1.3M Python LoC. foxguard scans the whole tree in ~35 seconds; Semgrep with `--config auto` takes ~3m14s. The framework benchmarks (express/flask/gin) are sub-second. Run on one machine — your numbers will vary; reproduce locally with `./benchmarks/run.sh`.
 
 To reproduce: `./benchmarks/run.sh` (add `BENCH_SKIP_LARGE=1` for the quick matrix only). See `benchmarks/README.md` for the reproduction recipe.
 

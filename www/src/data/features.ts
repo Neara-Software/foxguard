@@ -8,34 +8,34 @@ export interface Feature {
 
 export const features: Feature[] = [
   {
-    icon: '< 1s',
-    title: 'Fast enough to stay enabled',
-    desc: 'Single Rust binary. No JVM, no Python runtime, no network calls. Built for local runs and pre-commit hooks.',
+    icon: 'taint',
+    title: 'Cross-file taint tracking',
+    desc: 'Trace untrusted input across file boundaries. Source in one file, sink in another — the engine connects them.',
   },
   {
-    icon: 'hook',
-    title: 'Pre-commit ready',
-    desc: 'Run foxguard init to install a repo-local hook and get a starter .foxguard.yml without wiring extra services.',
+    icon: 'diff',
+    title: 'Branch diffing',
+    desc: 'foxguard diff main shows only new findings your branch introduces. No noise from existing code.',
   },
   {
-    icon: '.yaml',
-    title: 'YAML bridge, not engine sprawl',
-    desc: 'Load a useful Semgrep/OpenGrep-compatible YAML subset on top of built-ins when you need it.',
+    icon: 'pr',
+    title: 'PR review comments',
+    desc: '--github-pr posts findings as inline review comments directly on pull requests.',
   },
   {
-    icon: 'base',
-    title: 'Baselines',
-    desc: 'Accept existing findings once and keep the rollout focused on new issues with a baseline file.',
+    icon: 'fix',
+    title: 'Fix suggestions',
+    desc: 'Every taint finding includes a concrete fix with safe code patterns. --explain shows full dataflow traces.',
   },
   {
     icon: 'secret',
     title: 'Secrets scanning',
-    desc: 'Detect leaked credentials and private keys with redacted output and binary-safe handling in the same tool.',
+    desc: 'Detect leaked credentials and private keys with redacted output in the same tool.',
   },
   {
-    icon: 'SARIF',
-    title: 'CI-friendly output',
-    desc: 'Terminal output locally, JSON and SARIF for automation, policy gates, and GitHub Code Scanning.',
+    icon: 'yaml',
+    title: 'Semgrep YAML bridge',
+    desc: 'Load existing Semgrep/OpenGrep rules with --rules. Focused subset, parity-tested in CI.',
   },
 ];
 
@@ -99,6 +99,12 @@ export const frameworkGroups: FrameworkGroup[] = [
     desc: 'SQL injection, deserialization, XXE, LDAP injection, CORS.',
     badges: ['sql', 'xxe', 'ldap', 'cors'],
     ruleCount: countForSlugs('cs'),
+  },
+  {
+    title: 'Kotlin / Ktor',
+    desc: 'SQL injection, command injection, SSRF, deserialization, JWT, taint tracking with Ktor + Spring Boot sources.',
+    badges: ['sql', 'cmd', 'ssrf', 'taint'],
+    ruleCount: countForSlugs('kt'),
   },
   {
     title: 'Swift / iOS',

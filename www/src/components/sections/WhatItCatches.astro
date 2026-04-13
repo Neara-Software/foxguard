@@ -1,0 +1,66 @@
+---
+---
+
+<section class="py-24">
+  <div class="max-w-5xl mx-auto px-6">
+
+    <h2 class="font-heading text-noir-50 text-3xl sm:text-4xl mb-4">Cross-file taint analysis</h2>
+    <p class="text-noir-500 text-base mb-2">Traces untrusted input across file boundaries.</p>
+    <p class="text-noir-500 text-base mb-12">Source in one file, sink in another — connected in 0.03 seconds.</p>
+
+    <!-- Code example -->
+    <div class="grid md:grid-cols-2 gap-px bg-noir-800 rounded-xl overflow-hidden mb-8">
+      <div class="bg-noir-950 p-5">
+        <div class="text-noir-600 text-xs mb-3 font-mono">views.py</div>
+        <pre class="text-[13px] font-mono leading-relaxed"><code class="text-noir-400"><span class="text-purple-400">from</span> . <span class="text-purple-400">import</span> queries
+
+<span class="text-purple-400">def</span> <span class="text-blue-400">search</span>(request):
+    name = <span class="text-amber-400">request.GET</span>["name"]
+    <span class="text-purple-400">return</span> queries.<span class="text-red-400">run_query</span>(name)</code></pre>
+      </div>
+      <div class="bg-noir-950 p-5">
+        <div class="text-noir-600 text-xs mb-3 font-mono">queries.py</div>
+        <pre class="text-[13px] font-mono leading-relaxed"><code class="text-noir-400"><span class="text-purple-400">def</span> <span class="text-blue-400">run_query</span>(name):
+    cur = db.cursor()
+    cur.<span class="text-red-400">execute</span>(
+        <span class="text-green-400">"SELECT * FROM users"</span>
+        <span class="text-green-400">" WHERE name = '"</span> + <span class="text-red-400">name</span> + <span class="text-green-400">"'"</span>
+    )</code></pre>
+      </div>
+    </div>
+
+    <!-- Flow -->
+    <div class="flex items-center gap-3 text-sm font-mono text-noir-600 mb-16">
+      <span class="text-amber-400">request.GET</span>
+      <span>&rarr;</span>
+      <span>views.py</span>
+      <span>&rarr;</span>
+      <span>queries.py</span>
+      <span>&rarr;</span>
+      <span class="text-red-400">cursor.execute</span>
+    </div>
+
+    <!-- Features grid -->
+    <div class="grid sm:grid-cols-3 gap-8">
+      <div>
+        <h3 class="text-noir-100 text-sm font-medium mb-2">Dataflow traces</h3>
+        <p class="text-noir-500 text-sm leading-relaxed">
+          <code class="text-noir-400">--explain</code> shows the full path from source to sink with file and line references.
+        </p>
+      </div>
+      <div>
+        <h3 class="text-noir-100 text-sm font-medium mb-2">Fix suggestions</h3>
+        <p class="text-noir-500 text-sm leading-relaxed">
+          Every taint finding includes a concrete remediation with safe code patterns.
+        </p>
+      </div>
+      <div>
+        <h3 class="text-noir-100 text-sm font-medium mb-2">Branch diffing</h3>
+        <p class="text-noir-500 text-sm leading-relaxed">
+          <code class="text-noir-400">foxguard diff main</code> shows only findings your branch introduces.
+        </p>
+      </div>
+    </div>
+
+  </div>
+</section>

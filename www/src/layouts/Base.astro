@@ -4,7 +4,7 @@ interface Props {
   description?: string;
 }
 
-const { title, description = 'Security scanner as fast as a linter. 170+ built-in rules across 10 languages, secrets scanning, and Semgrep-compatible YAML. Written in Rust.' } = Astro.props;
+const { title, description = 'Security scanner as fast as a linter. 174 built-in rules, 10 languages, cross-file taint tracking. Single Rust binary, sub-second scans.' } = Astro.props;
 ---
 
 <!doctype html>
@@ -14,7 +14,31 @@ const { title, description = 'Security scanner as fast as a linter. 170+ built-i
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content={description} />
     <meta name="theme-color" content="#0C0A09" />
+    <meta name="author" content="PwnKit Labs" />
+    <meta name="keywords" content="security scanner, static analysis, SAST, taint tracking, Rust, Semgrep alternative, code security, vulnerability scanner" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://foxguard.dev" />
+    <meta property="og:image" content="https://foxguard.dev/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content="https://foxguard.dev/og-image.png" />
+    <link rel="canonical" href="https://foxguard.dev" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "foxguard",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows",
+      "description": description,
+      "url": "https://foxguard.dev",
+      "author": { "@type": "Organization", "name": "PwnKit Labs", "url": "https://github.com/PwnKit-Labs" },
+      "license": "https://opensource.org/licenses/MIT",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+    })} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Martian+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -24,6 +48,8 @@ const { title, description = 'Security scanner as fast as a linter. 170+ built-i
     <div class="ambient-orb ambient-orb-fox"></div>
     <div class="ambient-orb ambient-orb-slate"></div>
     <div class="page-noise"></div>
+    <div style="position:fixed;top:0;bottom:0;width:1px;background:rgba(68,64,60,0.5);z-index:50;pointer-events:none;left:max(1.5rem,calc((100vw - 1024px)/2))"></div>
+    <div style="position:fixed;top:0;bottom:0;width:1px;background:rgba(68,64,60,0.5);z-index:50;pointer-events:none;right:max(1.5rem,calc((100vw - 1024px)/2))"></div>
     <slot />
   </body>
 </html>

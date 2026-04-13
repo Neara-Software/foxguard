@@ -61,7 +61,7 @@ a {
 }
 
 a:hover {
-  text-decoration: underline;
+  text-decoration: none;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -106,6 +106,26 @@ code {
 .site-shell {
   position: relative;
   isolation: isolate;
+}
+
+/* Side border lines (opencode-style) */
+.page-border-left,
+.page-border-right {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(68, 64, 60, 0.5);
+  z-index: 50;
+  pointer-events: none;
+}
+/* Align with max-w-5xl (1024px) + px-6 (24px) content edges */
+.page-border-left { left: max(1.5rem, calc((100vw - 1024px) / 2)); }
+.page-border-right { right: max(1.5rem, calc((100vw - 1024px) / 2)); }
+
+@media (max-width: 640px) {
+  .page-border-left,
+  .page-border-right { display: none; }
 }
 
 /* Subtle noise texture */
@@ -297,7 +317,7 @@ code {
 @keyframes fadeUp {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(16px);
   }
   to {
     opacity: 1;
@@ -306,14 +326,56 @@ code {
 }
 
 .fade-up {
-  animation: fadeUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: fadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .fade-up-delay-1 { animation-delay: 0.1s; }
-.fade-up-delay-2 { animation-delay: 0.2s; }
-.fade-up-delay-3 { animation-delay: 0.3s; }
-.fade-up-delay-4 { animation-delay: 0.4s; }
-.fade-up-delay-5 { animation-delay: 0.5s; }
+.fade-up-delay-2 { animation-delay: 0.15s; }
+.fade-up-delay-3 { animation-delay: 0.2s; }
+
+
+/* ============================================
+   COPY NUDGE
+   ============================================ */
+
+@keyframes installPulse {
+  0% { border-color: var(--color-noir-800); box-shadow: none; }
+  30% { border-color: var(--color-fox); box-shadow: 0 0 20px rgba(217, 119, 6, 0.3); }
+  100% { border-color: var(--color-noir-800); box-shadow: none; }
+}
+
+.install-highlight {
+  animation: installPulse 1.2s ease-out;
+}
+
+@keyframes copyFlash {
+  0% { border-color: var(--color-fox); transform: scale(1); }
+  30% { border-color: #4ade80; transform: scale(1.02); }
+  100% { border-color: var(--color-noir-800); transform: scale(1); }
+}
+
+.copy-flash {
+  animation: copyFlash 0.6s ease-out;
+}
+
+/* ============================================
+   ACCORDION
+   ============================================ */
+
+details > div {
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 2000px;
+  }
+}
 
 /* ============================================
    SCROLLBAR

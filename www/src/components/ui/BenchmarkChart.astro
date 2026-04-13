@@ -1,53 +1,43 @@
 ---
-import { benchmarkRows, timeWidth, speedMultiplier } from '../../data/benchmarks';
+import { benchmarkRows, speedMultiplier } from '../../data/benchmarks';
+
+const maxTime = Math.max(...benchmarkRows.map(r => r.semgrep));
 ---
 
-<div class="bg-noir-900 border border-noir-800 rounded-xl p-5 sm:p-6">
-  <div class="hidden md:grid grid-cols-[100px_1fr_1fr] gap-3 text-[10px] font-mono uppercase tracking-widest text-noir-600 mb-5 px-1">
-    <div>Repo</div>
-    <div>foxguard</div>
-    <div>Semgrep</div>
-  </div>
-
-  <div class="flex flex-col gap-5">
-    {benchmarkRows.map((row) => (
-      <div class="grid grid-cols-1 md:grid-cols-[100px_1fr_1fr] gap-3 items-center">
-        <div class="md:pr-3">
-          <div class="font-mono text-noir-100 text-sm">{row.repo}</div>
-          <div class="font-mono text-[10px] text-noir-600">{row.files} files</div>
-        </div>
-
-        <div>
-          <div class="md:hidden font-mono text-[10px] uppercase tracking-widest text-noir-600 mb-1.5">foxguard</div>
-          <div class="bg-noir-950 rounded-md border border-noir-800 overflow-hidden h-9 flex items-center">
-            <div
-              class="h-full flex items-center justify-end px-3 text-[11px] font-mono font-semibold min-w-[72px] bg-fox text-noir-950"
-              style={`width: ${timeWidth(row.foxguard)}%`}
-            >
-              {row.foxguard.toFixed(3)}s
-            </div>
+<div class="space-y-8">
+  {benchmarkRows.map((row) => {
+    const foxPct = Math.max((row.foxguard / maxTime) * 100, 4);
+    const semPct = (row.semgrep / maxTime) * 100;
+    return (
+      <div>
+        <div class="flex items-baseline justify-between mb-3">
+          <span class="text-noir-100 text-sm font-medium">{row.repo}</span>
+          <div class="flex items-center gap-3 text-xs">
+            <span class="text-fox font-medium">{speedMultiplier(row)}</span>
+            <span class="text-noir-600">{row.files} files</span>
           </div>
         </div>
 
-        <div>
-          <div class="md:hidden font-mono text-[10px] uppercase tracking-widest text-noir-600 mb-1.5">Semgrep</div>
-          <div class="bg-noir-950 rounded-md border border-noir-800 overflow-hidden h-9 flex items-center">
-            <div
-              class="h-full flex items-center justify-end px-3 text-[11px] font-mono font-semibold min-w-[72px] bg-noir-600 text-noir-100"
-              style={`width: ${timeWidth(row.semgrep)}%`}
-            >
-              {row.semgrep.toFixed(3)}s
-            </div>
+        <div class="flex items-center gap-3 mb-2">
+          <div class="w-16 text-xs text-noir-400 shrink-0">foxguard</div>
+          <div class="flex-1 rounded-full overflow-hidden" style="height:10px;background:rgba(41,37,36,0.5);">
+            <div class="rounded-full" style="height:10px;" style={`width:${foxPct}%;background:#d97706;`}></div>
           </div>
-          <div class="text-right mt-1">
-            <span class="font-mono text-[10px] text-fox">{speedMultiplier(row)} faster</span>
+          <span class="text-xs font-mono text-fox shrink-0 w-14 text-right">{row.foxguard.toFixed(3)}s</span>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <div class="w-16 text-xs text-noir-600 shrink-0">Semgrep</div>
+          <div class="flex-1 rounded-full overflow-hidden" style="height:10px;background:rgba(41,37,36,0.5);">
+            <div class="rounded-full" style="height:10px;" style={`width:${semPct}%;background:#57534E;`}></div>
           </div>
+          <span class="text-xs font-mono text-noir-500 shrink-0 w-14 text-right">{row.semgrep.toFixed(1)}s</span>
         </div>
       </div>
-    ))}
-  </div>
+    );
+  })}
 </div>
 
-<p class="text-[11px] text-noir-600 mt-4">
-  foxguard built-in rules vs Semgrep <code class="text-noir-500">auto</code>. Run <code class="text-noir-500">./benchmarks/run.sh</code> locally to reproduce.
+<p class="text-noir-600 text-xs mt-8">
+  foxguard built-ins vs Semgrep auto · <code class="text-noir-500">./benchmarks/run.sh</code> to reproduce
 </p>
