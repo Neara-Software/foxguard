@@ -1985,6 +1985,83 @@ rules:
     }
 
     #[test]
+    fn test_scan_rejects_config_path_traversal() {
+        let repo = TempDir::new().expect("failed to create temp dir");
+        let outside = TempDir::new().expect("failed to create outside temp dir");
+        let outside_rules = outside.path().join("rules.yml");
+        fs::write(&outside_rules, "rules: []\n").expect("failed to write outside rules");
+        write_config_file(
+            repo.path(),
+            ".foxguard.yml",
+            &format!("scan:\n  rules: {}\n", outside_rules.display()),
+        );
+
+        let output = foxguard_cmd()
+            .current_dir(repo.path())
+            .args([".", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard with malicious config");
+
+        assert!(
+            !output.status.success(),
+            "malicious config should cause scan to fail"
+        );
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("scan.rules"),
+            "expected field name in error, got: {}",
+            stderr
+        );
+        assert!(
+            stderr.contains("escapes the project root"),
+            "expected traversal error, got: {}",
+            stderr
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_secrets_rejects_config_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let repo = TempDir::new().expect("failed to create temp dir");
+        let outside = TempDir::new().expect("failed to create outside temp dir");
+        let outside_ignore = outside.path().join("secrets.ignore");
+        fs::write(&outside_ignore, "fixtures\n").expect("failed to write outside ignore file");
+        symlink(&outside_ignore, repo.path().join("secrets.ignore"))
+            .expect("failed to create symlinked ignore file");
+        write_config_file(
+            repo.path(),
+            ".foxguard.yml",
+            "secrets:\n  exclude_path_file: secrets.ignore\n",
+        );
+
+        let output = foxguard_cmd()
+            .current_dir(repo.path())
+            .args(["secrets", ".", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard secrets with malicious config");
+
+        assert!(
+            !output.status.success(),
+            "malicious secrets config should fail"
+        );
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("secrets.exclude_path_file"),
+            "expected field name in error, got: {}",
+            stderr
+        );
+        assert!(
+            stderr.contains("escapes the project root"),
+            "expected traversal error, got: {}",
+            stderr
+        );
+    }
+
+    #[test]
     fn test_inline_ignore_suppresses_same_line_js_finding() {
         let repo = TempDir::new().expect("failed to create temp dir");
         let target = repo.path().join("ignored.js");
