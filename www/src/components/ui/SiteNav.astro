@@ -38,14 +38,14 @@ const { backLink, backLabel } = Astro.props;
 
         // Use cache if less than 1 hour old
         if (cached && cachedAt && Date.now() - Number(cachedAt) < 3600000) {
-          if (el) el.innerHTML = 'GitHub <span style="color:#A8A29E">' + cached + '</span>';
+          if (el) el.innerHTML = '★ ' + cached;
         } else {
           const r = await fetch('https://api.github.com/repos/PwnKit-Labs/foxguard');
           if (r.ok) {
             const d = await r.json();
             if (el && d.stargazers_count) {
               const count = d.stargazers_count.toLocaleString();
-              el.innerHTML = 'GitHub <span style="color:#A8A29E">' + count + '</span>';
+              el.innerHTML = '★ ' + count;
               localStorage.setItem('fg-stars', count);
               localStorage.setItem('fg-stars-at', String(Date.now()));
             }
