@@ -437,6 +437,23 @@ fn scan_files(
     let start = Instant::now();
     let file_count = files.len();
 
+    let mut rules_by_lang: HashMap<Language, Vec<&dyn crate::rules::Rule>> = HashMap::new();
+    for (_, language) in &files {
+        rules_by_lang
+            .entry(*language)
+            .or_insert_with(|| registry.rules_for_language(*language));
+    }
+
+    let has_python_taint_rules = rules_by_lang
+        .get(&Language::Python)
+        .is_some_and(|rules| rules.iter().any(|rule| rule.id().contains("/taint-")));
+    let has_js_taint_rules = rules_by_lang
+        .get(&Language::JavaScript)
+        .is_some_and(|rules| rules.iter().any(|rule| rule.id().contains("/taint-")));
+    let has_go_taint_rules = rules_by_lang
+        .get(&Language::Go)
+        .is_some_and(|rules| rules.iter().any(|rule| rule.id().contains("/taint-")));
+
     // ── Pass 1: Extract cross-file taint summaries ────────────────────
     // Run pass 1 for Python, Go, and JS files when there are multiple
     // files of the same language — single-file scans cannot benefit from
@@ -455,7 +472,9 @@ fn scan_files(
         .remove(&Language::JavaScript)
         .unwrap_or_default();
 
-    let mut cross_file_summaries: CrossFileSummaryMap = if python_files.len() > 1 {
+    let mut cross_file_summaries: CrossFileSummaryMap = if has_python_taint_rules
+        && python_files.len() > 1
+    {
         let rule_specs = crate::rules::python::python_taint_rule_specs();
         python_files
             .par_iter()
@@ -489,7 +508,7 @@ fn scan_files(
     };
 
     // JavaScript cross-file summaries: extract from all JS/TS files.
-    if js_files.len() > 1 {
+    if has_js_taint_rules && js_files.len() > 1 {
         let js_rule_specs = crate::rules::javascript::js_taint_rule_specs();
         let js_summaries: CrossFileSummaryMap = js_files
             .par_iter()
@@ -521,7 +540,7 @@ fn scan_files(
     }
 
     // Go cross-file summaries: extract from all Go files.
-    if go_files.len() > 1 {
+    if has_go_taint_rules && go_files.len() > 1 {
         let go_rule_specs = crate::rules::go::go_taint_rule_specs();
         let go_summaries: CrossFileSummaryMap = go_files
             .par_iter()
@@ -616,7 +635,9 @@ fn scan_files(
 
             let file_str = path.display().to_string();
             let relative_path = relative_scan_path(scan_root, path);
-            let rules = registry.rules_for_language(*language);
+            let Some(rules) = rules_by_lang.get(language) else {
+                return Vec::new();
+            };
 
             // Per-file analysis context. Python builds an import alias table so
             // rules can resolve aliased callees (`import pickle as p; p.loads(x)`)
@@ -704,7 +725,7 @@ fn scan_files(
             };
 
             let mut file_findings = Vec::new();
-            for rule in rules {
+            for rule in rules.iter().copied() {
                 if !rule.applies_to_path(&relative_path) {
                     continue;
                 }
