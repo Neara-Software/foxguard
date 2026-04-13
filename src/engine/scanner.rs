@@ -472,42 +472,45 @@ fn scan_files(
         .remove(&Language::JavaScript)
         .unwrap_or_default();
 
-    let mut cross_file_summaries: CrossFileSummaryMap = if has_python_taint_rules
-        && python_files.len() > 1
-    {
-        let rule_specs = crate::rules::python::python_taint_rule_specs();
-        python_files
-            .par_iter()
-            .filter_map(|(path, _)| {
-                if std::fs::metadata(path).ok()?.len() > max_file_size {
-                    return None;
-                }
-                let source = std::fs::read_to_string(path).ok()?;
-                if is_minified(&source) {
-                    return None;
-                }
-                let tree = super::parser::parse_file(&source, Language::Python)?;
-                let aliases = py_aliases_from_tree(&source, &tree);
-                let summaries = python_taint::extract_cross_file_summaries(
-                    tree.root_node(),
-                    &source,
-                    Some(&aliases),
-                    &rule_specs,
-                );
-                if summaries.is_empty() {
-                    None
-                } else {
-                    // Canonicalize the path for consistent lookups.
-                    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-                    Some((canonical, summaries))
-                }
-            })
-            .collect()
-    } else {
-        CrossFileSummaryMap::new()
-    };
+    let (mut cross_file_summaries, has_python_cross_file): (CrossFileSummaryMap, bool) =
+        if has_python_taint_rules && python_files.len() > 1 {
+            let rule_specs = crate::rules::python::python_taint_rule_specs();
+            let summaries: CrossFileSummaryMap = python_files
+                .par_iter()
+                .filter_map(|(path, _)| {
+                    if std::fs::metadata(path).ok()?.len() > max_file_size {
+                        return None;
+                    }
+                    let source = std::fs::read_to_string(path).ok()?;
+                    if is_minified(&source) {
+                        return None;
+                    }
+                    let tree = super::parser::parse_file(&source, Language::Python)?;
+                    let aliases = py_aliases_from_tree(&source, &tree);
+                    let summaries = python_taint::extract_cross_file_summaries(
+                        tree.root_node(),
+                        &source,
+                        Some(&aliases),
+                        &rule_specs,
+                    );
+                    if summaries.is_empty() {
+                        None
+                    } else {
+                        // Canonicalize the path for consistent lookups.
+                        let canonical =
+                            std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+                        Some((canonical, summaries))
+                    }
+                })
+                .collect();
+            let has_summaries = !summaries.is_empty();
+            (summaries, has_summaries)
+        } else {
+            (CrossFileSummaryMap::new(), false)
+        };
 
     // JavaScript cross-file summaries: extract from all JS/TS files.
+    let mut has_js_cross_file = false;
     if has_js_taint_rules && js_files.len() > 1 {
         let js_rule_specs = crate::rules::javascript::js_taint_rule_specs();
         let js_summaries: CrossFileSummaryMap = js_files
@@ -536,10 +539,12 @@ fn scan_files(
                 }
             })
             .collect();
+        has_js_cross_file = !js_summaries.is_empty();
         cross_file_summaries.extend(js_summaries);
     }
 
     // Go cross-file summaries: extract from all Go files.
+    let mut has_go_cross_file = false;
     if has_go_taint_rules && go_files.len() > 1 {
         let go_rule_specs = crate::rules::go::go_taint_rule_specs();
         let go_summaries: CrossFileSummaryMap = go_files
@@ -568,6 +573,7 @@ fn scan_files(
                 }
             })
             .collect();
+        has_go_cross_file = !go_summaries.is_empty();
         cross_file_summaries.extend(go_summaries);
     }
 
@@ -575,7 +581,7 @@ fn scan_files(
 
     // Build a directory→files index for Go same-package resolution.
     // All .go files in the same directory share the same package.
-    let go_dir_index: HashMap<PathBuf, Vec<PathBuf>> = if has_cross_file {
+    let go_dir_index: HashMap<PathBuf, Vec<PathBuf>> = if has_go_cross_file {
         let mut index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
         for (path, lang) in &files {
             if matches!(lang, Language::Go) && !is_noise_path(path) {
@@ -659,24 +665,25 @@ fn scan_files(
             };
 
             // Build Python import-to-path map for cross-file resolution.
-            let python_import_paths = if has_cross_file && matches!(language, Language::Python) {
-                let mut imports = resolve_imports_to_paths(&source, &tree, path);
-                // Canonicalize all paths to match the summary map keys.
-                let canonical: HashMap<String, PathBuf> = imports
-                    .drain()
-                    .map(|(k, v)| {
-                        let canon = std::fs::canonicalize(&v).unwrap_or(v);
-                        (k, canon)
-                    })
-                    .collect();
-                Some(canonical)
-            } else {
-                None
-            };
+            let python_import_paths =
+                if has_python_cross_file && matches!(language, Language::Python) {
+                    let mut imports = resolve_imports_to_paths(&source, &tree, path);
+                    // Canonicalize all paths to match the summary map keys.
+                    let canonical: HashMap<String, PathBuf> = imports
+                        .drain()
+                        .map(|(k, v)| {
+                            let canon = std::fs::canonicalize(&v).unwrap_or(v);
+                            (k, canon)
+                        })
+                        .collect();
+                    Some(canonical)
+                } else {
+                    None
+                };
 
             // Build JavaScript import-to-path map for cross-file resolution.
             let javascript_import_paths =
-                if has_cross_file && matches!(language, Language::JavaScript) {
+                if has_js_cross_file && matches!(language, Language::JavaScript) {
                     let mut imports =
                         javascript_taint::resolve_js_imports_to_paths(&source, &tree, path);
                     let canonical: HashMap<String, PathBuf> = imports
@@ -694,7 +701,7 @@ fn scan_files(
             // Build Go same-package paths for cross-file resolution.
             // All .go files in the same directory share a package, so
             // we provide the paths of sibling files (excluding self).
-            let go_same_package_paths = if has_cross_file && matches!(language, Language::Go) {
+            let go_same_package_paths = if has_go_cross_file && matches!(language, Language::Go) {
                 path.parent().and_then(|dir| {
                     let canonical_self =
                         std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
