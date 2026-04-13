@@ -732,7 +732,7 @@ fn scan_files(
             };
 
             let mut file_findings = Vec::new();
-            for rule in rules.iter().copied() {
+            for rule in rules {
                 if !rule.applies_to_path(&relative_path) {
                     continue;
                 }
