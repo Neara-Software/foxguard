@@ -10,7 +10,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap,
+};
 use ratatui::Terminal;
 use std::fs;
 use std::io::{self, IsTerminal};
@@ -110,6 +112,7 @@ struct UiApp {
     detail_scroll: u16,
     notices_scroll: u16,
     source_context_cache: Option<SourceContextCache>,
+    open_focus: OpenFocus,
 }
 
 impl UiApp {
@@ -134,6 +137,7 @@ impl UiApp {
             detail_scroll: 0,
             notices_scroll: 0,
             source_context_cache: None,
+            open_focus: OpenFocus::Finding,
         }
     }
 
@@ -148,6 +152,7 @@ impl UiApp {
         self.detail_scroll = 0;
         self.notices_scroll = 0;
         self.source_context_cache = None;
+        self.open_focus = OpenFocus::Finding;
         let request_id = self.next_request_id;
         self.next_request_id += 1;
         self.active_request_id = request_id;
@@ -167,6 +172,7 @@ impl UiApp {
                     self.error = None;
                     self.result = Some(result);
                     self.source_context_cache = None;
+                    self.normalize_open_focus();
                     self.clamp_selection();
                 }
                 Err(error) => {
@@ -261,6 +267,10 @@ impl UiApp {
                 self.scroll_notices(-3);
                 ControlFlow::Continue
             }
+            KeyCode::Tab => {
+                self.cycle_open_focus();
+                ControlFlow::Continue
+            }
             KeyCode::Enter => ControlFlow::OpenSelected,
             KeyCode::Char('o') => ControlFlow::OpenSelected,
             KeyCode::Char('r') => ControlFlow::Rescan,
@@ -303,6 +313,7 @@ impl UiApp {
         if self.selected != previous {
             self.detail_scroll = 0;
             self.source_context_cache = None;
+            self.normalize_open_focus();
         }
     }
 
@@ -318,6 +329,33 @@ impl UiApp {
         if self.selected != previous {
             self.detail_scroll = 0;
             self.source_context_cache = None;
+            self.normalize_open_focus();
+        }
+    }
+
+    fn cycle_open_focus(&mut self) {
+        let Some(finding) = self.selected_finding() else {
+            self.open_focus = OpenFocus::Finding;
+            return;
+        };
+
+        let available = available_open_focuses(finding);
+        let index = available
+            .iter()
+            .position(|focus| *focus == self.open_focus)
+            .unwrap_or(0);
+        self.open_focus = available[(index + 1) % available.len()];
+    }
+
+    fn normalize_open_focus(&mut self) {
+        let Some(finding) = self.selected_finding() else {
+            self.open_focus = OpenFocus::Finding;
+            return;
+        };
+
+        let available = available_open_focuses(finding);
+        if !available.contains(&self.open_focus) {
+            self.open_focus = OpenFocus::Finding;
         }
     }
 
@@ -378,27 +416,32 @@ impl UiApp {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(4),
-                Constraint::Min(10),
                 Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Min(10),
+                Constraint::Length(1),
             ])
             .split(frame.area());
 
         self.draw_header(frame, layout[0]);
+        frame.render_widget(
+            Block::default().style(Style::default().bg(HEADER_BG)),
+            layout[1],
+        );
 
         if self.scanning {
-            self.draw_loading(frame, layout[1]);
+            self.draw_loading(frame, layout[2]);
         } else if let Some(error) = self.error.as_ref() {
             let error = Paragraph::new(error.as_str())
                 .style(Style::default().fg(Color::Red))
-                .block(Block::default().title("scan error").borders(Borders::ALL))
+                .block(panel_block(Some("Scan Error"), PANEL_BG))
                 .wrap(Wrap { trim: false });
-            frame.render_widget(error, layout[1]);
+            frame.render_widget(error, layout[2]);
         } else {
-            self.draw_body(frame, layout[1]);
+            self.draw_body(frame, layout[2]);
         }
 
-        self.draw_footer(frame, layout[2]);
+        self.draw_footer(frame, layout[3]);
 
         if self.show_help {
             self.draw_help(frame);
@@ -415,11 +458,15 @@ impl UiApp {
             self.request.path,
             elapsed,
         ))
-        .block(Block::default().title("foxguard ui").borders(Borders::ALL));
+        .block(panel_block(Some("Foxguard UI"), PANEL_BG));
         frame.render_widget(loading, area);
     }
 
     fn draw_header(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let filter = self
+            .min_severity
+            .map(severity_name)
+            .unwrap_or("all severities");
         let mut summary_spans = vec![
             Span::styled(
                 "foxguard ui",
@@ -434,6 +481,10 @@ impl UiApp {
             ),
             Span::raw("  "),
             Span::raw(short_path(&self.request.path)),
+            Span::raw("  "),
+            footer_label_span("filter"),
+            Span::raw(" "),
+            footer_value_span(filter),
         ];
 
         let mut badge_spans = Vec::new();
@@ -479,8 +530,7 @@ impl UiApp {
             lines.push(Line::from(badge_spans));
         }
 
-        let header = Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title("status"));
+        let header = Paragraph::new(Text::from(lines)).block(panel_block(None, HEADER_BG));
         frame.render_widget(header, area);
     }
 
@@ -539,8 +589,13 @@ impl UiApp {
             })
             .unwrap_or_else(|| "findings".to_string());
         let list = List::new(items)
-            .block(Block::default().title(list_title).borders(Borders::ALL))
-            .highlight_style(Style::default().bg(Color::DarkGray))
+            .block(panel_block(Some(&list_title), LIST_BG))
+            .highlight_style(
+                Style::default()
+                    .fg(Color::White)
+                    .bg(DETAIL_BG)
+                    .add_modifier(Modifier::BOLD),
+            )
             .highlight_symbol(">> ");
 
         let mut state = ListState::default();
@@ -550,14 +605,14 @@ impl UiApp {
         frame.render_stateful_widget(list, layout[0], &mut state);
 
         let detail = Paragraph::new(self.detail_text())
-            .block(Block::default().title("detail").borders(Borders::ALL))
+            .block(panel_block(Some("Detail"), DETAIL_BG))
             .scroll((self.detail_scroll, 0))
             .wrap(Wrap { trim: false });
         frame.render_widget(detail, layout[1]);
 
         if body_layout.len() > 1 {
             let notices = Paragraph::new(self.notice_text())
-                .block(Block::default().title("notices").borders(Borders::ALL))
+                .block(panel_block(Some("Notices"), NOTICE_BG))
                 .scroll((self.notices_scroll, 0))
                 .wrap(Wrap { trim: false });
             frame.render_widget(notices, body_layout[1]);
@@ -587,7 +642,7 @@ impl UiApp {
                 "Location",
                 &format!(
                     "{}:{}:{}",
-                    short_path(&finding.file),
+                    display_path(&finding.file),
                     finding.line,
                     finding.column
                 ),
@@ -616,7 +671,7 @@ impl UiApp {
         if self.show_trace {
             lines.push(Line::from(""));
             lines.push(section_heading("Dataflow", Color::Cyan));
-            lines.extend(dataflow_lines(&finding));
+            lines.extend(dataflow_lines(&finding, self.open_focus));
         }
 
         if let Some(fix) = finding.fix_suggestion.as_ref() {
@@ -665,23 +720,65 @@ impl UiApp {
     }
 
     fn draw_footer(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let filter = self
-            .min_severity
-            .map(severity_name)
-            .unwrap_or("all severities");
-        let mode_label = if self.search_mode { "/" } else { "" };
-        let notices = self.notice_count();
-        let footer = Paragraph::new(format!(
-            "mode: {}  j/k move  / search  Enter/o open  e flow  ? help  notices:{}  filter: {}  search: {}{}",
-            request_mode_label(&self.request),
-            notices,
-            filter,
-            mode_label,
-            self.search_query
-        ))
-        .block(Block::default().borders(Borders::ALL).title("keys"))
-        .wrap(Wrap { trim: true });
-        frame.render_widget(footer, area);
+        frame.render_widget(Block::default().style(Style::default().bg(FOOTER_BG)), area);
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y,
+            width: area.width.saturating_sub(2),
+            height: area.height,
+        };
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(24), Constraint::Length(34)])
+            .split(inner);
+
+        let key_spans = vec![
+            footer_key_span("j/k"),
+            Span::raw(" move  "),
+            footer_key_span("/"),
+            Span::raw(" search  "),
+            footer_key_span("e"),
+            Span::raw(" flow  "),
+            footer_key_span("w"),
+            Span::raw(" notices  "),
+            footer_key_span("?"),
+            Span::raw(" help  "),
+            footer_key_span("Tab"),
+            Span::raw(" cycle  "),
+            footer_key_span("Enter"),
+            Span::raw(" open"),
+        ];
+        frame.render_widget(
+            Paragraph::new(Line::from(key_spans))
+                .style(Style::default().bg(FOOTER_BG))
+                .wrap(Wrap { trim: true }),
+            layout[0],
+        );
+
+        let search_text = if self.search_mode {
+            format!("/{}", self.search_query)
+        } else if self.search_query.is_empty() {
+            String::new()
+        } else {
+            self.search_query.clone()
+        };
+        let search_line = if search_text.is_empty() {
+            Line::from("")
+        } else {
+            Line::from(vec![
+                footer_label_span("search"),
+                Span::raw(" "),
+                footer_value_span(&search_text),
+            ])
+        };
+        frame.render_widget(
+            Paragraph::new(search_line)
+                .style(Style::default().bg(FOOTER_BG))
+                .alignment(Alignment::Right)
+                .wrap(Wrap { trim: true }),
+            layout[1],
+        );
     }
 
     fn draw_help(&self, frame: &mut ratatui::Frame) {
@@ -698,8 +795,9 @@ impl UiApp {
             Line::from("j/k or arrows  move between findings"),
             Line::from("/              search findings"),
             Line::from("0-4            set minimum severity filter"),
+            Line::from("Tab            cycle open target between finding/source/sink"),
             Line::from("e              toggle dataflow details (source/sink traces)"),
-            Line::from("Enter or o     open the selected finding in your editor"),
+            Line::from("Enter          open the current target in your editor"),
             Line::from("w              show or hide notices panel"),
             Line::from("PageUp/Down    scroll detail pane"),
             Line::from("[/]            scroll notices pane"),
@@ -720,14 +818,63 @@ impl UiApp {
     }
 
     fn open_selected_finding(&mut self, session: &mut TerminalSession) -> Result<(), String> {
-        let target = self
-            .selected_finding()
-            .map(|finding| OpenTarget {
-                path: resolve_finding_path(&self.request.path, &finding.file),
-                line: finding.line.max(1),
-            })
-            .ok_or_else(|| "no finding selected".to_string())?;
+        match self.open_focus {
+            OpenFocus::Finding => {
+                let target = self
+                    .selected_finding()
+                    .map(|finding| OpenTarget {
+                        path: resolve_finding_path(&self.request.path, &finding.file),
+                        line: finding.line.max(1),
+                    })
+                    .ok_or_else(|| "no finding selected".to_string())?;
 
+                self.open_target(session, target, "finding")
+            }
+            OpenFocus::Source => self.open_source_finding(session),
+            OpenFocus::Sink => self.open_sink_finding(session),
+        }
+    }
+
+    fn open_source_finding(&mut self, session: &mut TerminalSession) -> Result<(), String> {
+        let finding = self
+            .selected_finding()
+            .cloned()
+            .ok_or_else(|| "no finding selected".to_string())?;
+        let line = finding
+            .source_line
+            .ok_or_else(|| "no source location for selected finding".to_string())?;
+        self.open_focus = OpenFocus::Source;
+        let target = OpenTarget {
+            path: resolve_finding_path(&self.request.path, &finding.file),
+            line: line.max(1),
+        };
+
+        self.open_target(session, target, "source")
+    }
+
+    fn open_sink_finding(&mut self, session: &mut TerminalSession) -> Result<(), String> {
+        let finding = self
+            .selected_finding()
+            .cloned()
+            .ok_or_else(|| "no finding selected".to_string())?;
+        let line = finding
+            .sink_line
+            .ok_or_else(|| "no sink location for selected finding".to_string())?;
+        self.open_focus = OpenFocus::Sink;
+        let target = OpenTarget {
+            path: resolve_finding_path(&self.request.path, &finding.file),
+            line: line.max(1),
+        };
+
+        self.open_target(session, target, "sink")
+    }
+
+    fn open_target(
+        &mut self,
+        session: &mut TerminalSession,
+        target: OpenTarget,
+        label: &str,
+    ) -> Result<(), String> {
         if !target.path.exists() {
             return Err(format!("{} does not exist", target.path.display()));
         }
@@ -746,7 +893,8 @@ impl UiApp {
         match status {
             Ok(exit) if exit.success() => {
                 self.push_runtime_notice(format!(
-                    "opened {}:{}",
+                    "opened {} {}:{}",
+                    label,
                     target.path.display(),
                     target.line
                 ));
@@ -805,6 +953,24 @@ struct SeverityCounts {
     high: usize,
     medium: usize,
     low: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenFocus {
+    Finding,
+    Source,
+    Sink,
+}
+
+fn available_open_focuses(finding: &Finding) -> Vec<OpenFocus> {
+    let mut focuses = vec![OpenFocus::Finding];
+    if finding.source_line.is_some() {
+        focuses.push(OpenFocus::Source);
+    }
+    if finding.sink_line.is_some() {
+        focuses.push(OpenFocus::Sink);
+    }
+    focuses
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -1158,20 +1324,20 @@ mod tests {
             fix_suggestion: None,
         };
 
-        let rendered = dataflow_lines(&finding)
+        let rendered = dataflow_lines(&finding, OpenFocus::Finding)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>();
 
         assert!(rendered
             .iter()
-            .any(|line| line.contains("+- source @ line 12")));
+            .any(|line| line.contains("source @ /tmp/project/src/main.js:12")));
         assert!(rendered
             .iter()
-            .any(|line| line.contains("+- finding @ .../project/src/main.js:42:7")));
+            .any(|line| line.contains("> finding @ /tmp/project/src/main.js:42:7")));
         assert!(rendered
             .iter()
-            .any(|line| line.contains("`- sink @ line 42")));
+            .any(|line| line.contains("sink @ /tmp/project/src/main.js:42")));
     }
 
     #[test]
@@ -1195,7 +1361,7 @@ mod tests {
         };
 
         assert_eq!(
-            dataflow_lines(&finding)
+            dataflow_lines(&finding, OpenFocus::Finding)
                 .into_iter()
                 .map(|line| line.to_string())
                 .collect::<Vec<_>>(),
@@ -1266,6 +1432,140 @@ mod tests {
 
         let flow = app.handle_key(KeyEvent::from(KeyCode::Enter));
         assert!(matches!(flow, ControlFlow::OpenSelected));
+    }
+
+    #[test]
+    fn available_open_focuses_include_source_and_sink_when_present() {
+        let finding = Finding {
+            rule_id: "js/no-command-injection".to_string(),
+            severity: Severity::High,
+            file: "src/main.js".to_string(),
+            line: 42,
+            column: 7,
+            end_line: 42,
+            end_column: 18,
+            description: "untrusted input reaches exec".to_string(),
+            snippet: "exec(cmd)".to_string(),
+            cwe: None,
+            source_line: Some(12),
+            source_description: Some("user-controlled query param".to_string()),
+            sink_line: Some(42),
+            sink_description: Some("value is passed into exec".to_string()),
+            fix_suggestion: None,
+        };
+
+        assert_eq!(
+            available_open_focuses(&finding),
+            vec![OpenFocus::Finding, OpenFocus::Source, OpenFocus::Sink]
+        );
+    }
+
+    #[test]
+    fn cycle_open_focus_advances_through_available_targets() {
+        let mut app = UiApp::new(UiArgs {
+            path: ".".to_string(),
+            config: None,
+            severity: None,
+            rules: None,
+            no_builtins: false,
+            changed: false,
+            exclude: Vec::new(),
+            baseline: None,
+            diff: None,
+            secrets: false,
+            explain: false,
+            max_file_size: 1_048_576,
+        });
+        app.result = Some(UiExecution {
+            mode: UiMode::Scan,
+            path: ".".to_string(),
+            findings: vec![Finding {
+                rule_id: "js/no-command-injection".to_string(),
+                severity: Severity::High,
+                file: "src/main.js".to_string(),
+                line: 42,
+                column: 7,
+                end_line: 42,
+                end_column: 18,
+                description: "untrusted input reaches exec".to_string(),
+                snippet: "exec(cmd)".to_string(),
+                cwe: None,
+                source_line: Some(12),
+                source_description: Some("user-controlled query param".to_string()),
+                sink_line: Some(42),
+                sink_description: Some("value is passed into exec".to_string()),
+                fix_suggestion: None,
+            }],
+            files_scanned: 1,
+            duration: Duration::from_secs(1),
+            explain: true,
+            diff_summary: None,
+            notices: Vec::new(),
+        });
+
+        app.cycle_open_focus();
+        assert_eq!(app.open_focus, OpenFocus::Source);
+        app.cycle_open_focus();
+        assert_eq!(app.open_focus, OpenFocus::Sink);
+        app.cycle_open_focus();
+        assert_eq!(app.open_focus, OpenFocus::Finding);
+    }
+
+    #[test]
+    fn handle_key_maps_tab_to_cycle_open_focus() {
+        let mut app = UiApp::new(UiArgs {
+            path: ".".to_string(),
+            config: None,
+            severity: None,
+            rules: None,
+            no_builtins: false,
+            changed: false,
+            exclude: Vec::new(),
+            baseline: None,
+            diff: None,
+            secrets: false,
+            explain: false,
+            max_file_size: 1_048_576,
+        });
+
+        let flow = app.handle_key(KeyEvent::from(KeyCode::Tab));
+        assert!(matches!(flow, ControlFlow::Continue));
+    }
+
+    #[test]
+    fn dataflow_lines_highlight_active_open_target() {
+        let finding = Finding {
+            rule_id: "js/no-command-injection".to_string(),
+            severity: Severity::High,
+            file: "src/main.js".to_string(),
+            line: 42,
+            column: 7,
+            end_line: 42,
+            end_column: 18,
+            description: "untrusted input reaches exec".to_string(),
+            snippet: "exec(cmd)".to_string(),
+            cwe: None,
+            source_line: Some(12),
+            source_description: Some("user-controlled query param".to_string()),
+            sink_line: Some(42),
+            sink_description: Some("value is passed into exec".to_string()),
+            fix_suggestion: None,
+        };
+
+        let rendered = dataflow_lines(&finding, OpenFocus::Source)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(rendered
+            .iter()
+            .any(|line| line.contains("finding @ src/main.js:42:7")));
+        assert!(rendered
+            .iter()
+            .any(|line| line.contains("> source @ src/main.js:12")));
+        assert!(rendered
+            .iter()
+            .any(|line| line.contains("sink @ src/main.js:42")));
     }
 
     #[test]
@@ -1374,25 +1674,24 @@ fn list_item(finding: &Finding) -> ListItem<'static> {
                 finding.rule_id.clone(),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" "),
-            Span::styled(
-                format!("{}:{}", short_path(&finding.file), finding.line),
-                Style::default().fg(Color::Gray),
-            ),
         ]),
-        Line::from(""),
+        Line::from(Span::styled(
+            format!("{}:{}", display_path(&finding.file), finding.line),
+            Style::default().fg(Color::Gray),
+        )),
     ])
 }
 
-fn dataflow_lines(finding: &Finding) -> Vec<Line<'static>> {
+fn dataflow_lines(finding: &Finding, active_focus: OpenFocus) -> Vec<Line<'static>> {
     let mut steps = Vec::new();
 
     if let (Some(line), Some(description)) =
         (finding.source_line, finding.source_description.as_ref())
     {
         steps.push((
+            OpenFocus::Source,
             "source",
-            format!("line {}", line),
+            format!("{}:{}", display_path(&finding.file), line),
             Some(description.clone()),
             Color::Yellow,
         ));
@@ -1405,10 +1704,11 @@ fn dataflow_lines(finding: &Finding) -> Vec<Line<'static>> {
     }
 
     steps.push((
+        OpenFocus::Finding,
         "finding",
         format!(
             "{}:{}:{}",
-            short_path(&finding.file),
+            display_path(&finding.file),
             finding.line,
             finding.column
         ),
@@ -1419,8 +1719,9 @@ fn dataflow_lines(finding: &Finding) -> Vec<Line<'static>> {
     if let (Some(line), Some(description)) = (finding.sink_line, finding.sink_description.as_ref())
     {
         steps.push((
+            OpenFocus::Sink,
             "sink",
-            format!("line {}", line),
+            format!("{}:{}", display_path(&finding.file), line),
             Some(description.clone()),
             Color::Red,
         ));
@@ -1428,18 +1729,44 @@ fn dataflow_lines(finding: &Finding) -> Vec<Line<'static>> {
 
     let mut lines = Vec::new();
     let step_count = steps.len();
-    for (index, (label, location, description, color)) in steps.into_iter().enumerate() {
+    for (index, (focus, label, location, description, color)) in steps.into_iter().enumerate() {
         let is_last = index + 1 == step_count;
         let branch = if is_last { "`- " } else { "+- " };
         let stem = if is_last { "   " } else { "|  " };
+        let is_active = focus == active_focus;
 
         lines.push(Line::from(vec![
-            Span::styled(branch, Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if is_active { "> " } else { branch },
+                Style::default()
+                    .fg(if is_active {
+                        Color::Cyan
+                    } else {
+                        Color::DarkGray
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 label.to_string(),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
+                if is_active {
+                    Style::default()
+                        .fg(color)
+                        .bg(Color::Rgb(28, 34, 44))
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(color).add_modifier(Modifier::BOLD)
+                },
             ),
-            Span::styled(format!(" @ {}", location), Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!(" @ {}", location),
+                if is_active {
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Gray)
+                },
+            ),
         ]));
 
         if let Some(description) = description {
@@ -1741,11 +2068,51 @@ fn metadata_line(label: &str, value: &str) -> Line<'static> {
     ])
 }
 
+fn footer_label_span(label: &str) -> Span<'static> {
+    Span::styled(
+        label.to_string(),
+        Style::default()
+            .fg(Color::Rgb(145, 126, 99))
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn footer_value_span(value: &str) -> Span<'static> {
+    Span::styled(value.to_string(), Style::default().fg(Color::White))
+}
+
+fn footer_key_span(key: &str) -> Span<'static> {
+    Span::styled(
+        format!(" {} ", key),
+        Style::default()
+            .fg(Color::Rgb(33, 25, 17))
+            .bg(Color::Rgb(186, 157, 104))
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn panel_block(title: Option<&str>, background: Color) -> Block<'static> {
+    let block = Block::default().style(Style::default().bg(background));
+    let block = if let Some(title) = title {
+        block.title(Span::styled(
+            format!(" {} ", title),
+            Style::default()
+                .fg(Color::Rgb(38, 28, 18))
+                .bg(TITLE_BG)
+                .add_modifier(Modifier::BOLD),
+        ))
+    } else {
+        block
+    };
+
+    block.padding(Padding::new(1, 1, 1, 0))
+}
+
 fn mode_findings_title(mode: &UiMode) -> &'static str {
     match mode {
-        UiMode::Scan => "findings",
-        UiMode::Diff { .. } => "new findings",
-        UiMode::Secrets => "secrets",
+        UiMode::Scan => "Findings",
+        UiMode::Diff { .. } => "New Findings",
+        UiMode::Secrets => "Secrets",
     }
 }
 
@@ -1783,6 +2150,23 @@ fn short_path(path: &str) -> String {
     }
 }
 
+fn display_path(path: &str) -> String {
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Ok(relative) = Path::new(path).strip_prefix(&cwd) {
+            return relative.display().to_string();
+        }
+    }
+
+    path.to_string()
+}
+
 const SPINNER_FRAMES: &[&str] = &["-", "\\", "|", "/"];
 const CONTEXT_LINE_MAX_CHARS: usize = 96;
 const CONTEXT_FOCUS_LEAD: usize = 28;
+const HEADER_BG: Color = Color::Rgb(44, 37, 28);
+const PANEL_BG: Color = Color::Rgb(27, 23, 18);
+const LIST_BG: Color = Color::Rgb(34, 28, 21);
+const DETAIL_BG: Color = Color::Rgb(24, 20, 16);
+const NOTICE_BG: Color = Color::Rgb(38, 29, 24);
+const FOOTER_BG: Color = Color::Rgb(58, 47, 34);
+const TITLE_BG: Color = Color::Rgb(201, 172, 114);
