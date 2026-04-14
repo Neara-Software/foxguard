@@ -346,11 +346,11 @@ impl TuiApp {
     fn handle_launch_key(&mut self, key: KeyCode) -> ControlFlow {
         match key {
             KeyCode::Char('q') | KeyCode::Esc => ControlFlow::Exit,
-            KeyCode::Left | KeyCode::Char('h') => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 self.launch_mode = self.launch_mode.previous();
                 ControlFlow::Continue
             }
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
                 self.launch_mode = self.launch_mode.next();
                 ControlFlow::Continue
             }
@@ -696,7 +696,7 @@ impl TuiApp {
             .constraints([Constraint::Min(10), Constraint::Length(1)])
             .split(frame.area());
 
-        let area = centered_rect(72, 52, page[0]);
+        let area = centered_rect(58, 52, page[0]);
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
