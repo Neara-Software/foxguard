@@ -8,7 +8,7 @@ config:
   rows: 22
   frameDelay: auto
   maxIdleTime: 180
-  quality: 90
+  quality: 55
   repeat: 0
   cursorStyle: block
   fontFamily: Menlo, Monaco, monospace
@@ -45,37 +45,97 @@ config:
       margin: 0px
 records:
 - delay: 1
-  content: "\e[3J\e[H\e[2J^D\b\b\e[3J\e[H\e[2J\e[3J\e[H\e[2J\e[38;5;223m# foxguard
-    dark demo\e[0m\r\n\e[38;5;223m# code scan, secrets, baseline\e[0m\r\n$ ls -1 story-target\r\nroutes.js\r\nsecrets.env\r\nservices.js\r\n"
-- delay: 1900
-  content: "\e[3J\e[H\e[2J\e[3J\e[H\e[2J\e[38;5;223m# explain traces source -> sink\e[0m\r\n$
-    fg story-target --explain || true\r\n    \e[31m█\e[0m   \e[2;36mjs/express-no-hardcoded-session-secret\e[0m\e[2m
-    (CWE-798)\e[0m  \e[2mline 7:25\e[0m\r\n    \e[90m█\e[0m \e[33msource →\e[0m \e[2mstory-target/routes.js\e[0m:\e[2m11\e[0m
-    \ req.query\r\n    \e[90m█\e[0m \e[31msink   →\e[0m \e[2mstory-target/routes.js\e[0m:\e[2m12\e[0m
-    \ SQL .query() call (via cross-file call to runQuery)\r\n    \e[90m█\e[0m \e[1;32mFix:\e[0m
-    Use parameterized queries: `db.query(\"SELECT * FROM users WHERE name = $1\",
-    [name])`\r\n\r\n    \e[90m█\e[0m \e[1;100;37m CRITICAL \e[0m exec() called with
-    dynamic argument — risk of command injection\r\n    \e[90m█\e[0m   \e[2;36mjs/no-command-injection\e[0m\e[2m
-    (CWE-78)\e[0m  \e[2mline 18:3\e[0m\r\n    \e[90m█\e[0m   \e[2mchildProcess.exec(cmd);\e[0m\r\n
-    \   \e[90m█\e[0m \e[33msource →\e[0m \e[2mstory-target/routes.js\e[0m:\e[2m17\e[0m
-    \ req.query\r\n    \e[90m█\e[0m \e[31msink   →\e[0m \e[2mstory-target/routes.js\e[0m:\e[2m18\e[0m
-    \ child_process.exec()\r\n    \e[90m█\e[0m \e[1;32mFix:\e[0m Pass arguments as
-    an array to `child_process.execFile()` instead of building a shell string\r\n\r\n\r\n
-    \ \e[1mstory-target/services.js\e[0m \e[2m·\e[0m \e[2m1 issue\e[0m\r\n\r\n\r\n\r\n$
-    fg secrets story-target || true\r\n"
-- delay: 1900
-  content: "\e[3J\e[H\e[2J  \e[1mstory-target/secrets.env\e[0m \e[2m·\e[0m \e[2m4
-    issues\e[0m\r\n\r\n    \e[90m█\e[0m   \e[2;36msecret/aws-access-key-id\e[0m\e[2m
-    (CWE-798)\e[0m  \e[2mline 1:19\e[0m\r\n\r\n    \e[90m█\e[0m \e[1;100;37m CRITICAL
-    \e[0m Possible AWS secret access key detected\r\n    \e[90m█\e[0m   \e[2;36msecret/aws-secret-access-key\e[0m\e[2m
-    (CWE-798)\e[0m  \e[2mline 2:1\e[0m\r\n    \e[90m█\e[0m   \e[2m[REDACTED]\e[0m\r\n\r\n
-    \   \e[90m█\e[0m \e[1;100;37m CRITICAL \e[0m Possible Stripe live secret key detected\r\n
-    \   \e[90m█\e[0m   \e[2;36msecret/stripe-live-key\e[0m\e[2m (CWE-798)\e[0m  \e[2mline
-    4:19\e[0m\r\n    \e[90m█\e[0m   \e[2mSTRIPE_SECRET_KEY=[REDACTED]\e[0m\r\n\r\n\r\n
-    \ \e[2m──────────────────────────────────────────────────\e[0m\r\n\r\n\r\n\r\n$
+  content: "\e[3J\e[H\e[2J"
+- delay: 120
+  content: "# foxguard dark demo\r\n"
+- delay: 80
+  content: "# code scan, secrets, baseline\r\n"
+- delay: 40
+  content: "\r\n"
+- delay: 80
+  content: "$ "
+- delay: 90
+  content: 'ls -1 '
+- delay: 90
+  content: story-target
+- delay: 40
+  content: "\r\n"
+- delay: 140
+  content: "routes.js\r\nsecrets.env\r\nservices.js\r\n"
+- delay: 700
+  content: ''
+- delay: 800
+  content: "\e[3J\e[H\e[2J"
+- delay: 120
+  content: "# explain traces source -> sink\r\n"
+- delay: 80
+  content: "$ "
+- delay: 90
+  content: 'fg story-target '
+- delay: 90
+  content: "--explain || true"
+- delay: 40
+  content: "\r\n"
+- delay: 170
+  content: "    █   js/express-no-hardcoded-session-secret (CWE-798)  line 7:25\r\n\r\n
+    \   █ source → story-target/routes.js:11  req.query\r\n\r\n    █  CRITICAL  exec()
+    called with dynamic argument — risk of command injection\r\n    █   js/no-command-injection
+    (CWE-78)  line 18:3\r\n"
+- delay: 190
+  content: "    █ source → story-target/routes.js:17  req.query\r\n\r\n\r\n  story-target/services.js
+    · 1 issue\r\n\r\n\r\n$ fg secrets story-target || true\r\n"
+- delay: 900
+  content: ''
+- delay: 900
+  content: "\e[3J\e[H\e[2J"
+- delay: 120
+  content: "# secrets are redacted\r\n"
+- delay: 80
+  content: "$ "
+- delay: 90
+  content: 'fg secrets '
+- delay: 90
+  content: story-target || true
+- delay: 40
+  content: "\r\n"
+- delay: 170
+  content: "    █   secret/aws-access-key-id (CWE-798)  line 1:19\r\n\r\n\r\n    █
+    \  secret/aws-secret-access-key (CWE-798)  line 2:1\r\n\r\n\r\n    █   secret/github-token
+    (CWE-798)  line 3:14\r\n"
+- delay: 190
+  content: "\r\n    █   secret/stripe-live-key (CWE-798)  line 4:19\r\n\r\n\r\n  ──────────────────────────────────────────────────\r\n\r\n\r\n$
     fg baseline story-target --output .demo-baseline.json\r\n"
-- delay: 2000
-  content: "\e[3J\e[H\e[2J\e[3J\e[H\e[2J\e[38;5;223m# next run stays clean\e[0m\r\n$
-    fg story-target --baseline .demo-baseline.json\r\n\r  \e[1;33mfoxguard\e[0m \e[2mv0.6.3\e[0m
-    \e[2m· scanning...\e[0m \r                                                            \r\r\n
-    \ \e[32m✔\e[0m Scanned 2 files in 0.01s.\r\n\r\n\r\n\r\n"
+- delay: 900
+  content: ''
+- delay: 900
+  content: "\e[3J\e[H\e[2J"
+- delay: 120
+  content: "# baseline existing findings\r\n"
+- delay: 80
+  content: "$ "
+- delay: 90
+  content: 'fg baseline story-target '
+- delay: 90
+  content: "--output .demo-baseline.json"
+- delay: 40
+  content: "\r\n"
+- delay: 170
+  content: "\r  foxguard v0.6.3 · scanning... \r                                                            \r\r\n"
+- delay: 700
+  content: ''
+- delay: 900
+  content: "\e[3J\e[H\e[2J"
+- delay: 120
+  content: "# next run stays clean\r\n"
+- delay: 80
+  content: "$ "
+- delay: 90
+  content: 'fg story-target '
+- delay: 90
+  content: "--baseline .demo-baseline.json"
+- delay: 40
+  content: "\r\n"
+- delay: 180
+  content: "\r\n"
+- delay: 1000
+  content: ''
