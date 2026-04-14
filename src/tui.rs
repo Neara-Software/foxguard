@@ -111,7 +111,7 @@ struct TuiApp {
     launch_mode: LaunchMode,
     launch_diff_target: String,
     scanning: bool,
-    spinner_index: usize,
+    loading_tick: usize,
     search_mode: bool,
     search_query: String,
     min_severity: Option<Severity>,
@@ -142,7 +142,7 @@ impl TuiApp {
             result: None,
             error: None,
             scanning: false,
-            spinner_index: 0,
+            loading_tick: 0,
             search_mode: false,
             search_query: String::new(),
             min_severity: None,
@@ -530,7 +530,7 @@ impl TuiApp {
     }
 
     fn advance_spinner(&mut self) {
-        self.spinner_index = (self.spinner_index + 1) % SPINNER_FRAMES.len();
+        self.loading_tick = (self.loading_tick + 1) % LOADING_SHIMMER_CYCLE;
     }
 
     fn filtered_indices(&self) -> Vec<usize> {
@@ -631,7 +631,6 @@ impl TuiApp {
     }
 
     fn draw_loading(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let spinner = SPINNER_FRAMES[self.spinner_index];
         let elapsed = self.scan_started_at.elapsed().as_secs_f32();
         let loading_area = centered_rect(62, 44, area);
         let block = panel_block(Some("Scanning"), PANEL_BG);
@@ -653,18 +652,12 @@ impl TuiApp {
         let (headline, subline) = loading_copy(self);
         frame.render_widget(
             Paragraph::new(Text::from(vec![
-                Line::from(vec![
-                    Span::styled(
-                        format!("{} ", spinner),
-                        Style::default().fg(TITLE_BG).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        headline,
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]),
+                Line::from(Span::styled(
+                    headline,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )),
                 Line::from(Span::styled(
                     subline,
                     Style::default().fg(Color::Rgb(158, 140, 112)),
@@ -683,8 +676,8 @@ impl TuiApp {
             frame.render_widget(
                 Paragraph::new(Line::from(loading_shimmer_line(
                     label,
-                    LOADING_BAR_WIDTHS[index],
-                    self.spinner_index + (index * 3),
+                    LOADING_SKELETON_WIDTH,
+                    self.loading_tick,
                 )))
                 .style(Style::default().bg(PANEL_BG)),
                 layout[2 + index],
@@ -2124,7 +2117,7 @@ mod tests {
     #[test]
     fn loading_shimmer_line_respects_requested_width() {
         let spans = loading_shimmer_line("walking files", 12, 4);
-        assert_eq!(spans.len(), 13);
+        assert_eq!(spans.len(), 14);
     }
 
     #[test]
@@ -3226,22 +3219,41 @@ fn loading_shimmer_line(label: &str, width: usize, tick: usize) -> Vec<Span<'sta
         format!("{label:<22}"),
         Style::default().fg(Color::Rgb(145, 126, 99)),
     )];
-    let cycle = width + LOADING_SHIMMER_PADDING;
+    spans.push(Span::raw("  "));
+
+    let cycle = width + LOADING_SHIMMER_GAP * 2;
     let highlight = tick % cycle;
 
     for index in 0..width {
-        let distance = index.abs_diff(highlight);
-        let bg = if distance <= 1 {
-            LOADING_SHIMMER_HIGHLIGHT
-        } else if distance <= 3 {
-            LOADING_SHIMMER_MID
-        } else {
-            LOADING_SHIMMER_BASE
-        };
-        spans.push(Span::styled(" ", Style::default().bg(bg)));
+        let distance = (index + LOADING_SHIMMER_GAP).abs_diff(highlight) as f32;
+        let intensity = shimmer_intensity(distance, LOADING_SHIMMER_BAND);
+        spans.push(Span::styled(".", loading_shimmer_style(intensity)));
     }
 
     spans
+}
+
+fn shimmer_intensity(distance: f32, band_half_width: f32) -> f32 {
+    if distance > band_half_width {
+        return 0.0;
+    }
+
+    let angle = std::f32::consts::PI * (distance / band_half_width);
+    0.5 * (1.0 + angle.cos())
+}
+
+fn loading_shimmer_style(intensity: f32) -> Style {
+    if intensity >= 0.82 {
+        Style::default()
+            .fg(LOADING_SHIMMER_HIGHLIGHT)
+            .add_modifier(Modifier::BOLD)
+    } else if intensity >= 0.56 {
+        Style::default().fg(LOADING_SHIMMER_MID)
+    } else if intensity >= 0.24 {
+        Style::default().fg(LOADING_SHIMMER_LOW)
+    } else {
+        Style::default().fg(LOADING_SHIMMER_BASE)
+    }
 }
 
 fn draw_status_bar(
@@ -3357,11 +3369,12 @@ fn scan_root_path(path: &Path) -> PathBuf {
     }
 }
 
-const SPINNER_FRAMES: &[&str] = &["-", "\\", "|", "/"];
 const CONTEXT_LINE_MAX_CHARS: usize = 96;
 const CONTEXT_FOCUS_LEAD: usize = 28;
-const LOADING_BAR_WIDTHS: [usize; 3] = [26, 22, 18];
-const LOADING_SHIMMER_PADDING: usize = 8;
+const LOADING_SKELETON_WIDTH: usize = 28;
+const LOADING_SHIMMER_GAP: usize = 8;
+const LOADING_SHIMMER_CYCLE: usize = LOADING_SKELETON_WIDTH + LOADING_SHIMMER_GAP * 2;
+const LOADING_SHIMMER_BAND: f32 = 7.0;
 const APP_BG: Color = Color::Rgb(20, 17, 14);
 const HEADER_BG: Color = Color::Rgb(44, 37, 28);
 const PANEL_BG: Color = Color::Rgb(27, 23, 18);
@@ -3374,6 +3387,7 @@ const LOGO_PRIMARY: Color = Color::Rgb(221, 191, 122);
 const LOGO_SECONDARY: Color = Color::Rgb(181, 136, 88);
 const LAUNCH_CARD_BG: Color = Color::Rgb(34, 28, 21);
 const LAUNCH_SELECTED_BG: Color = Color::Rgb(50, 40, 29);
-const LOADING_SHIMMER_BASE: Color = Color::Rgb(64, 52, 39);
-const LOADING_SHIMMER_MID: Color = Color::Rgb(104, 84, 57);
-const LOADING_SHIMMER_HIGHLIGHT: Color = Color::Rgb(176, 145, 95);
+const LOADING_SHIMMER_BASE: Color = Color::Rgb(82, 67, 50);
+const LOADING_SHIMMER_LOW: Color = Color::Rgb(106, 87, 64);
+const LOADING_SHIMMER_MID: Color = Color::Rgb(145, 119, 84);
+const LOADING_SHIMMER_HIGHLIGHT: Color = Color::Rgb(214, 185, 131);
