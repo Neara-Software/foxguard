@@ -362,7 +362,7 @@ impl UiApp {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),
+                Constraint::Length(4),
                 Constraint::Min(10),
                 Constraint::Length(3),
             ])
@@ -404,7 +404,7 @@ impl UiApp {
     }
 
     fn draw_header(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let mut spans = vec![
+        let mut summary_spans = vec![
             Span::styled(
                 "foxguard ui",
                 Style::default()
@@ -420,10 +420,12 @@ impl UiApp {
             Span::raw(short_path(&self.request.path)),
         ];
 
+        let mut badge_spans = Vec::new();
+
         if let Some(result) = self.result.as_ref() {
             let counts = severity_counts(&result.findings);
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
+            summary_spans.push(Span::raw("  "));
+            summary_spans.push(Span::styled(
                 format!(
                     "{} issues | {} files | {:.2}s",
                     result.findings.len(),
@@ -432,29 +434,22 @@ impl UiApp {
                 ),
                 Style::default().fg(Color::Gray),
             ));
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                format!(
-                    "C:{} H:{} M:{} L:{}",
-                    counts.critical, counts.high, counts.medium, counts.low
-                ),
-                Style::default().fg(Color::Gray),
-            ));
+            badge_spans = severity_badge_spans(&counts);
 
             if let Some(summary) = result.diff_summary.as_ref() {
-                append_diff_summary(&mut spans, summary);
+                append_diff_summary(&mut summary_spans, summary);
             }
 
             if result.files_scanned == 0 {
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled(
+                summary_spans.push(Span::raw("  "));
+                summary_spans.push(Span::styled(
                     "no files found",
                     Style::default().fg(Color::Yellow),
                 ));
             }
         } else if self.scanning {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
+            summary_spans.push(Span::raw("  "));
+            summary_spans.push(Span::styled(
                 format!(
                     "elapsed {:.1}s",
                     self.scan_started_at.elapsed().as_secs_f32()
@@ -463,7 +458,12 @@ impl UiApp {
             ));
         }
 
-        let header = Paragraph::new(Line::from(spans))
+        let mut lines = vec![Line::from(summary_spans)];
+        if !badge_spans.is_empty() {
+            lines.push(Line::from(badge_spans));
+        }
+
+        let header = Paragraph::new(Text::from(lines))
             .block(Block::default().borders(Borders::ALL).title("status"));
         frame.render_widget(header, area);
     }
@@ -1145,6 +1145,60 @@ fn severity_counts(findings: &[Finding]) -> SeverityCounts {
     }
 
     counts
+}
+
+fn severity_badge_spans(counts: &SeverityCounts) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+
+    for (severity, count) in [
+        (Severity::Critical, counts.critical),
+        (Severity::High, counts.high),
+        (Severity::Medium, counts.medium),
+        (Severity::Low, counts.low),
+    ] {
+        if count == 0 {
+            continue;
+        }
+
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(severity_count_badge(severity, count));
+    }
+
+    spans
+}
+
+fn severity_count_badge(severity: Severity, count: usize) -> Span<'static> {
+    let label = match severity {
+        Severity::Critical => format!(" {} critical ", count),
+        Severity::High => format!(" {} high ", count),
+        Severity::Medium => format!(" {} medium ", count),
+        Severity::Low => format!(" {} low ", count),
+    };
+
+    Span::styled(label, severity_badge_style(severity))
+}
+
+fn severity_badge_style(severity: Severity) -> Style {
+    match severity {
+        Severity::Critical => Style::default()
+            .bg(Color::Rgb(130, 50, 180))
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+        Severity::High => Style::default()
+            .bg(Color::Red)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+        Severity::Medium => Style::default()
+            .bg(Color::Yellow)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD),
+        Severity::Low => Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    }
 }
 
 fn section_heading(label: &str, color: Color) -> Line<'static> {
