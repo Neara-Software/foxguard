@@ -13,9 +13,10 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Terminal;
 use std::io::{self, IsTerminal};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub fn run_scan_ui(args: &UiArgs) -> Result<i32, String> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
@@ -25,7 +26,7 @@ pub fn run_scan_ui(args: &UiArgs) -> Result<i32, String> {
     let mut session = TerminalSession::enter()?;
     let (tx, rx) = mpsc::channel();
     let mut app = UiApp::new(args.clone());
-    start_ui_execution(args.clone(), tx.clone());
+    start_ui_execution(app.begin_scan(), args.clone(), tx.clone());
 
     loop {
         app.handle_worker_messages(&rx);
@@ -46,7 +47,15 @@ pub fn run_scan_ui(args: &UiArgs) -> Result<i32, String> {
 
             match app.handle_key(key.code) {
                 ControlFlow::Continue => {}
-                ControlFlow::Rescan => start_ui_execution(app.request.clone(), tx.clone()),
+                ControlFlow::Rescan => {
+                    let request_id = app.begin_scan();
+                    start_ui_execution(request_id, app.request.clone(), tx.clone())
+                }
+                ControlFlow::OpenSelected => {
+                    if let Err(error) = app.open_selected_finding(&mut session) {
+                        app.push_runtime_notice(format!("open failed: {}", error));
+                    }
+                }
                 ControlFlow::Exit => break,
             }
         }
@@ -71,7 +80,13 @@ pub fn run_scan_ui(args: &UiArgs) -> Result<i32, String> {
 enum ControlFlow {
     Continue,
     Rescan,
+    OpenSelected,
     Exit,
+}
+
+struct WorkerMessage {
+    request_id: u64,
+    result: Result<UiExecution, String>,
 }
 
 struct UiApp {
@@ -86,6 +101,10 @@ struct UiApp {
     selected: usize,
     show_trace: bool,
     show_notices: bool,
+    runtime_notices: Vec<String>,
+    active_request_id: u64,
+    next_request_id: u64,
+    scan_started_at: Instant,
 }
 
 impl UiApp {
@@ -102,13 +121,34 @@ impl UiApp {
             min_severity: None,
             selected: 0,
             show_notices: true,
+            runtime_notices: Vec::new(),
+            active_request_id: 0,
+            next_request_id: 1,
+            scan_started_at: Instant::now(),
         }
     }
 
-    fn handle_worker_messages(&mut self, rx: &Receiver<Result<UiExecution, String>>) {
+    fn begin_scan(&mut self) -> u64 {
+        self.error = None;
+        self.result = None;
+        self.selected = 0;
+        self.scanning = true;
+        self.runtime_notices.clear();
+        self.scan_started_at = Instant::now();
+        let request_id = self.next_request_id;
+        self.next_request_id += 1;
+        self.active_request_id = request_id;
+        request_id
+    }
+
+    fn handle_worker_messages(&mut self, rx: &Receiver<WorkerMessage>) {
         while let Ok(message) = rx.try_recv() {
+            if message.request_id != self.active_request_id {
+                continue;
+            }
+
             self.scanning = false;
-            match message {
+            match message.result {
                 Ok(result) => {
                     self.show_trace = result.explain;
                     self.error = None;
@@ -175,13 +215,8 @@ impl UiApp {
                 self.show_notices = !self.show_notices;
                 ControlFlow::Continue
             }
-            KeyCode::Char('r') => {
-                self.error = None;
-                self.result = None;
-                self.selected = 0;
-                self.scanning = true;
-                ControlFlow::Rescan
-            }
+            KeyCode::Char('o') => ControlFlow::OpenSelected,
+            KeyCode::Char('r') => ControlFlow::Rescan,
             _ => ControlFlow::Continue,
         }
     }
@@ -304,11 +339,13 @@ impl UiApp {
 
     fn draw_loading(&self, frame: &mut ratatui::Frame, area: Rect) {
         let spinner = SPINNER_FRAMES[self.spinner_index];
+        let elapsed = self.scan_started_at.elapsed().as_secs_f32();
         let loading = Paragraph::new(format!(
-            "{} {} {}",
+            "{} {} {}\n\nelapsed: {:.1}s\nwaiting for scan results...",
             spinner,
             request_mode_label(&self.request),
-            self.request.path
+            self.request.path,
+            elapsed,
         ))
         .block(Block::default().title("foxguard ui").borders(Borders::ALL));
         frame.render_widget(loading, area);
@@ -363,6 +400,15 @@ impl UiApp {
                     Style::default().fg(Color::Yellow),
                 ));
             }
+        } else if self.scanning {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                format!(
+                    "elapsed {:.1}s",
+                    self.scan_started_at.elapsed().as_secs_f32()
+                ),
+                Style::default().fg(Color::Gray),
+            ));
         }
 
         let header = Paragraph::new(Line::from(spans))
@@ -501,7 +547,7 @@ impl UiApp {
         let mode_label = if self.search_mode { "/" } else { "" };
         let notices = self.notice_count();
         let footer = Paragraph::new(format!(
-            "mode: {}  j/k move  / search  0-4 severity  e trace  w notices({})  r rescan  q quit  filter: {}  search: {}{}",
+            "mode: {}  j/k move  / search  0-4 severity  e trace  o open  w notices({})  r rescan  q quit  filter: {}  search: {}{}",
             request_mode_label(&self.request),
             notices,
             filter,
@@ -513,28 +559,76 @@ impl UiApp {
         frame.render_widget(footer, area);
     }
 
+    fn open_selected_finding(&mut self, session: &mut TerminalSession) -> Result<(), String> {
+        let target = self
+            .selected_finding()
+            .map(|finding| OpenTarget {
+                path: resolve_finding_path(&self.request.path, &finding.file),
+                line: finding.line.max(1),
+            })
+            .ok_or_else(|| "no finding selected".to_string())?;
+
+        if !target.path.exists() {
+            return Err(format!("{} does not exist", target.path.display()));
+        }
+
+        let command_spec = open_command_spec(&target)?;
+        session.suspend()?;
+        let status = Command::new(&command_spec.program)
+            .args(&command_spec.args)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .map_err(|e| format!("failed to launch {}: {}", command_spec.program, e));
+        session.resume()?;
+
+        match status {
+            Ok(exit) if exit.success() => {
+                self.push_runtime_notice(format!(
+                    "opened {}:{}",
+                    target.path.display(),
+                    target.line
+                ));
+                Ok(())
+            }
+            Ok(exit) => Err(format!(
+                "{} exited with status {}",
+                command_spec.program, exit
+            )),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn push_runtime_notice(&mut self, notice: String) {
+        self.runtime_notices.push(notice);
+    }
+
     fn notice_count(&self) -> usize {
-        self.result
-            .as_ref()
-            .map(|result| result.notices.len())
-            .unwrap_or(0)
+        self.combined_notices().len()
     }
 
     fn notice_text(&self) -> Text<'static> {
-        let Some(result) = self.result.as_ref() else {
-            return Text::from("");
-        };
-
-        if result.notices.is_empty() {
+        let notices = self.combined_notices();
+        if notices.is_empty() {
             return Text::from("No notices.");
         }
 
-        let lines = result
-            .notices
+        let lines = notices
             .iter()
             .map(|notice| Line::from(notice.clone()))
             .collect::<Vec<_>>();
         Text::from(lines)
+    }
+
+    fn combined_notices(&self) -> Vec<String> {
+        let mut notices = self
+            .result
+            .as_ref()
+            .map(|result| result.notices.clone())
+            .unwrap_or_default();
+        notices.extend(self.runtime_notices.iter().cloned());
+        notices
     }
 }
 
@@ -547,6 +641,7 @@ struct SeverityCounts {
 
 struct TerminalSession {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    active: bool,
 }
 
 impl TerminalSession {
@@ -556,7 +651,34 @@ impl TerminalSession {
         execute!(stdout, EnterAlternateScreen).map_err(|e| e.to_string())?;
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
-        Ok(Self { terminal })
+        Ok(Self {
+            terminal,
+            active: true,
+        })
+    }
+
+    fn suspend(&mut self) -> Result<(), String> {
+        if !self.active {
+            return Ok(());
+        }
+
+        disable_raw_mode().map_err(|e| e.to_string())?;
+        execute!(self.terminal.backend_mut(), LeaveAlternateScreen).map_err(|e| e.to_string())?;
+        self.terminal.show_cursor().map_err(|e| e.to_string())?;
+        self.active = false;
+        Ok(())
+    }
+
+    fn resume(&mut self) -> Result<(), String> {
+        if self.active {
+            return Ok(());
+        }
+
+        enable_raw_mode().map_err(|e| e.to_string())?;
+        execute!(self.terminal.backend_mut(), EnterAlternateScreen).map_err(|e| e.to_string())?;
+        self.terminal.clear().map_err(|e| e.to_string())?;
+        self.active = true;
+        Ok(())
     }
 }
 
@@ -568,10 +690,196 @@ impl Drop for TerminalSession {
     }
 }
 
-fn start_ui_execution(args: UiArgs, tx: Sender<Result<UiExecution, String>>) {
+fn start_ui_execution(request_id: u64, args: UiArgs, tx: Sender<WorkerMessage>) {
     std::thread::spawn(move || {
-        let _ = tx.send(execute_ui(&args));
+        let _ = tx.send(WorkerMessage {
+            request_id,
+            result: execute_ui(&args),
+        });
     });
+}
+
+struct OpenTarget {
+    path: PathBuf,
+    line: usize,
+}
+
+struct CommandSpec {
+    program: String,
+    args: Vec<String>,
+}
+
+fn open_command_spec(target: &OpenTarget) -> Result<CommandSpec, String> {
+    open_command_spec_from_editor(
+        target,
+        std::env::var_os("EDITOR")
+            .as_ref()
+            .map(|editor| editor.to_string_lossy().into_owned()),
+    )
+}
+
+fn open_command_spec_from_editor(
+    target: &OpenTarget,
+    editor: Option<String>,
+) -> Result<CommandSpec, String> {
+    if let Some(editor) = editor {
+        let mut parts = editor
+            .split_whitespace()
+            .map(|part| part.to_string())
+            .collect::<Vec<_>>();
+        if parts.is_empty() {
+            return Err("$EDITOR is set but empty".to_string());
+        }
+
+        let program = parts.remove(0);
+        let basename = Path::new(&program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(program.as_str());
+        let mut args = parts;
+
+        match basename {
+            "code" | "code-insiders" | "cursor" | "codium" | "windsurf" => {
+                args.push("-g".to_string());
+                args.push(format!("{}:{}", target.path.display(), target.line));
+            }
+            "hx" | "helix" => {
+                args.push(format!("{}:{}", target.path.display(), target.line));
+            }
+            "vim" | "nvim" | "vi" | "nano" | "emacs" => {
+                args.push(format!("+{}", target.line));
+                args.push(target.path.display().to_string());
+            }
+            _ => {
+                args.push(target.path.display().to_string());
+            }
+        }
+
+        return Ok(CommandSpec { program, args });
+    }
+
+    if cfg!(target_os = "macos") {
+        return Ok(CommandSpec {
+            program: "open".to_string(),
+            args: vec![target.path.display().to_string()],
+        });
+    }
+
+    if cfg!(target_os = "windows") {
+        return Ok(CommandSpec {
+            program: "cmd".to_string(),
+            args: vec![
+                "/C".to_string(),
+                "start".to_string(),
+                String::new(),
+                target.path.display().to_string(),
+            ],
+        });
+    }
+
+    Ok(CommandSpec {
+        program: "xdg-open".to_string(),
+        args: vec![target.path.display().to_string()],
+    })
+}
+
+fn resolve_finding_path(scan_path: &str, finding_file: &str) -> PathBuf {
+    let finding_path = Path::new(finding_file);
+    if finding_path.is_absolute() {
+        return finding_path.to_path_buf();
+    }
+
+    let scan_root = Path::new(scan_path);
+    let scan_root_is_file = scan_root.is_file() || scan_root.extension().is_some();
+    let base = if scan_root_is_file {
+        scan_root.parent().unwrap_or_else(|| Path::new("."))
+    } else {
+        scan_root
+    };
+
+    base.join(finding_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_finding_path_joins_relative_file_under_directory_root() {
+        let resolved = resolve_finding_path("/tmp/project", "src/main.rs");
+        assert_eq!(resolved, PathBuf::from("/tmp/project/src/main.rs"));
+    }
+
+    #[test]
+    fn resolve_finding_path_uses_parent_for_file_roots() {
+        let resolved = resolve_finding_path("/tmp/project/app.py", "app.py");
+        assert_eq!(resolved, PathBuf::from("/tmp/project/app.py"));
+    }
+
+    #[test]
+    fn open_command_spec_uses_code_goto_format() {
+        let target = OpenTarget {
+            path: PathBuf::from("/tmp/project/src/main.rs"),
+            line: 27,
+        };
+
+        let command = open_command_spec_from_editor(&target, Some("code --wait".to_string()))
+            .expect("command should build");
+
+        assert_eq!(command.program, "code");
+        assert_eq!(
+            command.args,
+            vec![
+                "--wait".to_string(),
+                "-g".to_string(),
+                "/tmp/project/src/main.rs:27".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn open_command_spec_uses_vim_line_format() {
+        let target = OpenTarget {
+            path: PathBuf::from("/tmp/project/src/main.rs"),
+            line: 8,
+        };
+
+        let command = open_command_spec_from_editor(&target, Some("nvim".to_string()))
+            .expect("command should build");
+
+        assert_eq!(command.program, "nvim");
+        assert_eq!(
+            command.args,
+            vec!["+8".to_string(), "/tmp/project/src/main.rs".to_string()]
+        );
+    }
+
+    #[test]
+    fn begin_scan_resets_runtime_notices_and_updates_request_id() {
+        let mut app = UiApp::new(UiArgs {
+            path: ".".to_string(),
+            config: None,
+            severity: None,
+            rules: None,
+            no_builtins: false,
+            changed: false,
+            exclude: Vec::new(),
+            baseline: None,
+            diff: None,
+            secrets: false,
+            explain: false,
+            max_file_size: 1_048_576,
+        });
+        app.runtime_notices.push("stale notice".to_string());
+
+        let first = app.begin_scan();
+        let second = app.begin_scan();
+
+        assert_eq!(first, 1);
+        assert_eq!(second, 2);
+        assert!(app.runtime_notices.is_empty());
+        assert_eq!(app.active_request_id, 2);
+    }
 }
 
 fn append_diff_summary(spans: &mut Vec<Span<'static>>, summary: &DiffSummary) {
