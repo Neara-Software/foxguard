@@ -1,0 +1,69 @@
+---
+config:
+  command: zsh
+  cwd: "~/coding/tools/foxguard"
+  env:
+    recording: 'true'
+  cols: 92
+  rows: 18
+  frameDelay: auto
+  maxIdleTime: 180
+  quality: 90
+  repeat: 0
+  cursorStyle: block
+  fontFamily: Menlo, Monaco, monospace
+  fontSize: 14
+  lineHeight: 1.2
+  letterSpacing: 0
+  theme:
+    background: "#0b1020"
+    foreground: "#e5e7eb"
+    cursor: "#f59e0b"
+    black: "#111827"
+    red: "#f87171"
+    green: "#34d399"
+    yellow: "#fbbf24"
+    blue: "#60a5fa"
+    magenta: "#a78bfa"
+    cyan: "#22d3ee"
+    white: "#e5e7eb"
+    brightBlack: "#6b7280"
+    brightRed: "#fca5a5"
+    brightGreen: "#6ee7b7"
+    brightYellow: "#fcd34d"
+    brightBlue: "#93c5fd"
+    brightMagenta: "#c4b5fd"
+    brightCyan: "#67e8f9"
+    brightWhite: "#f9fafb"
+  watermark:
+    imagePath:
+  frameBox:
+    type: window
+    title: foxguard demo
+    style:
+      boxShadow: none
+records:
+- delay: 1
+  content: "\e[3J\e[H\e[2J$ ./target/debug/foxguard assets/terminalizer/demo-target
+    --explain\n\n"
+- delay: 450
+  content: "  \e[1massets/terminalizer/demo-target/routes.js\e[0m \e[2m·\e[0m \e[2m2
+    issues\e[0m\r\n\r\n    \e[31m█\e[0m \e[1;41;37m HIGH \e[0m Hardcoded session secret
+    — use an environment variable instead\r\n    \e[31m█\e[0m   \e[2;36mjs/express-no-hardcoded-session-secret\e[0m\e[2m
+    (CWE-798)\e[0m  \e[2mline 6:25\e[0m\r\n    \e[31m█\e[0m   \e[2mconst sessionConfig
+    = { secret: \"keyboard-cat-secret\" };\e[0m\r\n\r\n    \e[90m█\e[0m \e[1;100;37m
+    CRITICAL \e[0m req.query reaches SQL .query() call (via cross-file call to runQuery)
+    — untrusted input can inject SQL\r\n    \e[90m█\e[0m   \e[2;36mjs/taint-sql-injection\e[0m\e[2m
+    (CWE-89)\e[0m  \e[2mline 11:16\e[0m\r\n    \e[90m█\e[0m   \e[2mconst rows = services.runQuery(name);\e[0m\r\n
+    \   \e[90m█\e[0m \e[33msource →\e[0m \e[2massets/terminalizer/demo-target/routes.js\e[0m:\e[2m10\e[0m
+    \ req.query\r\n    \e[90m█\e[0m \e[31msink   →\e[0m \e[2massets/terminalizer/demo-target/routes.js\e[0m:\e[2m11\e[0m
+    \ SQL .query() call (via cross-file call to runQuery)\r\n    \e[90m█\e[0m \e[1;32mFix:\e[0m
+    Use parameterized queries: `db.query(\"SELECT * FROM users WHERE name = $1\",
+    [name])`\r\n\r\n\r\n  \e[1massets/terminalizer/demo-target/services.js\e[0m \e[2m·\e[0m
+    \e[2m1 issue\e[0m\r\n\r\n    \e[90m█\e[0m \e[1;100;37m CRITICAL \e[0m SQL query
+    built with string concatenation — use parameterized queries\r\n    \e[90m█\e[0m
+    \  \e[2;36mjs/no-sql-injection\e[0m\e[2m (CWE-89)\e[0m  \e[2mline 8:19\e[0m\r\n
+    \   \e[90m█\e[0m   \e[2mreturn db.query(\"SELECT * FROM users WHERE name = '\"
+    + name + \"'\");\e[0m\r\n\r\n\r\n  \e[2m──────────────────────────────────────────────────\e[0m\r\n\r\n
+    \ \e[1m3\e[0m \e[2missues\e[0m  \e[2m2 files · 0.02s\e[0m\r\n\r\n  \e[1;100;37m
+    2 critical \e[0m  \e[1;41;37m 1 high \e[0m\r\n\r\n"

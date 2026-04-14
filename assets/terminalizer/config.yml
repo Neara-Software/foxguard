@@ -1,0 +1,42 @@
+command: zsh
+cwd: ~/coding/tools/foxguard
+env:
+  recording: "true"
+cols: 92
+rows: 18
+frameDelay: auto
+maxIdleTime: 180
+quality: 90
+repeat: 0
+cursorStyle: block
+fontFamily: "Menlo, Monaco, monospace"
+fontSize: 14
+lineHeight: 1.2
+letterSpacing: 0
+theme:
+  background: "#0b1020"
+  foreground: "#e5e7eb"
+  cursor: "#f59e0b"
+  black: "#111827"
+  red: "#f87171"
+  green: "#34d399"
+  yellow: "#fbbf24"
+  blue: "#60a5fa"
+  magenta: "#a78bfa"
+  cyan: "#22d3ee"
+  white: "#e5e7eb"
+  brightBlack: "#6b7280"
+  brightRed: "#fca5a5"
+  brightGreen: "#6ee7b7"
+  brightYellow: "#fcd34d"
+  brightBlue: "#93c5fd"
+  brightMagenta: "#c4b5fd"
+  brightCyan: "#67e8f9"
+  brightWhite: "#f9fafb"
+watermark:
+  imagePath: null
+frameBox:
+  type: window
+  title: foxguard demo
+  style:
+    boxShadow: none
