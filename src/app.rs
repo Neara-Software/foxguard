@@ -1,6 +1,8 @@
 use crate::baseline::{load_baseline, suppress_with_baseline, write_baseline};
 use crate::cli::{DiffArgs, OutputFormat, ScanArgs, SecretsArgs, UiArgs};
-use crate::config::{apply_scan_defaults, apply_secrets_defaults, load_for_scan};
+use crate::config::{
+    apply_scan_defaults, apply_secrets_defaults, load_for_scan, suppress_with_scan_ignores,
+};
 use crate::diff::run_diff_with_warnings;
 use crate::engine::{
     scan_directory_with_notices, scan_paths_with_root_with_notices, PathExcludeMatcher, ScanResult,
@@ -88,6 +90,7 @@ pub fn scan_findings(scan: &ScanArgs) -> Result<ScanResult, String> {
 
 pub fn execute_scan(scan: &ScanArgs) -> Result<ScanExecution, String> {
     let scan = resolve_scan_args(scan)?;
+    let config = load_for_scan(Path::new(&scan.path), scan.config.as_deref())?;
     validate_root_path(&scan.path)?;
     validate_rules_path(scan.rules.as_deref())?;
 
@@ -115,6 +118,8 @@ pub fn execute_scan(scan: &ScanArgs) -> Result<ScanExecution, String> {
         let min = min_severity.to_severity();
         findings.retain(|f| f.severity >= min);
     }
+
+    findings = suppress_with_scan_ignores(findings, config.as_ref());
 
     if let Some(ref path) = scan.write_baseline {
         write_baseline(Path::new(path), &findings)?;
@@ -200,6 +205,7 @@ pub fn execute_secrets(args: &SecretsArgs) -> Result<SecretsExecution, String> {
 
 pub fn execute_diff(args: &DiffArgs) -> Result<DiffExecution, String> {
     validate_root_path(&args.path)?;
+    let config = load_for_scan(Path::new(&args.path), None)?;
     let registry = build_registry(args.no_builtins, args.rules.as_deref())?;
     let ((scan_result, mut diff_result), mut notices) =
         run_diff_with_warnings(&args.path, &args.target, &registry, args.max_file_size)?;
@@ -208,6 +214,9 @@ pub fn execute_diff(args: &DiffArgs) -> Result<DiffExecution, String> {
         let min = min_severity.to_severity();
         diff_result.new_findings.retain(|f| f.severity >= min);
     }
+
+    diff_result.new_findings =
+        suppress_with_scan_ignores(diff_result.new_findings, config.as_ref());
 
     notices.push(format!(
         "foxguard diff vs {}: {} new issue{} ({} total, {} existing)",

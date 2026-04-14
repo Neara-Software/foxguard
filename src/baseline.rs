@@ -25,6 +25,20 @@ impl BaselineFile {
             entries,
         }
     }
+
+    pub fn add_finding(&mut self, finding: &Finding) -> bool {
+        let entry = BaselineEntry::from_finding(finding);
+        if self
+            .entries
+            .iter()
+            .any(|existing| existing.fingerprint == entry.fingerprint)
+        {
+            return false;
+        }
+
+        self.entries.push(entry);
+        true
+    }
 }
 
 impl BaselineEntry {
@@ -87,6 +101,31 @@ pub fn write_baseline(path: &Path, findings: &[Finding]) -> Result<(), String> {
         .map_err(|e| format!("Failed to write baseline {}: {}", path.display(), e))
 }
 
+pub fn append_finding_to_baseline(path: &Path, finding: &Finding) -> Result<bool, String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create baseline directory {}: {}",
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    let mut baseline = load_baseline(path)?.unwrap_or(BaselineFile {
+        version: 1,
+        entries: Vec::new(),
+    });
+    let added = baseline.add_finding(finding);
+
+    let content = serde_json::to_string_pretty(&baseline)
+        .map_err(|e| format!("Failed to serialize baseline: {}", e))?;
+    std::fs::write(path, content)
+        .map_err(|e| format!("Failed to write baseline {}: {}", path.display(), e))?;
+
+    Ok(added)
+}
+
 pub fn suppress_with_baseline(
     findings: Vec<Finding>,
     baseline: Option<&BaselineFile>,
@@ -105,4 +144,48 @@ pub fn suppress_with_baseline(
                 .any(|entry| entry.fingerprint == fingerprint)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Severity;
+    use tempfile::TempDir;
+
+    fn finding() -> Finding {
+        Finding {
+            rule_id: "py/no-command-injection".to_string(),
+            severity: Severity::High,
+            cwe: Some("CWE-78".to_string()),
+            description: "tainted input reaches command sink".to_string(),
+            file: "src/app.py".to_string(),
+            line: 10,
+            column: 5,
+            end_line: 10,
+            end_column: 20,
+            snippet: "os.system(cmd)".to_string(),
+            source_line: None,
+            source_description: None,
+            sink_line: None,
+            sink_description: None,
+            fix_suggestion: None,
+        }
+    }
+
+    #[test]
+    fn append_finding_to_baseline_adds_new_entry_once() {
+        let temp = TempDir::new().expect("failed to create temp dir");
+        let path = temp.path().join(".foxguard/baseline.json");
+        let finding = finding();
+
+        assert!(append_finding_to_baseline(&path, &finding).expect("append should succeed"));
+        assert!(
+            !append_finding_to_baseline(&path, &finding).expect("duplicate append should succeed")
+        );
+
+        let baseline = load_baseline(&path)
+            .expect("load should succeed")
+            .expect("baseline should exist");
+        assert_eq!(baseline.entries.len(), 1);
+    }
 }

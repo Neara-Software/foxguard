@@ -1,5 +1,8 @@
 use crate::cli::{ScanArgs, SecretsArgs, SeverityFilter};
+use crate::Finding;
 use serde::Deserialize;
+use serde_yaml::{Mapping, Sequence, Value};
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 const CONFIG_NAMES: [&str; 4] = [
@@ -21,6 +24,7 @@ pub struct ScanConfig {
     pub no_builtins: bool,
     pub severity: Option<SeverityFilter>,
     pub baseline: Option<String>,
+    pub ignore_rules: Vec<ScanIgnoreRule>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -29,6 +33,12 @@ pub struct SecretsConfig {
     pub exclude_paths: Vec<String>,
     pub exclude_path_file: Option<String>,
     pub ignored_rules: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScanIgnoreRule {
+    pub path: String,
+    pub rules: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -45,6 +55,15 @@ struct RawScanConfig {
     no_builtins: Option<bool>,
     severity: Option<SeverityFilter>,
     baseline: Option<String>,
+    #[serde(default)]
+    ignore_rules: Vec<RawScanIgnoreRule>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawScanIgnoreRule {
+    path: String,
+    #[serde(default)]
+    rules: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -133,6 +152,22 @@ impl FoxguardConfig {
             .baseline
             .map(|path| resolve_value_path(config_dir, allowed_root, "scan.baseline", &path))
             .transpose()?;
+        let scan_ignore_rules = raw
+            .scan
+            .ignore_rules
+            .into_iter()
+            .map(|entry| {
+                Ok(ScanIgnoreRule {
+                    path: resolve_value_path(
+                        config_dir,
+                        allowed_root,
+                        "scan.ignore_rules.path",
+                        &entry.path,
+                    )?,
+                    rules: entry.rules,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let secrets_baseline = raw
             .secrets
             .baseline
@@ -160,6 +195,7 @@ impl FoxguardConfig {
                 no_builtins: raw.scan.no_builtins.unwrap_or(false),
                 severity: raw.scan.severity,
                 baseline: scan_baseline,
+                ignore_rules: scan_ignore_rules,
             },
             secrets: SecretsConfig {
                 baseline: secrets_baseline,
@@ -169,6 +205,170 @@ impl FoxguardConfig {
             },
         })
     }
+}
+
+pub fn suppress_with_scan_ignores(
+    findings: Vec<Finding>,
+    config: Option<&FoxguardConfig>,
+) -> Vec<Finding> {
+    let Some(config) = config else {
+        return findings;
+    };
+    if config.scan.ignore_rules.is_empty() {
+        return findings;
+    }
+
+    findings
+        .into_iter()
+        .filter(|finding| {
+            !config.scan.ignore_rules.iter().any(|entry| {
+                entry.path == finding.file
+                    && entry
+                        .rules
+                        .iter()
+                        .any(|rule_id| rule_id == &finding.rule_id)
+            })
+        })
+        .collect()
+}
+
+pub fn editable_config_path(
+    scan_path: &Path,
+    explicit_path: Option<&str>,
+) -> Result<PathBuf, String> {
+    if let Some(path) = explicit_path {
+        return Ok(PathBuf::from(path));
+    }
+
+    if let Some(path) = resolve_config_path(scan_path, explicit_path)? {
+        return Ok(path);
+    }
+
+    Ok(resolve_scan_root(scan_path).join(".foxguard.yml"))
+}
+
+pub fn add_scan_ignore_rule(
+    scan_path: &Path,
+    explicit_config: Option<&str>,
+    finding: &Finding,
+) -> Result<(PathBuf, bool), String> {
+    let config_path = editable_config_path(scan_path, explicit_config)?;
+    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let finding_path = Path::new(&finding.file);
+    let stored_path = match finding_path.strip_prefix(config_dir) {
+        Ok(relative) => relative.display().to_string(),
+        Err(_) => finding.file.clone(),
+    };
+
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "failed to create config directory '{}': {}",
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    let mut root = if config_path.exists() {
+        let content = fs::read_to_string(&config_path)
+            .map_err(|e| format!("failed to read config '{}': {}", config_path.display(), e))?;
+        if content.trim().is_empty() {
+            Value::Mapping(Mapping::new())
+        } else {
+            serde_yaml::from_str(&content)
+                .map_err(|e| format!("failed to parse config '{}': {}", config_path.display(), e))?
+        }
+    } else {
+        Value::Mapping(Mapping::new())
+    };
+
+    let mapping = root
+        .as_mapping_mut()
+        .ok_or_else(|| format!("config '{}' must be a YAML mapping", config_path.display()))?;
+    let scan = mapping
+        .entry(Value::String("scan".to_string()))
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+    let scan_mapping = scan.as_mapping_mut().ok_or_else(|| {
+        format!(
+            "config '{}' field 'scan' must be a mapping",
+            config_path.display()
+        )
+    })?;
+    let ignore_rules = scan_mapping
+        .entry(Value::String("ignore_rules".to_string()))
+        .or_insert_with(|| Value::Sequence(Sequence::new()));
+    let sequence = ignore_rules.as_sequence_mut().ok_or_else(|| {
+        format!(
+            "config '{}' field 'scan.ignore_rules' must be a list",
+            config_path.display()
+        )
+    })?;
+
+    let mut added = false;
+    let mut updated_existing = false;
+    for item in sequence.iter_mut() {
+        let Some(item_mapping) = item.as_mapping_mut() else {
+            continue;
+        };
+        let path_matches = item_mapping
+            .get(Value::String("path".to_string()))
+            .and_then(Value::as_str)
+            .map(|value| value == stored_path)
+            .unwrap_or(false);
+        if !path_matches {
+            continue;
+        }
+
+        let rules_value = item_mapping
+            .entry(Value::String("rules".to_string()))
+            .or_insert_with(|| Value::Sequence(Sequence::new()));
+        let rules = rules_value.as_sequence_mut().ok_or_else(|| {
+            format!(
+                "config '{}' field 'scan.ignore_rules.rules' must be a list",
+                config_path.display()
+            )
+        })?;
+
+        if rules
+            .iter()
+            .any(|value| value.as_str() == Some(finding.rule_id.as_str()))
+        {
+            updated_existing = true;
+            break;
+        }
+
+        rules.push(Value::String(finding.rule_id.clone()));
+        added = true;
+        updated_existing = true;
+        break;
+    }
+
+    if !updated_existing {
+        let mut item = Mapping::new();
+        item.insert(
+            Value::String("path".to_string()),
+            Value::String(stored_path),
+        );
+        item.insert(
+            Value::String("rules".to_string()),
+            Value::Sequence(vec![Value::String(finding.rule_id.clone())]),
+        );
+        sequence.push(Value::Mapping(item));
+        added = true;
+    }
+
+    let content = serde_yaml::to_string(&root).map_err(|e| {
+        format!(
+            "failed to serialize config '{}': {}",
+            config_path.display(),
+            e
+        )
+    })?;
+    fs::write(&config_path, content)
+        .map_err(|e| format!("failed to write config '{}': {}", config_path.display(), e))?;
+
+    Ok((config_path, added))
 }
 
 fn resolve_config_path(
@@ -397,5 +597,65 @@ mod tests {
             loaded.secrets.exclude_paths,
             vec![expected.display().to_string()]
         );
+    }
+
+    #[test]
+    fn load_for_scan_parses_scan_ignore_rules() {
+        let repo = TempDir::new().expect("failed to create temp dir");
+        write_config(
+            repo.path(),
+            ".foxguard.yml",
+            "scan:\n  ignore_rules:\n    - path: src/app.py\n      rules:\n        - py/no-command-injection\n",
+        );
+
+        let loaded = load_for_scan(repo.path(), None)
+            .expect("failed to load config")
+            .expect("expected config");
+
+        assert_eq!(loaded.scan.ignore_rules.len(), 1);
+        assert_eq!(
+            loaded.scan.ignore_rules[0].rules,
+            vec!["py/no-command-injection"]
+        );
+    }
+
+    #[test]
+    fn add_scan_ignore_rule_creates_or_updates_config() {
+        let repo = TempDir::new().expect("failed to create temp dir");
+        let finding = Finding {
+            rule_id: "py/no-command-injection".to_string(),
+            severity: crate::Severity::High,
+            cwe: None,
+            description: "tainted input reaches command sink".to_string(),
+            file: repo.path().join("src/app.py").display().to_string(),
+            line: 10,
+            column: 5,
+            end_line: 10,
+            end_column: 20,
+            snippet: "os.system(cmd)".to_string(),
+            source_line: None,
+            source_description: None,
+            sink_line: None,
+            sink_description: None,
+            fix_suggestion: None,
+        };
+
+        let (config_path, added) =
+            add_scan_ignore_rule(repo.path(), None, &finding).expect("should write ignore rule");
+        assert!(added);
+        assert!(config_path.ends_with(".foxguard.yml"));
+
+        let loaded = load_for_scan(repo.path(), None)
+            .expect("failed to load config")
+            .expect("expected config");
+        assert_eq!(loaded.scan.ignore_rules.len(), 1);
+        assert_eq!(
+            loaded.scan.ignore_rules[0].rules,
+            vec!["py/no-command-injection"]
+        );
+
+        let (_, added_again) =
+            add_scan_ignore_rule(repo.path(), None, &finding).expect("should preserve duplicate");
+        assert!(!added_again);
     }
 }

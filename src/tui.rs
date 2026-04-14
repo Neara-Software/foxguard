@@ -1,5 +1,7 @@
 use crate::app::{execute_ui, DiffSummary, UiExecution, UiMode};
+use crate::baseline::append_finding_to_baseline;
 use crate::cli::UiArgs;
+use crate::config::add_scan_ignore_rule;
 use crate::{Finding, Severity};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::execute;
@@ -59,6 +61,14 @@ pub fn run_scan_ui(args: &UiArgs) -> Result<i32, String> {
                         app.push_runtime_notice(format!("open failed: {}", error));
                     }
                 }
+                ControlFlow::ApplyAction(action) => match app.apply_action(action) {
+                    Ok(true) => {
+                        let request_id = app.begin_scan();
+                        start_ui_execution(request_id, app.request.clone(), tx.clone())
+                    }
+                    Ok(false) => {}
+                    Err(error) => app.push_runtime_notice(format!("action failed: {}", error)),
+                },
                 ControlFlow::Exit => break,
             }
         }
@@ -84,6 +94,7 @@ enum ControlFlow {
     Continue,
     Rescan,
     OpenSelected,
+    ApplyAction(TriageAction),
     Exit,
 }
 
@@ -113,6 +124,7 @@ struct UiApp {
     notices_scroll: u16,
     source_context_cache: Option<SourceContextCache>,
     open_focus: OpenFocus,
+    action_menu: Option<ActionMenu>,
 }
 
 impl UiApp {
@@ -138,6 +150,7 @@ impl UiApp {
             notices_scroll: 0,
             source_context_cache: None,
             open_focus: OpenFocus::Finding,
+            action_menu: None,
         }
     }
 
@@ -153,6 +166,7 @@ impl UiApp {
         self.notices_scroll = 0;
         self.source_context_cache = None;
         self.open_focus = OpenFocus::Finding;
+        self.action_menu = None;
         let request_id = self.next_request_id;
         self.next_request_id += 1;
         self.active_request_id = request_id;
@@ -197,6 +211,10 @@ impl UiApp {
                 }
                 _ => ControlFlow::Continue,
             };
+        }
+
+        if self.action_menu.is_some() {
+            return self.handle_action_menu_key(key.code);
         }
 
         if self.search_mode {
@@ -251,6 +269,7 @@ impl UiApp {
                 self.show_notices = !self.show_notices;
                 ControlFlow::Continue
             }
+            KeyCode::Char('i') => self.open_action_menu(),
             KeyCode::PageDown => {
                 self.scroll_detail(8);
                 ControlFlow::Continue
@@ -294,6 +313,56 @@ impl UiApp {
                 self.clamp_selection();
             }
             _ => {}
+        }
+
+        ControlFlow::Continue
+    }
+
+    fn handle_action_menu_key(&mut self, key: KeyCode) -> ControlFlow {
+        let Some(menu) = self.action_menu.as_mut() else {
+            return ControlFlow::Continue;
+        };
+
+        match key {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.action_menu = None;
+                ControlFlow::Continue
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                menu.selected = (menu.selected + 1).min(menu.actions.len().saturating_sub(1));
+                ControlFlow::Continue
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                menu.selected = menu.selected.saturating_sub(1);
+                ControlFlow::Continue
+            }
+            KeyCode::Enter => {
+                let action = menu.actions[menu.selected];
+                self.action_menu = None;
+                ControlFlow::ApplyAction(action)
+            }
+            _ => ControlFlow::Continue,
+        }
+    }
+
+    fn open_action_menu(&mut self) -> ControlFlow {
+        if self.selected_finding().is_none() {
+            self.push_runtime_notice("no finding selected".to_string());
+            return ControlFlow::Continue;
+        }
+
+        match self.result.as_ref().map(|result| &result.mode) {
+            Some(UiMode::Scan) => {
+                self.action_menu = Some(ActionMenu {
+                    actions: vec![TriageAction::AddToBaseline, TriageAction::IgnoreRuleInFile],
+                    selected: 0,
+                });
+            }
+            _ => {
+                self.push_runtime_notice(
+                    "triage actions are available in scan mode for now".to_string(),
+                );
+            }
         }
 
         ControlFlow::Continue
@@ -445,6 +514,10 @@ impl UiApp {
 
         if self.show_help {
             self.draw_help(frame);
+        }
+
+        if self.action_menu.is_some() {
+            self.draw_action_menu(frame);
         }
     }
 
@@ -738,6 +811,8 @@ impl UiApp {
             Span::raw(" move  "),
             footer_key_span("/"),
             Span::raw(" search  "),
+            footer_key_span("i"),
+            Span::raw(" triage  "),
             footer_key_span("e"),
             Span::raw(" flow  "),
             footer_key_span("w"),
@@ -796,6 +871,7 @@ impl UiApp {
             Line::from("/              search findings"),
             Line::from("0-4            set minimum severity filter"),
             Line::from("Tab            cycle open target between finding/source/sink"),
+            Line::from("i              open triage actions for the selected finding"),
             Line::from("e              toggle dataflow details (source/sink traces)"),
             Line::from("Enter          open the current target in your editor"),
             Line::from("w              show or hide notices panel"),
@@ -815,6 +891,66 @@ impl UiApp {
         )
         .wrap(Wrap { trim: false });
         frame.render_widget(help, area);
+    }
+
+    fn draw_action_menu(&self, frame: &mut ratatui::Frame) {
+        let Some(menu) = self.action_menu.as_ref() else {
+            return;
+        };
+
+        let area = centered_rect(44, 26, frame.area());
+        let summary = self
+            .selected_finding()
+            .map(|finding| format!("{}:{}", display_path(&finding.file), finding.line))
+            .unwrap_or_else(|| "no finding selected".to_string());
+        let items = menu
+            .actions
+            .iter()
+            .map(|action| ListItem::new(Line::from(action.label())))
+            .collect::<Vec<_>>();
+        let list = List::new(items)
+            .block(panel_block(Some("Triage"), PANEL_BG))
+            .highlight_style(
+                Style::default()
+                    .fg(Color::White)
+                    .bg(DETAIL_BG)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("> ");
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(3),
+                Constraint::Length(1),
+            ])
+            .split(area);
+
+        frame.render_widget(Clear, area);
+        frame.render_widget(Block::default().style(Style::default().bg(PANEL_BG)), area);
+        frame.render_widget(
+            Paragraph::new(Text::from(vec![
+                Line::from(Span::styled(
+                    "triage actions",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(summary, Style::default().fg(Color::Gray))),
+            ]))
+            .style(Style::default().bg(PANEL_BG)),
+            layout[0],
+        );
+
+        let mut state = ListState::default();
+        state.select(Some(menu.selected));
+        frame.render_stateful_widget(list, layout[1], &mut state);
+        frame.render_widget(
+            Paragraph::new("Enter apply  Esc cancel")
+                .style(Style::default().bg(PANEL_BG).fg(Color::Gray))
+                .alignment(Alignment::Left),
+            layout[2],
+        );
     }
 
     fn open_selected_finding(&mut self, session: &mut TerminalSession) -> Result<(), String> {
@@ -908,6 +1044,61 @@ impl UiApp {
         }
     }
 
+    fn apply_action(&mut self, action: TriageAction) -> Result<bool, String> {
+        let finding = self
+            .selected_finding()
+            .cloned()
+            .ok_or_else(|| "no finding selected".to_string())?;
+
+        match action {
+            TriageAction::AddToBaseline => {
+                let baseline_path = self.baseline_path_for_actions();
+                let added = append_finding_to_baseline(&baseline_path, &finding)?;
+                if added {
+                    self.push_runtime_notice(format!(
+                        "added finding to baseline {}",
+                        baseline_path.display()
+                    ));
+                } else {
+                    self.push_runtime_notice(format!(
+                        "finding already present in baseline {}",
+                        baseline_path.display()
+                    ));
+                }
+                Ok(true)
+            }
+            TriageAction::IgnoreRuleInFile => {
+                let (config_path, added) = add_scan_ignore_rule(
+                    Path::new(&self.request.path),
+                    self.request.config.as_deref(),
+                    &finding,
+                )?;
+                if added {
+                    self.push_runtime_notice(format!(
+                        "ignored {} in {} via {}",
+                        finding.rule_id,
+                        display_path(&finding.file),
+                        config_path.display()
+                    ));
+                } else {
+                    self.push_runtime_notice(format!(
+                        "ignore already exists in {}",
+                        config_path.display()
+                    ));
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    fn baseline_path_for_actions(&self) -> PathBuf {
+        if let Some(path) = self.request.baseline.as_ref() {
+            return PathBuf::from(path);
+        }
+
+        scan_root_path(Path::new(&self.request.path)).join(".foxguard/baseline.json")
+    }
+
     fn push_runtime_notice(&mut self, notice: String) {
         self.runtime_notices.push(notice);
     }
@@ -960,6 +1151,26 @@ enum OpenFocus {
     Finding,
     Source,
     Sink,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TriageAction {
+    AddToBaseline,
+    IgnoreRuleInFile,
+}
+
+impl TriageAction {
+    fn label(self) -> &'static str {
+        match self {
+            TriageAction::AddToBaseline => "Add to baseline",
+            TriageAction::IgnoreRuleInFile => "Ignore this rule in this file",
+        }
+    }
+}
+
+struct ActionMenu {
+    actions: Vec<TriageAction>,
+    selected: usize,
 }
 
 fn available_open_focuses(finding: &Finding) -> Vec<OpenFocus> {
@@ -1530,6 +1741,83 @@ mod tests {
 
         let flow = app.handle_key(KeyEvent::from(KeyCode::Tab));
         assert!(matches!(flow, ControlFlow::Continue));
+    }
+
+    #[test]
+    fn open_action_menu_is_available_in_scan_mode() {
+        let mut app = UiApp::new(UiArgs {
+            path: ".".to_string(),
+            config: None,
+            severity: None,
+            rules: None,
+            no_builtins: false,
+            changed: false,
+            exclude: Vec::new(),
+            baseline: None,
+            diff: None,
+            secrets: false,
+            explain: false,
+            max_file_size: 1_048_576,
+        });
+        app.result = Some(UiExecution {
+            mode: UiMode::Scan,
+            path: ".".to_string(),
+            findings: vec![Finding {
+                rule_id: "js/no-command-injection".to_string(),
+                severity: Severity::High,
+                file: "src/main.js".to_string(),
+                line: 42,
+                column: 7,
+                end_line: 42,
+                end_column: 18,
+                description: "untrusted input reaches exec".to_string(),
+                snippet: "exec(cmd)".to_string(),
+                cwe: None,
+                source_line: None,
+                source_description: None,
+                sink_line: None,
+                sink_description: None,
+                fix_suggestion: None,
+            }],
+            files_scanned: 1,
+            duration: Duration::from_secs(1),
+            explain: false,
+            diff_summary: None,
+            notices: Vec::new(),
+        });
+
+        let flow = app.handle_key(KeyEvent::from(KeyCode::Char('i')));
+        assert!(matches!(flow, ControlFlow::Continue));
+        assert!(app.action_menu.is_some());
+    }
+
+    #[test]
+    fn handle_action_menu_enter_applies_selected_action() {
+        let mut app = UiApp::new(UiArgs {
+            path: ".".to_string(),
+            config: None,
+            severity: None,
+            rules: None,
+            no_builtins: false,
+            changed: false,
+            exclude: Vec::new(),
+            baseline: None,
+            diff: None,
+            secrets: false,
+            explain: false,
+            max_file_size: 1_048_576,
+        });
+        app.action_menu = Some(ActionMenu {
+            actions: vec![TriageAction::AddToBaseline, TriageAction::IgnoreRuleInFile],
+            selected: 1,
+        });
+
+        let flow = app.handle_action_menu_key(KeyCode::Enter);
+        assert!(matches!(
+            flow,
+            ControlFlow::ApplyAction(TriageAction::IgnoreRuleInFile)
+        ));
+        assert!(app.action_menu.is_none());
     }
 
     #[test]
@@ -2158,6 +2446,16 @@ fn display_path(path: &str) -> String {
     }
 
     path.to_string()
+}
+
+fn scan_root_path(path: &Path) -> PathBuf {
+    if path.is_file() {
+        path.parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
+    } else {
+        path.to_path_buf()
+    }
 }
 
 const SPINNER_FRAMES: &[&str] = &["-", "\\", "|", "/"];
