@@ -31,7 +31,6 @@ pub fn run_scan_ui(args: &UiArgs) -> Result<i32, String> {
     let mut session = TerminalSession::enter()?;
     let (tx, rx) = mpsc::channel();
     let mut app = UiApp::new(args.clone());
-    start_ui_execution(app.begin_scan(), args.clone(), tx.clone());
 
     loop {
         app.handle_worker_messages(&rx);
@@ -107,13 +106,15 @@ struct UiApp {
     request: UiArgs,
     result: Option<UiExecution>,
     error: Option<String>,
+    show_launch: bool,
+    launch_mode: LaunchMode,
+    launch_diff_target: String,
     scanning: bool,
     spinner_index: usize,
     search_mode: bool,
     search_query: String,
     min_severity: Option<Severity>,
     selected: usize,
-    show_trace: bool,
     show_notices: bool,
     show_help: bool,
     runtime_notices: Vec<String>,
@@ -129,12 +130,16 @@ struct UiApp {
 
 impl UiApp {
     fn new(request: UiArgs) -> Self {
+        let mut request = request;
+        request.explain = true;
         Self {
-            show_trace: request.explain,
+            show_launch: true,
+            launch_mode: LaunchMode::from_args(&request),
+            launch_diff_target: request.diff.clone().unwrap_or_else(|| "main".to_string()),
             request,
             result: None,
             error: None,
-            scanning: true,
+            scanning: false,
             spinner_index: 0,
             search_mode: false,
             search_query: String::new(),
@@ -155,10 +160,12 @@ impl UiApp {
     }
 
     fn begin_scan(&mut self) -> u64 {
+        self.apply_launch_selection();
         self.error = None;
         self.result = None;
         self.selected = 0;
         self.scanning = true;
+        self.show_launch = false;
         self.show_help = false;
         self.runtime_notices.clear();
         self.scan_started_at = Instant::now();
@@ -173,6 +180,23 @@ impl UiApp {
         request_id
     }
 
+    fn apply_launch_selection(&mut self) {
+        match self.launch_mode {
+            LaunchMode::Scan => {
+                self.request.secrets = false;
+                self.request.diff = None;
+            }
+            LaunchMode::Diff => {
+                self.request.secrets = false;
+                self.request.diff = Some(self.launch_diff_target.trim().to_string());
+            }
+            LaunchMode::Secrets => {
+                self.request.secrets = true;
+                self.request.diff = None;
+            }
+        }
+    }
+
     fn handle_worker_messages(&mut self, rx: &Receiver<WorkerMessage>) {
         while let Ok(message) = rx.try_recv() {
             if message.request_id != self.active_request_id {
@@ -182,7 +206,6 @@ impl UiApp {
             self.scanning = false;
             match message.result {
                 Ok(result) => {
-                    self.show_trace = result.explain;
                     self.error = None;
                     self.result = Some(result);
                     self.source_context_cache = None;
@@ -211,6 +234,10 @@ impl UiApp {
                 }
                 _ => ControlFlow::Continue,
             };
+        }
+
+        if self.show_launch {
+            return self.handle_launch_key(key.code);
         }
 
         if self.action_menu.is_some() {
@@ -258,11 +285,6 @@ impl UiApp {
             KeyCode::Char('4') => {
                 self.min_severity = Some(Severity::Critical);
                 self.clamp_selection();
-                ControlFlow::Continue
-            }
-            KeyCode::Char('e') => {
-                self.show_trace = !self.show_trace;
-                self.detail_scroll = 0;
                 ControlFlow::Continue
             }
             KeyCode::Char('w') => {
@@ -316,6 +338,48 @@ impl UiApp {
         }
 
         ControlFlow::Continue
+    }
+
+    fn handle_launch_key(&mut self, key: KeyCode) -> ControlFlow {
+        match key {
+            KeyCode::Char('q') | KeyCode::Esc => ControlFlow::Exit,
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.launch_mode = self.launch_mode.previous();
+                ControlFlow::Continue
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
+                self.launch_mode = self.launch_mode.next();
+                ControlFlow::Continue
+            }
+            KeyCode::Char('1') => {
+                self.launch_mode = LaunchMode::Scan;
+                ControlFlow::Continue
+            }
+            KeyCode::Char('2') => {
+                self.launch_mode = LaunchMode::Diff;
+                ControlFlow::Continue
+            }
+            KeyCode::Char('3') => {
+                self.launch_mode = LaunchMode::Secrets;
+                ControlFlow::Continue
+            }
+            KeyCode::Backspace if self.launch_mode == LaunchMode::Diff => {
+                self.launch_diff_target.pop();
+                ControlFlow::Continue
+            }
+            KeyCode::Char(ch) if self.launch_mode == LaunchMode::Diff => {
+                self.launch_diff_target.push(ch);
+                ControlFlow::Continue
+            }
+            KeyCode::Enter => {
+                if self.launch_mode == LaunchMode::Diff && self.launch_diff_target.trim().is_empty()
+                {
+                    self.launch_diff_target = "main".to_string();
+                }
+                ControlFlow::Rescan
+            }
+            _ => ControlFlow::Continue,
+        }
     }
 
     fn handle_action_menu_key(&mut self, key: KeyCode) -> ControlFlow {
@@ -482,6 +546,14 @@ impl UiApp {
     }
 
     fn draw(&mut self, frame: &mut ratatui::Frame) {
+        if self.show_launch {
+            self.draw_launch(frame);
+            if self.show_help {
+                self.draw_help(frame);
+            }
+            return;
+        }
+
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -524,15 +596,246 @@ impl UiApp {
     fn draw_loading(&self, frame: &mut ratatui::Frame, area: Rect) {
         let spinner = SPINNER_FRAMES[self.spinner_index];
         let elapsed = self.scan_started_at.elapsed().as_secs_f32();
-        let loading = Paragraph::new(format!(
-            "{} {} {}\n\nelapsed: {:.1}s\nwaiting for scan results...",
-            spinner,
-            request_mode_label(&self.request),
-            self.request.path,
-            elapsed,
-        ))
-        .block(panel_block(Some("Foxguard UI"), PANEL_BG));
-        frame.render_widget(loading, area);
+        let loading_area = centered_rect(62, 44, area);
+        let block = panel_block(Some("Scanning"), PANEL_BG);
+        let inner = block.inner(loading_area);
+        frame.render_widget(block, loading_area);
+
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
+            .split(inner);
+
+        let (headline, subline) = loading_copy(self);
+        frame.render_widget(
+            Paragraph::new(Text::from(vec![
+                Line::from(vec![
+                    Span::styled(
+                        format!("{} ", spinner),
+                        Style::default().fg(TITLE_BG).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        headline,
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(Span::styled(
+                    subline,
+                    Style::default().fg(Color::Rgb(158, 140, 112)),
+                )),
+                Line::from(Span::styled(
+                    format!("elapsed {:.1}s", elapsed),
+                    Style::default().fg(Color::Rgb(124, 108, 84)),
+                )),
+            ]))
+            .style(Style::default().bg(PANEL_BG)),
+            layout[0],
+        );
+
+        let phases = loading_phase_labels(self);
+        for (index, label) in phases.iter().enumerate() {
+            frame.render_widget(
+                Paragraph::new(Line::from(loading_shimmer_line(
+                    label,
+                    LOADING_BAR_WIDTHS[index],
+                    self.spinner_index + (index * 3),
+                )))
+                .style(Style::default().bg(PANEL_BG)),
+                layout[2 + index],
+            );
+        }
+    }
+
+    fn draw_launch(&self, frame: &mut ratatui::Frame) {
+        frame.render_widget(
+            Block::default().style(Style::default().bg(APP_BG)),
+            frame.area(),
+        );
+
+        let page = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(10), Constraint::Length(1)])
+            .split(frame.area());
+
+        let area = centered_rect(82, 68, page[0]);
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(5),
+                Constraint::Length(3),
+                Constraint::Length(9),
+                Constraint::Length(3),
+            ])
+            .split(area);
+
+        let logo = Paragraph::new(Text::from(vec![
+            Line::from(Span::styled(
+                "   ___                               __",
+                Style::default()
+                    .fg(LOGO_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "  / _/__ __ _____ ___ _____ ________/ /",
+                Style::default()
+                    .fg(LOGO_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                r" / _/ _ \\ \ / _ `/ // / _ `/ __/ _  / ",
+                Style::default()
+                    .fg(LOGO_SECONDARY)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                r"/_/ \___/_\_\\_, /\_,_/\_,_/_/  \_,_/  ",
+                Style::default()
+                    .fg(LOGO_SECONDARY)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "            /___/                      ",
+                Style::default()
+                    .fg(LOGO_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            )),
+        ]))
+        .alignment(Alignment::Center)
+        .style(Style::default().bg(APP_BG));
+        frame.render_widget(logo, layout[0]);
+
+        let intro = Paragraph::new(Text::from(vec![
+            Line::from(Span::styled(
+                "interactive local security triage",
+                Style::default()
+                    .fg(Color::Rgb(208, 190, 150))
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "foxguard.dev",
+                Style::default().fg(Color::Rgb(130, 112, 88)),
+            )),
+        ]))
+        .alignment(Alignment::Center)
+        .style(Style::default().bg(APP_BG));
+        frame.render_widget(intro, layout[1]);
+
+        let cards = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(33),
+                Constraint::Percentage(34),
+                Constraint::Percentage(33),
+            ])
+            .split(layout[2]);
+        for (index, mode) in [LaunchMode::Scan, LaunchMode::Diff, LaunchMode::Secrets]
+            .into_iter()
+            .enumerate()
+        {
+            self.draw_launch_card(frame, cards[index], mode);
+        }
+
+        if self.launch_mode == LaunchMode::Diff {
+            let diff_target = if self.launch_diff_target.trim().is_empty() {
+                "main".to_string()
+            } else {
+                self.launch_diff_target.clone()
+            };
+            let diff = Paragraph::new(Text::from(vec![
+                Line::from(Span::styled(
+                    "target branch",
+                    Style::default()
+                        .fg(Color::Rgb(208, 190, 150))
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    format!(" {} ", diff_target),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(TITLE_BG)
+                        .add_modifier(Modifier::BOLD),
+                )),
+            ]))
+            .alignment(Alignment::Center)
+            .style(Style::default().bg(APP_BG));
+            frame.render_widget(diff, layout[3]);
+        }
+
+        self.draw_launch_footer(frame, page[1]);
+    }
+
+    fn draw_launch_card(&self, frame: &mut ratatui::Frame, area: Rect, mode: LaunchMode) {
+        let selected = self.launch_mode == mode;
+        let (title, subtitle, accent) = match mode {
+            LaunchMode::Scan => (
+                "Scan",
+                "full code scan with built-in and external rules",
+                Color::Rgb(186, 157, 104),
+            ),
+            LaunchMode::Diff => (
+                "Diff",
+                "show only new findings compared to a target branch",
+                Color::Rgb(167, 131, 88),
+            ),
+            LaunchMode::Secrets => (
+                "Secrets",
+                "hunt for credentials, tokens, and accidental leaks",
+                Color::Rgb(176, 112, 92),
+            ),
+        };
+        let background = if selected {
+            LAUNCH_SELECTED_BG
+        } else {
+            LAUNCH_CARD_BG
+        };
+        let title_style = if selected {
+            Style::default().fg(accent).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(accent).add_modifier(Modifier::BOLD)
+        };
+        let subtitle_style = if selected {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::Rgb(158, 140, 112))
+        };
+        let block = Block::default()
+            .style(Style::default().bg(background))
+            .padding(Padding::new(2, 2, 1, 1));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        if selected {
+            frame.render_widget(
+                Block::default().style(Style::default().bg(accent)),
+                Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+        }
+        frame.render_widget(
+            Paragraph::new(Text::from(vec![
+                Line::from(Span::styled(
+                    format!("{}{}", if selected { "> " } else { "  " }, title),
+                    title_style,
+                )),
+                Line::from(""),
+                Line::from(Span::styled(subtitle, subtitle_style)),
+            ]))
+            .style(Style::default().bg(background))
+            .wrap(Wrap { trim: false }),
+            inner,
+        );
     }
 
     fn draw_header(&self, frame: &mut ratatui::Frame, area: Rect) {
@@ -741,7 +1044,7 @@ impl UiApp {
             )));
         }
 
-        if self.show_trace {
+        if finding_has_dataflow(&finding) {
             lines.push(Line::from(""));
             lines.push(section_heading("Dataflow", Color::Cyan));
             lines.extend(dataflow_lines(&finding, self.open_focus));
@@ -793,19 +1096,6 @@ impl UiApp {
     }
 
     fn draw_footer(&self, frame: &mut ratatui::Frame, area: Rect) {
-        frame.render_widget(Block::default().style(Style::default().bg(FOOTER_BG)), area);
-
-        let inner = Rect {
-            x: area.x.saturating_add(1),
-            y: area.y,
-            width: area.width.saturating_sub(2),
-            height: area.height,
-        };
-        let layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(24), Constraint::Length(34)])
-            .split(inner);
-
         let key_spans = vec![
             footer_key_span("j/k"),
             Span::raw(" move  "),
@@ -813,8 +1103,6 @@ impl UiApp {
             Span::raw(" search  "),
             footer_key_span("i"),
             Span::raw(" triage  "),
-            footer_key_span("e"),
-            Span::raw(" flow  "),
             footer_key_span("w"),
             Span::raw(" notices  "),
             footer_key_span("?"),
@@ -824,12 +1112,6 @@ impl UiApp {
             footer_key_span("Enter"),
             Span::raw(" open"),
         ];
-        frame.render_widget(
-            Paragraph::new(Line::from(key_spans))
-                .style(Style::default().bg(FOOTER_BG))
-                .wrap(Wrap { trim: true }),
-            layout[0],
-        );
 
         let search_text = if self.search_mode {
             format!("/{}", self.search_query)
@@ -847,13 +1129,38 @@ impl UiApp {
                 footer_value_span(&search_text),
             ])
         };
-        frame.render_widget(
-            Paragraph::new(search_line)
-                .style(Style::default().bg(FOOTER_BG))
-                .alignment(Alignment::Right)
-                .wrap(Wrap { trim: true }),
-            layout[1],
-        );
+        draw_status_bar(frame, area, Line::from(key_spans), search_line);
+    }
+
+    fn draw_launch_footer(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let left = Line::from(vec![
+            footer_key_span("h/l"),
+            Span::raw(" move  "),
+            footer_key_span("1-3"),
+            Span::raw(" jump  "),
+            footer_key_span("Tab"),
+            Span::raw(" cycle  "),
+            footer_key_span("Enter"),
+            Span::raw(" launch  "),
+            footer_key_span("?"),
+            Span::raw(" help  "),
+            footer_key_span("q"),
+            Span::raw(" quit"),
+        ]);
+        let right = Line::from(vec![
+            footer_label_span("mode"),
+            Span::raw(" "),
+            footer_value_span(match self.launch_mode {
+                LaunchMode::Scan => "scan",
+                LaunchMode::Diff => "diff",
+                LaunchMode::Secrets => "secrets",
+            }),
+            Span::raw("  "),
+            footer_label_span("path"),
+            Span::raw(" "),
+            footer_value_span(&short_path(&self.request.path)),
+        ]);
+        draw_status_bar(frame, area, left, right);
     }
 
     fn draw_help(&self, frame: &mut ratatui::Frame) {
@@ -872,7 +1179,6 @@ impl UiApp {
             Line::from("0-4            set minimum severity filter"),
             Line::from("Tab            cycle open target between finding/source/sink"),
             Line::from("i              open triage actions for the selected finding"),
-            Line::from("e              toggle dataflow details (source/sink traces)"),
             Line::from("Enter          open the current target in your editor"),
             Line::from("w              show or hide notices panel"),
             Line::from("PageUp/Down    scroll detail pane"),
@@ -1147,6 +1453,41 @@ struct SeverityCounts {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LaunchMode {
+    Scan,
+    Diff,
+    Secrets,
+}
+
+impl LaunchMode {
+    fn from_args(args: &UiArgs) -> Self {
+        if args.secrets {
+            LaunchMode::Secrets
+        } else if args.diff.is_some() {
+            LaunchMode::Diff
+        } else {
+            LaunchMode::Scan
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            LaunchMode::Scan => LaunchMode::Diff,
+            LaunchMode::Diff => LaunchMode::Secrets,
+            LaunchMode::Secrets => LaunchMode::Scan,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            LaunchMode::Scan => LaunchMode::Secrets,
+            LaunchMode::Diff => LaunchMode::Scan,
+            LaunchMode::Secrets => LaunchMode::Diff,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OpenFocus {
     Finding,
     Source,
@@ -1182,6 +1523,13 @@ fn available_open_focuses(finding: &Finding) -> Vec<OpenFocus> {
         focuses.push(OpenFocus::Sink);
     }
     focuses
+}
+
+fn finding_has_dataflow(finding: &Finding) -> bool {
+    finding.source_line.is_some()
+        || finding.source_description.is_some()
+        || finding.sink_line.is_some()
+        || finding.sink_description.is_some()
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -1480,6 +1828,85 @@ mod tests {
     }
 
     #[test]
+    fn ui_app_starts_on_launch_screen_without_scanning() {
+        let app = UiApp::new(UiArgs {
+            path: ".".to_string(),
+            config: None,
+            severity: None,
+            rules: None,
+            no_builtins: false,
+            changed: false,
+            exclude: Vec::new(),
+            baseline: None,
+            diff: None,
+            secrets: false,
+            explain: false,
+            max_file_size: 1_048_576,
+        });
+
+        assert!(app.show_launch);
+        assert!(!app.scanning);
+        assert_eq!(app.launch_mode, LaunchMode::Scan);
+    }
+
+    #[test]
+    fn launch_key_enter_starts_selected_mode() {
+        let mut app = UiApp::new(UiArgs {
+            path: ".".to_string(),
+            config: None,
+            severity: None,
+            rules: None,
+            no_builtins: false,
+            changed: false,
+            exclude: Vec::new(),
+            baseline: None,
+            diff: None,
+            secrets: false,
+            explain: false,
+            max_file_size: 1_048_576,
+        });
+        app.launch_mode = LaunchMode::Diff;
+        app.launch_diff_target = "origin/main".to_string();
+
+        let flow = app.handle_launch_key(KeyCode::Enter);
+        assert!(matches!(flow, ControlFlow::Rescan));
+
+        let _ = app.begin_scan();
+        assert!(!app.show_launch);
+        assert_eq!(app.request.diff.as_deref(), Some("origin/main"));
+        assert!(!app.request.secrets);
+    }
+
+    #[test]
+    fn loading_copy_uses_selected_launch_mode() {
+        let mut app = UiApp::new(UiArgs {
+            path: ".".to_string(),
+            config: None,
+            severity: None,
+            rules: None,
+            no_builtins: false,
+            changed: false,
+            exclude: Vec::new(),
+            baseline: None,
+            diff: Some("origin/main".to_string()),
+            secrets: false,
+            explain: false,
+            max_file_size: 1_048_576,
+        });
+        app.launch_mode = LaunchMode::Diff;
+
+        let (headline, subline) = loading_copy(&app);
+        assert_eq!(headline, "Scanning diff");
+        assert!(subline.contains("origin/main"));
+    }
+
+    #[test]
+    fn loading_shimmer_line_respects_requested_width() {
+        let spans = loading_shimmer_line("walking files", 12, 4);
+        assert_eq!(spans.len(), 13);
+    }
+
+    #[test]
     fn compare_findings_prioritizes_higher_severity() {
         let critical = Finding {
             rule_id: "js/no-command-injection".to_string(),
@@ -1640,6 +2067,7 @@ mod tests {
             explain: false,
             max_file_size: 1_048_576,
         });
+        app.show_launch = false;
 
         let flow = app.handle_key(KeyEvent::from(KeyCode::Enter));
         assert!(matches!(flow, ControlFlow::OpenSelected));
@@ -1785,6 +2213,7 @@ mod tests {
             diff_summary: None,
             notices: Vec::new(),
         });
+        app.show_launch = false;
 
         let flow = app.handle_key(KeyEvent::from(KeyCode::Char('i')));
         assert!(matches!(flow, ControlFlow::Continue));
@@ -2379,6 +2808,99 @@ fn footer_key_span(key: &str) -> Span<'static> {
     )
 }
 
+fn loading_copy(app: &UiApp) -> (&'static str, String) {
+    match app.launch_mode {
+        LaunchMode::Scan => (
+            "Scanning code",
+            format!("{}  built-in + custom rules", short_path(&app.request.path)),
+        ),
+        LaunchMode::Diff => (
+            "Scanning diff",
+            format!(
+                "{}  against {}",
+                short_path(&app.request.path),
+                app.request.diff.as_deref().unwrap_or("main")
+            ),
+        ),
+        LaunchMode::Secrets => (
+            "Scanning secrets",
+            format!(
+                "{}  credential and token heuristics",
+                short_path(&app.request.path)
+            ),
+        ),
+    }
+}
+
+fn loading_phase_labels(app: &UiApp) -> [&'static str; 3] {
+    match app.launch_mode {
+        LaunchMode::Scan => ["walking files", "matching rules", "assembling findings"],
+        LaunchMode::Diff => [
+            "collecting changed files",
+            "matching new issues",
+            "building diff view",
+        ],
+        LaunchMode::Secrets => ["walking files", "checking patterns", "redacting snippets"],
+    }
+}
+
+fn loading_shimmer_line(label: &str, width: usize, tick: usize) -> Vec<Span<'static>> {
+    let mut spans = vec![Span::styled(
+        format!("{label:<22}"),
+        Style::default().fg(Color::Rgb(145, 126, 99)),
+    )];
+    let cycle = width + LOADING_SHIMMER_PADDING;
+    let highlight = tick % cycle;
+
+    for index in 0..width {
+        let distance = index.abs_diff(highlight);
+        let bg = if distance <= 1 {
+            LOADING_SHIMMER_HIGHLIGHT
+        } else if distance <= 3 {
+            LOADING_SHIMMER_MID
+        } else {
+            LOADING_SHIMMER_BASE
+        };
+        spans.push(Span::styled(" ", Style::default().bg(bg)));
+    }
+
+    spans
+}
+
+fn draw_status_bar(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    left: Line<'static>,
+    right: Line<'static>,
+) {
+    frame.render_widget(Block::default().style(Style::default().bg(FOOTER_BG)), area);
+
+    let inner = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y,
+        width: area.width.saturating_sub(2),
+        height: area.height,
+    };
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(24), Constraint::Length(34)])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(left)
+            .style(Style::default().bg(FOOTER_BG))
+            .wrap(Wrap { trim: true }),
+        layout[0],
+    );
+    frame.render_widget(
+        Paragraph::new(right)
+            .style(Style::default().bg(FOOTER_BG))
+            .alignment(Alignment::Right)
+            .wrap(Wrap { trim: true }),
+        layout[1],
+    );
+}
+
 fn panel_block(title: Option<&str>, background: Color) -> Block<'static> {
     let block = Block::default().style(Style::default().bg(background));
     let block = if let Some(title) = title {
@@ -2461,6 +2983,9 @@ fn scan_root_path(path: &Path) -> PathBuf {
 const SPINNER_FRAMES: &[&str] = &["-", "\\", "|", "/"];
 const CONTEXT_LINE_MAX_CHARS: usize = 96;
 const CONTEXT_FOCUS_LEAD: usize = 28;
+const LOADING_BAR_WIDTHS: [usize; 3] = [26, 22, 18];
+const LOADING_SHIMMER_PADDING: usize = 8;
+const APP_BG: Color = Color::Rgb(20, 17, 14);
 const HEADER_BG: Color = Color::Rgb(44, 37, 28);
 const PANEL_BG: Color = Color::Rgb(27, 23, 18);
 const LIST_BG: Color = Color::Rgb(34, 28, 21);
@@ -2468,3 +2993,10 @@ const DETAIL_BG: Color = Color::Rgb(24, 20, 16);
 const NOTICE_BG: Color = Color::Rgb(38, 29, 24);
 const FOOTER_BG: Color = Color::Rgb(58, 47, 34);
 const TITLE_BG: Color = Color::Rgb(201, 172, 114);
+const LOGO_PRIMARY: Color = Color::Rgb(221, 191, 122);
+const LOGO_SECONDARY: Color = Color::Rgb(181, 136, 88);
+const LAUNCH_CARD_BG: Color = Color::Rgb(34, 28, 21);
+const LAUNCH_SELECTED_BG: Color = Color::Rgb(50, 40, 29);
+const LOADING_SHIMMER_BASE: Color = Color::Rgb(64, 52, 39);
+const LOADING_SHIMMER_MID: Color = Color::Rgb(104, 84, 57);
+const LOADING_SHIMMER_HIGHLIGHT: Color = Color::Rgb(176, 145, 95);
