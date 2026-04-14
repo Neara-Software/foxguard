@@ -5,10 +5,10 @@ use foxguard::app::{
 };
 use foxguard::baseline::write_baseline;
 use foxguard::cli::{
-    BaselineArgs, Cli, Command, DiffArgs, InitArgs, OutputFormat, ScanArgs, SecretsArgs, UiArgs,
+    BaselineArgs, Cli, Command, DiffArgs, InitArgs, OutputFormat, ScanArgs, SecretsArgs, TuiArgs,
 };
 use foxguard::config::load_for_scan;
-use foxguard::tui::run_scan_ui;
+use foxguard::tui::run_scan_tui;
 use std::path::Path;
 
 fn main() {
@@ -23,7 +23,7 @@ fn main() {
         Some(Command::Baseline(args)) => run_baseline(&args),
         Some(Command::Secrets(args)) => run_secrets(&args),
         Some(Command::Diff(args)) => run_diff_cmd(&args),
-        Some(Command::Ui(args)) => run_ui(&args),
+        Some(Command::Tui(args)) => run_tui(&args),
         None => run_scan(&cli.scan),
     };
 
@@ -109,8 +109,8 @@ fn run_baseline(args: &BaselineArgs) -> i32 {
     0
 }
 
-fn run_ui(args: &UiArgs) -> i32 {
-    match run_scan_ui(args) {
+fn run_tui(args: &TuiArgs) -> i32 {
+    match run_scan_tui(args) {
         Ok(code) => code,
         Err(error) => {
             eprintln!("Error: {}", error);

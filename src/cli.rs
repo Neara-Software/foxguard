@@ -193,7 +193,7 @@ pub struct DiffArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-pub struct UiArgs {
+pub struct TuiArgs {
     /// Path to scan
     #[arg(default_value = ".")]
     pub path: String,
@@ -253,8 +253,8 @@ pub enum Command {
     Secrets(SecretsArgs),
     /// Show only new findings compared to a target branch
     Diff(DiffArgs),
-    /// Explore scan findings in an interactive terminal UI
-    Ui(UiArgs),
+    /// Explore scan findings in the interactive terminal TUI
+    Tui(TuiArgs),
 }
 
 #[derive(Parser, Debug)]

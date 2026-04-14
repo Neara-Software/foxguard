@@ -1,6 +1,6 @@
-use crate::app::{execute_ui, DiffSummary, UiExecution, UiMode};
+use crate::app::{execute_tui, DiffSummary, TuiExecution, TuiMode};
 use crate::baseline::append_finding_to_baseline;
-use crate::cli::UiArgs;
+use crate::cli::TuiArgs;
 use crate::config::{add_scan_ignore_rule, add_secrets_ignored_rule, load_for_scan};
 use crate::{Finding, Severity};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
@@ -24,14 +24,14 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-pub fn run_scan_ui(args: &UiArgs) -> Result<i32, String> {
+pub fn run_scan_tui(args: &TuiArgs) -> Result<i32, String> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return Err("foxguard ui requires an interactive terminal".to_string());
+        return Err("foxguard tui requires an interactive terminal".to_string());
     }
 
     let mut session = TerminalSession::enter()?;
     let (tx, rx) = mpsc::channel();
-    let mut app = UiApp::new(args.clone());
+    let mut app = TuiApp::new(args.clone());
 
     loop {
         app.handle_worker_messages(&rx);
@@ -54,7 +54,7 @@ pub fn run_scan_ui(args: &UiArgs) -> Result<i32, String> {
                 ControlFlow::Continue => {}
                 ControlFlow::Rescan => {
                     let request_id = app.begin_scan();
-                    start_ui_execution(request_id, app.request.clone(), tx.clone())
+                    start_tui_execution(request_id, app.request.clone(), tx.clone())
                 }
                 ControlFlow::OpenSelected => {
                     if let Err(error) = app.open_selected_finding(&mut session) {
@@ -64,7 +64,7 @@ pub fn run_scan_ui(args: &UiArgs) -> Result<i32, String> {
                 ControlFlow::ApplyAction(action) => match app.apply_action(action) {
                     Ok(true) => {
                         let request_id = app.begin_scan();
-                        start_ui_execution(request_id, app.request.clone(), tx.clone())
+                        start_tui_execution(request_id, app.request.clone(), tx.clone())
                     }
                     Ok(false) => {}
                     Err(error) => app.push_runtime_notice(format!("action failed: {}", error)),
@@ -100,12 +100,12 @@ enum ControlFlow {
 
 struct WorkerMessage {
     request_id: u64,
-    result: Result<UiExecution, String>,
+    result: Result<TuiExecution, String>,
 }
 
-struct UiApp {
-    request: UiArgs,
-    result: Option<UiExecution>,
+struct TuiApp {
+    request: TuiArgs,
+    result: Option<TuiExecution>,
     error: Option<String>,
     show_launch: bool,
     launch_mode: LaunchMode,
@@ -130,8 +130,8 @@ struct UiApp {
     review_states: HashMap<String, ReviewState>,
 }
 
-impl UiApp {
-    fn new(request: UiArgs) -> Self {
+impl TuiApp {
+    fn new(request: TuiArgs) -> Self {
         let mut request = request;
         request.explain = true;
         Self {
@@ -434,21 +434,21 @@ impl UiApp {
 
     fn available_actions_for_finding(&self, finding: &Finding) -> Vec<TriageAction> {
         let mut actions = match self.result.as_ref().map(|result| &result.mode) {
-            Some(UiMode::Scan) => vec![
+            Some(TuiMode::Scan) => vec![
                 TriageAction::AddToBaseline,
                 TriageAction::IgnoreRuleInFile,
                 TriageAction::MarkReviewed,
                 TriageAction::MarkTodo,
                 TriageAction::MarkIgnoreCandidate,
             ],
-            Some(UiMode::Secrets) => vec![
+            Some(TuiMode::Secrets) => vec![
                 TriageAction::AddToBaseline,
                 TriageAction::IgnoreSecretRule,
                 TriageAction::MarkReviewed,
                 TriageAction::MarkTodo,
                 TriageAction::MarkIgnoreCandidate,
             ],
-            Some(UiMode::Diff { .. }) => vec![
+            Some(TuiMode::Diff { .. }) => vec![
                 TriageAction::MarkReviewed,
                 TriageAction::MarkTodo,
                 TriageAction::MarkIgnoreCandidate,
@@ -882,7 +882,7 @@ impl UiApp {
             .unwrap_or("all severities");
         let mut summary_spans = vec![
             Span::styled(
-                "foxguard ui",
+                "foxguard tui",
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
@@ -1211,7 +1211,7 @@ impl UiApp {
         frame.render_widget(Clear, area);
         let help = Paragraph::new(Text::from(vec![
             Line::from(Span::styled(
-                "foxguard ui help",
+                "foxguard tui help",
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
@@ -1558,12 +1558,12 @@ impl UiApp {
             self.request.config.as_deref(),
         )? {
             match self.result.as_ref().map(|result| &result.mode) {
-                Some(UiMode::Scan) => {
+                Some(TuiMode::Scan) => {
                     if let Some(path) = config.scan.baseline.as_ref() {
                         return Ok(PathBuf::from(path));
                     }
                 }
-                Some(UiMode::Secrets) => {
+                Some(TuiMode::Secrets) => {
                     if let Some(path) = config.secrets.baseline.as_ref() {
                         return Ok(PathBuf::from(path));
                     }
@@ -1573,7 +1573,7 @@ impl UiApp {
         }
 
         Ok(match self.result.as_ref().map(|result| &result.mode) {
-            Some(UiMode::Secrets) => scan_root_path(Path::new(&self.request.path))
+            Some(TuiMode::Secrets) => scan_root_path(Path::new(&self.request.path))
                 .join(".foxguard/secrets-baseline.json"),
             _ => scan_root_path(Path::new(&self.request.path)).join(".foxguard/baseline.json"),
         })
@@ -1654,7 +1654,7 @@ enum LaunchMode {
 }
 
 impl LaunchMode {
-    fn from_args(args: &UiArgs) -> Self {
+    fn from_args(args: &TuiArgs) -> Self {
         if args.secrets {
             LaunchMode::Secrets
         } else if args.diff.is_some() {
@@ -1818,11 +1818,11 @@ impl Drop for TerminalSession {
     }
 }
 
-fn start_ui_execution(request_id: u64, args: UiArgs, tx: Sender<WorkerMessage>) {
+fn start_tui_execution(request_id: u64, args: TuiArgs, tx: Sender<WorkerMessage>) {
     std::thread::spawn(move || {
         let _ = tx.send(WorkerMessage {
             request_id,
-            result: execute_ui(&args),
+            result: execute_tui(&args),
         });
     });
 }
@@ -2023,7 +2023,7 @@ mod tests {
 
     #[test]
     fn begin_scan_resets_runtime_notices_and_updates_request_id() {
-        let mut app = UiApp::new(UiArgs {
+        let mut app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2049,8 +2049,8 @@ mod tests {
     }
 
     #[test]
-    fn ui_app_starts_on_launch_screen_without_scanning() {
-        let app = UiApp::new(UiArgs {
+    fn tui_app_starts_on_launch_screen_without_scanning() {
+        let app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2072,7 +2072,7 @@ mod tests {
 
     #[test]
     fn launch_key_enter_starts_selected_mode() {
-        let mut app = UiApp::new(UiArgs {
+        let mut app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2100,7 +2100,7 @@ mod tests {
 
     #[test]
     fn loading_copy_uses_selected_launch_mode() {
-        let mut app = UiApp::new(UiArgs {
+        let mut app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2274,7 +2274,7 @@ mod tests {
 
     #[test]
     fn handle_key_maps_enter_to_open_selected() {
-        let mut app = UiApp::new(UiArgs {
+        let mut app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2322,7 +2322,7 @@ mod tests {
 
     #[test]
     fn cycle_open_focus_advances_through_available_targets() {
-        let mut app = UiApp::new(UiArgs {
+        let mut app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2336,8 +2336,8 @@ mod tests {
             explain: false,
             max_file_size: 1_048_576,
         });
-        app.result = Some(UiExecution {
-            mode: UiMode::Scan,
+        app.result = Some(TuiExecution {
+            mode: TuiMode::Scan,
             path: ".".to_string(),
             findings: vec![Finding {
                 rule_id: "js/no-command-injection".to_string(),
@@ -2373,7 +2373,7 @@ mod tests {
 
     #[test]
     fn handle_key_maps_tab_to_cycle_open_focus() {
-        let mut app = UiApp::new(UiArgs {
+        let mut app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2394,7 +2394,7 @@ mod tests {
 
     #[test]
     fn open_action_menu_is_available_in_scan_mode() {
-        let mut app = UiApp::new(UiArgs {
+        let mut app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2408,8 +2408,8 @@ mod tests {
             explain: false,
             max_file_size: 1_048_576,
         });
-        app.result = Some(UiExecution {
-            mode: UiMode::Scan,
+        app.result = Some(TuiExecution {
+            mode: TuiMode::Scan,
             path: ".".to_string(),
             findings: vec![Finding {
                 rule_id: "js/no-command-injection".to_string(),
@@ -2447,7 +2447,7 @@ mod tests {
 
     #[test]
     fn open_action_menu_is_available_in_secrets_mode() {
-        let mut app = UiApp::new(UiArgs {
+        let mut app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2461,8 +2461,8 @@ mod tests {
             explain: false,
             max_file_size: 1_048_576,
         });
-        app.result = Some(UiExecution {
-            mode: UiMode::Secrets,
+        app.result = Some(TuiExecution {
+            mode: TuiMode::Secrets,
             path: ".".to_string(),
             findings: vec![Finding {
                 rule_id: "secret/github-token".to_string(),
@@ -2499,7 +2499,7 @@ mod tests {
 
     #[test]
     fn handle_action_menu_enter_applies_selected_action() {
-        let mut app = UiApp::new(UiArgs {
+        let mut app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2528,7 +2528,7 @@ mod tests {
 
     #[test]
     fn apply_action_review_state_is_session_only() {
-        let mut app = UiApp::new(UiArgs {
+        let mut app = TuiApp::new(TuiArgs {
             path: ".".to_string(),
             config: None,
             severity: None,
@@ -2559,8 +2559,8 @@ mod tests {
             sink_description: None,
             fix_suggestion: None,
         };
-        app.result = Some(UiExecution {
-            mode: UiMode::Scan,
+        app.result = Some(TuiExecution {
+            mode: TuiMode::Scan,
             path: ".".to_string(),
             findings: vec![finding.clone()],
             files_scanned: 1,
@@ -3185,7 +3185,7 @@ fn footer_key_span(key: &str) -> Span<'static> {
     )
 }
 
-fn loading_copy(app: &UiApp) -> (&'static str, String) {
+fn loading_copy(app: &TuiApp) -> (&'static str, String) {
     match app.launch_mode {
         LaunchMode::Scan => (
             "Scanning code",
@@ -3209,7 +3209,7 @@ fn loading_copy(app: &UiApp) -> (&'static str, String) {
     }
 }
 
-fn loading_phase_labels(app: &UiApp) -> [&'static str; 3] {
+fn loading_phase_labels(app: &TuiApp) -> [&'static str; 3] {
     match app.launch_mode {
         LaunchMode::Scan => ["walking files", "matching rules", "assembling findings"],
         LaunchMode::Diff => [
@@ -3295,15 +3295,15 @@ fn panel_block(title: Option<&str>, background: Color) -> Block<'static> {
     block.padding(Padding::new(1, 1, 1, 0))
 }
 
-fn mode_findings_title(mode: &UiMode) -> &'static str {
+fn mode_findings_title(mode: &TuiMode) -> &'static str {
     match mode {
-        UiMode::Scan => "Findings",
-        UiMode::Diff { .. } => "New Findings",
-        UiMode::Secrets => "Secrets",
+        TuiMode::Scan => "Findings",
+        TuiMode::Diff { .. } => "New Findings",
+        TuiMode::Secrets => "Secrets",
     }
 }
 
-fn request_mode_label(args: &UiArgs) -> &'static str {
+fn request_mode_label(args: &TuiArgs) -> &'static str {
     if args.secrets {
         "secrets"
     } else if args.diff.is_some() {

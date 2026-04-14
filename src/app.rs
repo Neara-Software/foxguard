@@ -1,5 +1,5 @@
 use crate::baseline::{load_baseline, suppress_with_baseline, write_baseline};
-use crate::cli::{DiffArgs, OutputFormat, ScanArgs, SecretsArgs, UiArgs};
+use crate::cli::{DiffArgs, OutputFormat, ScanArgs, SecretsArgs, TuiArgs};
 use crate::config::{
     apply_scan_defaults, apply_secrets_defaults, load_for_scan, suppress_with_scan_ignores,
 };
@@ -48,14 +48,14 @@ pub struct DiffSummary {
     pub existing_count: usize,
 }
 
-pub enum UiMode {
+pub enum TuiMode {
     Scan,
     Diff { target: String },
     Secrets,
 }
 
-pub struct UiExecution {
-    pub mode: UiMode,
+pub struct TuiExecution {
+    pub mode: TuiMode,
     pub path: String,
     pub findings: Vec<Finding>,
     pub files_scanned: usize,
@@ -242,11 +242,11 @@ pub fn execute_diff(args: &DiffArgs) -> Result<DiffExecution, String> {
     })
 }
 
-pub fn execute_ui(args: &UiArgs) -> Result<UiExecution, String> {
+pub fn execute_tui(args: &TuiArgs) -> Result<TuiExecution, String> {
     if args.secrets {
-        let result = execute_secrets(&ui_secrets_args(args))?;
-        return Ok(UiExecution {
-            mode: UiMode::Secrets,
+        let result = execute_secrets(&tui_secrets_args(args))?;
+        return Ok(TuiExecution {
+            mode: TuiMode::Secrets,
             path: result.args.path.clone(),
             findings: result.findings,
             files_scanned: result.files_scanned,
@@ -258,9 +258,9 @@ pub fn execute_ui(args: &UiArgs) -> Result<UiExecution, String> {
     }
 
     if let Some(target) = args.diff.as_ref() {
-        let result = execute_diff(&ui_diff_args(args, target))?;
-        return Ok(UiExecution {
-            mode: UiMode::Diff {
+        let result = execute_diff(&tui_diff_args(args, target))?;
+        return Ok(TuiExecution {
+            mode: TuiMode::Diff {
                 target: result.args.target.clone(),
             },
             path: result.args.path.clone(),
@@ -277,9 +277,9 @@ pub fn execute_ui(args: &UiArgs) -> Result<UiExecution, String> {
         });
     }
 
-    let result = execute_scan(&ui_scan_args(args))?;
-    Ok(UiExecution {
-        mode: UiMode::Scan,
+    let result = execute_scan(&tui_scan_args(args))?;
+    Ok(TuiExecution {
+        mode: TuiMode::Scan,
         path: result.args.path.clone(),
         findings: result.findings,
         files_scanned: result.files_scanned,
@@ -290,7 +290,7 @@ pub fn execute_ui(args: &UiArgs) -> Result<UiExecution, String> {
     })
 }
 
-fn ui_scan_args(args: &UiArgs) -> ScanArgs {
+fn tui_scan_args(args: &TuiArgs) -> ScanArgs {
     ScanArgs {
         path: args.path.clone(),
         config: args.config.clone(),
@@ -309,7 +309,7 @@ fn ui_scan_args(args: &UiArgs) -> ScanArgs {
     }
 }
 
-fn ui_diff_args(args: &UiArgs, target: &str) -> DiffArgs {
+fn tui_diff_args(args: &TuiArgs, target: &str) -> DiffArgs {
     DiffArgs {
         target: target.to_string(),
         path: args.path.clone(),
@@ -321,7 +321,7 @@ fn ui_diff_args(args: &UiArgs, target: &str) -> DiffArgs {
     }
 }
 
-fn ui_secrets_args(args: &UiArgs) -> SecretsArgs {
+fn tui_secrets_args(args: &TuiArgs) -> SecretsArgs {
     SecretsArgs {
         path: args.path.clone(),
         config: args.config.clone(),
