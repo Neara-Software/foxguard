@@ -1,7 +1,7 @@
 use crate::app::{execute_ui, DiffSummary, UiExecution, UiMode};
 use crate::baseline::append_finding_to_baseline;
 use crate::cli::UiArgs;
-use crate::config::add_scan_ignore_rule;
+use crate::config::{add_scan_ignore_rule, add_secrets_ignored_rule, load_for_scan};
 use crate::{Finding, Severity};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::execute;
@@ -16,6 +16,7 @@ use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap,
 };
 use ratatui::Terminal;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
@@ -126,6 +127,7 @@ struct UiApp {
     source_context_cache: Option<SourceContextCache>,
     open_focus: OpenFocus,
     action_menu: Option<ActionMenu>,
+    review_states: HashMap<String, ReviewState>,
 }
 
 impl UiApp {
@@ -156,6 +158,7 @@ impl UiApp {
             source_context_cache: None,
             open_focus: OpenFocus::Finding,
             action_menu: None,
+            review_states: HashMap::new(),
         }
     }
 
@@ -410,26 +413,60 @@ impl UiApp {
     }
 
     fn open_action_menu(&mut self) -> ControlFlow {
-        if self.selected_finding().is_none() {
+        let Some(finding) = self.selected_finding() else {
             self.push_runtime_notice("no finding selected".to_string());
+            return ControlFlow::Continue;
+        };
+
+        let actions = self.available_actions_for_finding(finding);
+        if actions.is_empty() {
+            self.push_runtime_notice("no triage actions available for this finding".to_string());
             return ControlFlow::Continue;
         }
 
-        match self.result.as_ref().map(|result| &result.mode) {
-            Some(UiMode::Scan) => {
-                self.action_menu = Some(ActionMenu {
-                    actions: vec![TriageAction::AddToBaseline, TriageAction::IgnoreRuleInFile],
-                    selected: 0,
-                });
-            }
-            _ => {
-                self.push_runtime_notice(
-                    "triage actions are available in scan mode for now".to_string(),
-                );
-            }
-        }
+        self.action_menu = Some(ActionMenu {
+            actions,
+            selected: 0,
+        });
 
         ControlFlow::Continue
+    }
+
+    fn available_actions_for_finding(&self, finding: &Finding) -> Vec<TriageAction> {
+        let mut actions = match self.result.as_ref().map(|result| &result.mode) {
+            Some(UiMode::Scan) => vec![
+                TriageAction::AddToBaseline,
+                TriageAction::IgnoreRuleInFile,
+                TriageAction::MarkReviewed,
+                TriageAction::MarkTodo,
+                TriageAction::MarkIgnoreCandidate,
+            ],
+            Some(UiMode::Secrets) => vec![
+                TriageAction::AddToBaseline,
+                TriageAction::IgnoreSecretRule,
+                TriageAction::MarkReviewed,
+                TriageAction::MarkTodo,
+                TriageAction::MarkIgnoreCandidate,
+            ],
+            Some(UiMode::Diff { .. }) => vec![
+                TriageAction::MarkReviewed,
+                TriageAction::MarkTodo,
+                TriageAction::MarkIgnoreCandidate,
+            ],
+            None => Vec::new(),
+        };
+
+        if self.review_state_for(finding).is_some() {
+            actions.push(TriageAction::ClearReviewState);
+        }
+
+        actions
+    }
+
+    fn review_state_for(&self, finding: &Finding) -> Option<ReviewState> {
+        self.review_states
+            .get(&finding_review_key(finding))
+            .copied()
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -942,7 +979,10 @@ impl UiApp {
         let items = if let Some(result) = self.result.as_ref() {
             filtered
                 .iter()
-                .map(|index| list_item(&result.findings[*index]))
+                .map(|index| {
+                    let finding = &result.findings[*index];
+                    list_item(finding, self.review_state_for(finding))
+                })
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
@@ -1027,6 +1067,9 @@ impl UiApp {
 
         if let Some(cwe) = finding.cwe.as_ref() {
             lines.push(metadata_line("CWE", cwe));
+        }
+        if let Some(review) = self.review_summary_for_finding(&finding) {
+            lines.push(metadata_line("Review", &review));
         }
 
         if let Some(context_lines) = self.source_context_lines(&finding) {
@@ -1204,10 +1247,17 @@ impl UiApp {
             return;
         };
 
-        let area = centered_rect(44, 26, frame.area());
+        let area = centered_rect(56, 42, frame.area());
         let summary = self
             .selected_finding()
-            .map(|finding| format!("{}:{}", display_path(&finding.file), finding.line))
+            .map(|finding| {
+                format!(
+                    "{}:{}  {}",
+                    display_path(&finding.file),
+                    finding.line,
+                    finding.rule_id
+                )
+            })
             .unwrap_or_else(|| "no finding selected".to_string());
         let items = menu
             .actions
@@ -1227,7 +1277,8 @@ impl UiApp {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2),
-                Constraint::Min(3),
+                Constraint::Length(menu.actions.len() as u16 + 2),
+                Constraint::Length(4),
                 Constraint::Length(1),
             ])
             .split(area);
@@ -1251,11 +1302,19 @@ impl UiApp {
         let mut state = ListState::default();
         state.select(Some(menu.selected));
         frame.render_stateful_widget(list, layout[1], &mut state);
+        if let Some(action) = menu.actions.get(menu.selected).copied() {
+            frame.render_widget(
+                Paragraph::new(Text::from(self.action_preview(action)))
+                    .style(Style::default().bg(PANEL_BG).fg(Color::Gray))
+                    .wrap(Wrap { trim: false }),
+                layout[2],
+            );
+        }
         frame.render_widget(
             Paragraph::new("Enter apply  Esc cancel")
                 .style(Style::default().bg(PANEL_BG).fg(Color::Gray))
                 .alignment(Alignment::Left),
-            layout[2],
+            layout[3],
         );
     }
 
@@ -1355,10 +1414,11 @@ impl UiApp {
             .selected_finding()
             .cloned()
             .ok_or_else(|| "no finding selected".to_string())?;
+        let review_key = finding_review_key(&finding);
 
         match action {
             TriageAction::AddToBaseline => {
-                let baseline_path = self.baseline_path_for_actions();
+                let baseline_path = self.baseline_path_for_actions()?;
                 let added = append_finding_to_baseline(&baseline_path, &finding)?;
                 if added {
                     self.push_runtime_notice(format!(
@@ -1394,15 +1454,149 @@ impl UiApp {
                 }
                 Ok(true)
             }
+            TriageAction::IgnoreSecretRule => {
+                let (config_path, added) = add_secrets_ignored_rule(
+                    Path::new(&self.request.path),
+                    self.request.config.as_deref(),
+                    &finding.rule_id,
+                )?;
+                if added {
+                    self.push_runtime_notice(format!(
+                        "ignored {} via {}",
+                        finding.rule_id,
+                        config_path.display()
+                    ));
+                } else {
+                    self.push_runtime_notice(format!(
+                        "ignore already exists in {}",
+                        config_path.display()
+                    ));
+                }
+                Ok(true)
+            }
+            TriageAction::MarkReviewed => {
+                self.review_states.insert(review_key, ReviewState::Reviewed);
+                self.push_runtime_notice("marked finding as reviewed".to_string());
+                Ok(false)
+            }
+            TriageAction::MarkTodo => {
+                self.review_states.insert(review_key, ReviewState::Todo);
+                self.push_runtime_notice("marked finding as todo".to_string());
+                Ok(false)
+            }
+            TriageAction::MarkIgnoreCandidate => {
+                self.review_states
+                    .insert(review_key, ReviewState::IgnoreCandidate);
+                self.push_runtime_notice("marked finding as ignore candidate".to_string());
+                Ok(false)
+            }
+            TriageAction::ClearReviewState => {
+                self.review_states.remove(&review_key);
+                self.push_runtime_notice("cleared review state".to_string());
+                Ok(false)
+            }
         }
     }
 
-    fn baseline_path_for_actions(&self) -> PathBuf {
+    fn action_preview(&self, action: TriageAction) -> Vec<Line<'static>> {
+        let Some(finding) = self.selected_finding() else {
+            return vec![Line::from("no finding selected")];
+        };
+
+        match action {
+            TriageAction::AddToBaseline => vec![
+                preview_line("writes", &self.baseline_path_display()),
+                Line::from(Span::styled(
+                    "suppress this exact finding fingerprint in a baseline file",
+                    Style::default().fg(Color::Gray),
+                )),
+            ],
+            TriageAction::IgnoreRuleInFile => vec![
+                preview_line("writes", &self.config_path_display()),
+                preview_line(
+                    "entry",
+                    &format!(
+                        "scan.ignore_rules: {} -> {}",
+                        display_path(&finding.file),
+                        finding.rule_id
+                    ),
+                ),
+            ],
+            TriageAction::IgnoreSecretRule => vec![
+                preview_line("writes", &self.config_path_display()),
+                preview_line(
+                    "entry",
+                    &format!("secrets.ignore_rules += {}", finding.rule_id),
+                ),
+            ],
+            TriageAction::MarkReviewed => vec![
+                preview_line("session", "mark as reviewed"),
+                Line::from("no files are changed"),
+            ],
+            TriageAction::MarkTodo => vec![
+                preview_line("session", "mark as todo"),
+                Line::from("no files are changed"),
+            ],
+            TriageAction::MarkIgnoreCandidate => vec![
+                preview_line("session", "mark as ignore candidate"),
+                Line::from("no files are changed"),
+            ],
+            TriageAction::ClearReviewState => vec![
+                preview_line("session", "clear review mark"),
+                Line::from("no files are changed"),
+            ],
+        }
+    }
+
+    fn baseline_path_for_actions(&self) -> Result<PathBuf, String> {
         if let Some(path) = self.request.baseline.as_ref() {
-            return PathBuf::from(path);
+            return Ok(PathBuf::from(path));
         }
 
-        scan_root_path(Path::new(&self.request.path)).join(".foxguard/baseline.json")
+        if let Some(config) = load_for_scan(
+            Path::new(&self.request.path),
+            self.request.config.as_deref(),
+        )? {
+            match self.result.as_ref().map(|result| &result.mode) {
+                Some(UiMode::Scan) => {
+                    if let Some(path) = config.scan.baseline.as_ref() {
+                        return Ok(PathBuf::from(path));
+                    }
+                }
+                Some(UiMode::Secrets) => {
+                    if let Some(path) = config.secrets.baseline.as_ref() {
+                        return Ok(PathBuf::from(path));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(match self.result.as_ref().map(|result| &result.mode) {
+            Some(UiMode::Secrets) => scan_root_path(Path::new(&self.request.path))
+                .join(".foxguard/secrets-baseline.json"),
+            _ => scan_root_path(Path::new(&self.request.path)).join(".foxguard/baseline.json"),
+        })
+    }
+
+    fn baseline_path_display(&self) -> String {
+        self.baseline_path_for_actions()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|error| format!("unavailable ({error})"))
+    }
+
+    fn config_path_display(&self) -> String {
+        crate::config::editable_config_path(
+            Path::new(&self.request.path),
+            self.request.config.as_deref(),
+        )
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|error| format!("unavailable ({error})"))
+    }
+
+    fn review_summary_for_finding(&self, finding: &Finding) -> Option<String> {
+        self.review_state_for(finding)
+            .map(|state| format!("session {}", state.label()))
     }
 
     fn push_runtime_notice(&mut self, notice: String) {
@@ -1498,6 +1692,11 @@ enum OpenFocus {
 enum TriageAction {
     AddToBaseline,
     IgnoreRuleInFile,
+    IgnoreSecretRule,
+    MarkReviewed,
+    MarkTodo,
+    MarkIgnoreCandidate,
+    ClearReviewState,
 }
 
 impl TriageAction {
@@ -1505,6 +1704,28 @@ impl TriageAction {
         match self {
             TriageAction::AddToBaseline => "Add to baseline",
             TriageAction::IgnoreRuleInFile => "Ignore this rule in this file",
+            TriageAction::IgnoreSecretRule => "Ignore this secret rule",
+            TriageAction::MarkReviewed => "Mark as reviewed",
+            TriageAction::MarkTodo => "Mark as todo",
+            TriageAction::MarkIgnoreCandidate => "Mark as ignore candidate",
+            TriageAction::ClearReviewState => "Clear review state",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReviewState {
+    Reviewed,
+    Todo,
+    IgnoreCandidate,
+}
+
+impl ReviewState {
+    fn label(self) -> &'static str {
+        match self {
+            ReviewState::Reviewed => "reviewed",
+            ReviewState::Todo => "todo",
+            ReviewState::IgnoreCandidate => "ignore-candidate",
         }
     }
 }
@@ -2218,6 +2439,62 @@ mod tests {
         let flow = app.handle_key(KeyEvent::from(KeyCode::Char('i')));
         assert!(matches!(flow, ControlFlow::Continue));
         assert!(app.action_menu.is_some());
+        assert!(app
+            .action_menu
+            .as_ref()
+            .is_some_and(|menu| menu.actions.contains(&TriageAction::IgnoreRuleInFile)));
+    }
+
+    #[test]
+    fn open_action_menu_is_available_in_secrets_mode() {
+        let mut app = UiApp::new(UiArgs {
+            path: ".".to_string(),
+            config: None,
+            severity: None,
+            rules: None,
+            no_builtins: false,
+            changed: false,
+            exclude: Vec::new(),
+            baseline: None,
+            diff: None,
+            secrets: true,
+            explain: false,
+            max_file_size: 1_048_576,
+        });
+        app.result = Some(UiExecution {
+            mode: UiMode::Secrets,
+            path: ".".to_string(),
+            findings: vec![Finding {
+                rule_id: "secret/github-token".to_string(),
+                severity: Severity::Critical,
+                file: "src/main.js".to_string(),
+                line: 12,
+                column: 5,
+                end_line: 12,
+                end_column: 28,
+                description: "Possible GitHub personal access token detected".to_string(),
+                snippet: "token = [REDACTED]".to_string(),
+                cwe: Some("CWE-798".to_string()),
+                source_line: None,
+                source_description: None,
+                sink_line: None,
+                sink_description: None,
+                fix_suggestion: None,
+            }],
+            files_scanned: 1,
+            duration: Duration::from_secs(1),
+            explain: false,
+            diff_summary: None,
+            notices: Vec::new(),
+        });
+        app.show_launch = false;
+
+        let flow = app.handle_key(KeyEvent::from(KeyCode::Char('i')));
+        assert!(matches!(flow, ControlFlow::Continue));
+        assert!(app
+            .action_menu
+            .as_ref()
+            .is_some_and(|menu| menu.actions.contains(&TriageAction::IgnoreSecretRule)));
     }
 
     #[test]
@@ -2247,6 +2524,57 @@ mod tests {
             ControlFlow::ApplyAction(TriageAction::IgnoreRuleInFile)
         ));
         assert!(app.action_menu.is_none());
+    }
+
+    #[test]
+    fn apply_action_review_state_is_session_only() {
+        let mut app = UiApp::new(UiArgs {
+            path: ".".to_string(),
+            config: None,
+            severity: None,
+            rules: None,
+            no_builtins: false,
+            changed: false,
+            exclude: Vec::new(),
+            baseline: None,
+            diff: None,
+            secrets: false,
+            explain: false,
+            max_file_size: 1_048_576,
+        });
+        let finding = Finding {
+            rule_id: "js/no-command-injection".to_string(),
+            severity: Severity::High,
+            file: "src/main.js".to_string(),
+            line: 42,
+            column: 7,
+            end_line: 42,
+            end_column: 18,
+            description: "untrusted input reaches exec".to_string(),
+            snippet: "exec(cmd)".to_string(),
+            cwe: None,
+            source_line: None,
+            source_description: None,
+            sink_line: None,
+            sink_description: None,
+            fix_suggestion: None,
+        };
+        app.result = Some(UiExecution {
+            mode: UiMode::Scan,
+            path: ".".to_string(),
+            findings: vec![finding.clone()],
+            files_scanned: 1,
+            duration: Duration::from_secs(1),
+            explain: true,
+            diff_summary: None,
+            notices: Vec::new(),
+        });
+
+        let changed = app
+            .apply_action(TriageAction::MarkReviewed)
+            .expect("review action should succeed");
+        assert!(!changed);
+        assert_eq!(app.review_state_for(&finding), Some(ReviewState::Reviewed));
     }
 
     #[test]
@@ -2382,16 +2710,22 @@ fn append_diff_summary(spans: &mut Vec<Span<'static>>, summary: &DiffSummary) {
     ));
 }
 
-fn list_item(finding: &Finding) -> ListItem<'static> {
+fn list_item(finding: &Finding, review_state: Option<ReviewState>) -> ListItem<'static> {
+    let mut title_spans = vec![
+        severity_badge_span(finding.severity),
+        Span::raw(" "),
+        Span::styled(
+            finding.rule_id.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if let Some(state) = review_state {
+        title_spans.push(Span::raw(" "));
+        title_spans.push(review_badge_span(state));
+    }
+
     ListItem::new(vec![
-        Line::from(vec![
-            severity_badge_span(finding.severity),
-            Span::raw(" "),
-            Span::styled(
-                finding.rule_id.clone(),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        Line::from(title_spans),
         Line::from(Span::styled(
             format!("{}:{}", display_path(&finding.file), finding.line),
             Style::default().fg(Color::Gray),
@@ -2783,6 +3117,49 @@ fn metadata_line(label: &str, value: &str) -> Line<'static> {
         ),
         Span::raw(value.to_string()),
     ])
+}
+
+fn preview_line(label: &str, value: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("{}: ", label),
+            Style::default()
+                .fg(Color::Rgb(145, 126, 99))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(value.to_string(), Style::default().fg(Color::Gray)),
+    ])
+}
+
+fn review_badge_span(state: ReviewState) -> Span<'static> {
+    let style = match state {
+        ReviewState::Reviewed => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Rgb(143, 189, 143))
+            .add_modifier(Modifier::BOLD),
+        ReviewState::Todo => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Rgb(214, 182, 104))
+            .add_modifier(Modifier::BOLD),
+        ReviewState::IgnoreCandidate => Style::default()
+            .fg(Color::White)
+            .bg(Color::Rgb(156, 100, 84))
+            .add_modifier(Modifier::BOLD),
+    };
+
+    Span::styled(format!(" {} ", state.label()), style)
+}
+
+fn finding_review_key(finding: &Finding) -> String {
+    format!(
+        "{}|{}|{}|{}|{}|{}",
+        finding.rule_id,
+        finding.file,
+        finding.line,
+        finding.column,
+        finding.end_line,
+        finding.end_column
+    )
 }
 
 fn footer_label_span(label: &str) -> Span<'static> {

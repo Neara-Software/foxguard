@@ -371,6 +371,78 @@ pub fn add_scan_ignore_rule(
     Ok((config_path, added))
 }
 
+pub fn add_secrets_ignored_rule(
+    scan_path: &Path,
+    explicit_config: Option<&str>,
+    rule_id: &str,
+) -> Result<(PathBuf, bool), String> {
+    let config_path = editable_config_path(scan_path, explicit_config)?;
+
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "failed to create config directory '{}': {}",
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    let mut root = if config_path.exists() {
+        let content = fs::read_to_string(&config_path)
+            .map_err(|e| format!("failed to read config '{}': {}", config_path.display(), e))?;
+        if content.trim().is_empty() {
+            Value::Mapping(Mapping::new())
+        } else {
+            serde_yaml::from_str(&content)
+                .map_err(|e| format!("failed to parse config '{}': {}", config_path.display(), e))?
+        }
+    } else {
+        Value::Mapping(Mapping::new())
+    };
+
+    let mapping = root
+        .as_mapping_mut()
+        .ok_or_else(|| format!("config '{}' must be a YAML mapping", config_path.display()))?;
+    let secrets = mapping
+        .entry(Value::String("secrets".to_string()))
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+    let secrets_mapping = secrets.as_mapping_mut().ok_or_else(|| {
+        format!(
+            "config '{}' field 'secrets' must be a mapping",
+            config_path.display()
+        )
+    })?;
+    let ignore_rules = secrets_mapping
+        .entry(Value::String("ignore_rules".to_string()))
+        .or_insert_with(|| Value::Sequence(Sequence::new()));
+    let sequence = ignore_rules.as_sequence_mut().ok_or_else(|| {
+        format!(
+            "config '{}' field 'secrets.ignore_rules' must be a list",
+            config_path.display()
+        )
+    })?;
+
+    let added = if sequence.iter().any(|value| value.as_str() == Some(rule_id)) {
+        false
+    } else {
+        sequence.push(Value::String(rule_id.to_string()));
+        true
+    };
+
+    let content = serde_yaml::to_string(&root).map_err(|e| {
+        format!(
+            "failed to serialize config '{}': {}",
+            config_path.display(),
+            e
+        )
+    })?;
+    fs::write(&config_path, content)
+        .map_err(|e| format!("failed to write config '{}': {}", config_path.display(), e))?;
+
+    Ok((config_path, added))
+}
+
 fn resolve_config_path(
     scan_path: &Path,
     explicit_path: Option<&str>,
@@ -656,6 +728,26 @@ mod tests {
 
         let (_, added_again) =
             add_scan_ignore_rule(repo.path(), None, &finding).expect("should preserve duplicate");
+        assert!(!added_again);
+    }
+
+    #[test]
+    fn add_secrets_ignored_rule_creates_or_updates_config() {
+        let repo = TempDir::new().expect("failed to create temp dir");
+
+        let (config_path, added) =
+            add_secrets_ignored_rule(repo.path(), None, "secret/github-token")
+                .expect("should write secrets ignore rule");
+        assert!(added);
+        assert!(config_path.ends_with(".foxguard.yml"));
+
+        let loaded = load_for_scan(repo.path(), None)
+            .expect("failed to load config")
+            .expect("expected config");
+        assert_eq!(loaded.secrets.ignored_rules, vec!["secret/github-token"]);
+
+        let (_, added_again) = add_secrets_ignored_rule(repo.path(), None, "secret/github-token")
+            .expect("should preserve duplicate");
         assert!(!added_again);
     }
 }
