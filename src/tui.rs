@@ -696,14 +696,15 @@ impl TuiApp {
             .constraints([Constraint::Min(10), Constraint::Length(1)])
             .split(frame.area());
 
-        let area = centered_rect(82, 68, page[0]);
+        let area = centered_rect(72, 52, page[0]);
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(5),
                 Constraint::Length(3),
-                Constraint::Length(9),
-                Constraint::Length(3),
+                Constraint::Length(11),
+                Constraint::Length(2),
+                Constraint::Min(1),
             ])
             .split(area);
 
@@ -759,14 +760,21 @@ impl TuiApp {
         .style(Style::default().bg(APP_BG));
         frame.render_widget(intro, layout[1]);
 
+        let selector_block = Block::default()
+            .style(Style::default().bg(LIST_BG))
+            .padding(Padding::new(2, 2, 1, 1));
+        let selector_inner = selector_block.inner(layout[2]);
+        frame.render_widget(selector_block, layout[2]);
+
         let cards = Layout::default()
-            .direction(Direction::Horizontal)
+            .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(33),
-                Constraint::Percentage(34),
-                Constraint::Percentage(33),
+                Constraint::Length(2),
+                Constraint::Length(2),
+                Constraint::Length(2),
+                Constraint::Min(1),
             ])
-            .split(layout[2]);
+            .split(selector_inner);
         for (index, mode) in [LaunchMode::Scan, LaunchMode::Diff, LaunchMode::Secrets]
             .into_iter()
             .enumerate()
@@ -784,16 +792,19 @@ impl TuiApp {
                 Line::from(Span::styled(
                     "target branch",
                     Style::default()
-                        .fg(Color::Rgb(208, 190, 150))
+                        .fg(Color::Rgb(186, 157, 104))
                         .add_modifier(Modifier::BOLD),
                 )),
-                Line::from(Span::styled(
-                    format!(" {} ", diff_target),
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(TITLE_BG)
-                        .add_modifier(Modifier::BOLD),
-                )),
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(
+                        diff_target,
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(TITLE_BG)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
             ]))
             .alignment(Alignment::Center)
             .style(Style::default().bg(APP_BG));
@@ -805,21 +816,24 @@ impl TuiApp {
 
     fn draw_launch_card(&self, frame: &mut ratatui::Frame, area: Rect, mode: LaunchMode) {
         let selected = self.launch_mode == mode;
-        let (title, subtitle, accent) = match mode {
+        let (title, subtitle, accent, shortcut) = match mode {
             LaunchMode::Scan => (
                 "Scan",
-                "full code scan with built-in and external rules",
+                "full repository scan with built-in and external rules",
                 Color::Rgb(186, 157, 104),
+                "1",
             ),
             LaunchMode::Diff => (
                 "Diff",
-                "show only new findings compared to a target branch",
+                "only issues introduced against a target branch",
                 Color::Rgb(167, 131, 88),
+                "2",
             ),
             LaunchMode::Secrets => (
                 "Secrets",
-                "hunt for credentials, tokens, and accidental leaks",
+                "credentials, tokens, and accidental leak detection",
                 Color::Rgb(176, 112, 92),
+                "3",
             ),
         };
         let background = if selected {
@@ -827,11 +841,7 @@ impl TuiApp {
         } else {
             LAUNCH_CARD_BG
         };
-        let title_style = if selected {
-            Style::default().fg(accent).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(accent).add_modifier(Modifier::BOLD)
-        };
+        let title_style = Style::default().fg(accent).add_modifier(Modifier::BOLD);
         let subtitle_style = if selected {
             Style::default().fg(Color::White)
         } else {
@@ -839,7 +849,7 @@ impl TuiApp {
         };
         let block = Block::default()
             .style(Style::default().bg(background))
-            .padding(Padding::new(2, 2, 1, 1));
+            .padding(Padding::new(2, 2, 0, 0));
         let inner = block.inner(area);
         frame.render_widget(block, area);
         if selected {
@@ -848,22 +858,30 @@ impl TuiApp {
                 Rect {
                     x: area.x,
                     y: area.y,
-                    width: area.width,
-                    height: 1,
+                    width: 1,
+                    height: area.height,
                 },
             );
         }
         frame.render_widget(
-            Paragraph::new(Text::from(vec![
-                Line::from(Span::styled(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!(" {} ", shortcut),
+                    Style::default()
+                        .fg(Color::Rgb(33, 25, 17))
+                        .bg(accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
                     format!("{}{}", if selected { "> " } else { "  " }, title),
                     title_style,
-                )),
-                Line::from(""),
-                Line::from(Span::styled(subtitle, subtitle_style)),
+                ),
+                Span::raw("   "),
+                Span::styled(subtitle, subtitle_style),
             ]))
             .style(Style::default().bg(background))
-            .wrap(Wrap { trim: false }),
+            .wrap(Wrap { trim: true }),
             inner,
         );
     }
