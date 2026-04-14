@@ -696,7 +696,7 @@ impl TuiApp {
             .constraints([Constraint::Min(10), Constraint::Length(1)])
             .split(frame.area());
 
-        let area = centered_rect(58, 52, page[0]);
+        let area = centered_rect(54, 52, page[0]);
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -760,11 +760,12 @@ impl TuiApp {
         .style(Style::default().bg(APP_BG));
         frame.render_widget(intro, layout[1]);
 
+        let selector_area = centered_rect(84, 100, layout[2]);
         let selector_block = Block::default()
             .style(Style::default().bg(LIST_BG))
             .padding(Padding::new(2, 2, 1, 1));
-        let selector_inner = selector_block.inner(layout[2]);
-        frame.render_widget(selector_block, layout[2]);
+        let selector_inner = selector_block.inner(selector_area);
+        frame.render_widget(selector_block, selector_area);
 
         let cards = Layout::default()
             .direction(Direction::Vertical)
@@ -788,6 +789,7 @@ impl TuiApp {
             } else {
                 self.launch_diff_target.clone()
             };
+            let diff_area = centered_rect(72, 100, layout[3]);
             let diff = Paragraph::new(Text::from(vec![
                 Line::from(Span::styled(
                     "target branch",
@@ -808,7 +810,7 @@ impl TuiApp {
             ]))
             .alignment(Alignment::Center)
             .style(Style::default().bg(APP_BG));
-            frame.render_widget(diff, layout[3]);
+            frame.render_widget(diff, diff_area);
         }
 
         self.draw_launch_footer(frame, page[1]);
@@ -819,31 +821,33 @@ impl TuiApp {
         let (title, subtitle, accent, shortcut) = match mode {
             LaunchMode::Scan => (
                 "Scan",
-                "full repository scan with built-in and external rules",
+                "full repository scan",
                 Color::Rgb(186, 157, 104),
                 "1",
             ),
             LaunchMode::Diff => (
                 "Diff",
-                "only issues introduced against a target branch",
+                "new issues vs target branch",
                 Color::Rgb(167, 131, 88),
                 "2",
             ),
             LaunchMode::Secrets => (
                 "Secrets",
-                "credentials, tokens, and accidental leak detection",
+                "credentials and token leaks",
                 Color::Rgb(176, 112, 92),
                 "3",
             ),
         };
-        let background = if selected {
-            LAUNCH_SELECTED_BG
+        let background = if selected { DETAIL_BG } else { LAUNCH_CARD_BG };
+        let title_style = if selected {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
         } else {
-            LAUNCH_CARD_BG
+            Style::default().fg(accent).add_modifier(Modifier::BOLD)
         };
-        let title_style = Style::default().fg(accent).add_modifier(Modifier::BOLD);
         let subtitle_style = if selected {
-            Style::default().fg(Color::White)
+            Style::default().fg(Color::Rgb(208, 190, 150))
         } else {
             Style::default().fg(Color::Rgb(158, 140, 112))
         };
@@ -866,11 +870,8 @@ impl TuiApp {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
-                    format!(" {} ", shortcut),
-                    Style::default()
-                        .fg(Color::Rgb(33, 25, 17))
-                        .bg(accent)
-                        .add_modifier(Modifier::BOLD),
+                    format!("{shortcut}"),
+                    Style::default().fg(accent).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
                 Span::styled(
@@ -1393,6 +1394,7 @@ impl TuiApp {
 
         let command_spec = open_command_spec(&target)?;
         session.suspend()?;
+        // foxguard: ignore[rs/no-command-injection]
         let status = Command::new(&command_spec.program)
             .args(&command_spec.args)
             .stdin(Stdio::inherit())
@@ -3404,7 +3406,6 @@ const TITLE_BG: Color = Color::Rgb(201, 172, 114);
 const LOGO_PRIMARY: Color = Color::Rgb(221, 191, 122);
 const LOGO_SECONDARY: Color = Color::Rgb(181, 136, 88);
 const LAUNCH_CARD_BG: Color = Color::Rgb(34, 28, 21);
-const LAUNCH_SELECTED_BG: Color = Color::Rgb(50, 40, 29);
 const LOADING_SHIMMER_BASE: Color = Color::Rgb(82, 67, 50);
 const LOADING_SHIMMER_LOW: Color = Color::Rgb(106, 87, 64);
 const LOADING_SHIMMER_MID: Color = Color::Rgb(145, 119, 84);
