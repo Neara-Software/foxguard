@@ -1,13 +1,13 @@
 use crate::app::{execute_ui, DiffSummary, UiExecution, UiMode};
 use crate::cli::UiArgs;
 use crate::{Finding, Severity};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
@@ -45,7 +45,7 @@ pub fn run_scan_ui(args: &UiArgs) -> Result<i32, String> {
                 continue;
             }
 
-            match app.handle_key(key.code) {
+            match app.handle_key(key) {
                 ControlFlow::Continue => {}
                 ControlFlow::Rescan => {
                     let request_id = app.begin_scan();
@@ -101,10 +101,13 @@ struct UiApp {
     selected: usize,
     show_trace: bool,
     show_notices: bool,
+    show_help: bool,
     runtime_notices: Vec<String>,
     active_request_id: u64,
     next_request_id: u64,
     scan_started_at: Instant,
+    detail_scroll: u16,
+    notices_scroll: u16,
 }
 
 impl UiApp {
@@ -121,10 +124,13 @@ impl UiApp {
             min_severity: None,
             selected: 0,
             show_notices: true,
+            show_help: false,
             runtime_notices: Vec::new(),
             active_request_id: 0,
             next_request_id: 1,
             scan_started_at: Instant::now(),
+            detail_scroll: 0,
+            notices_scroll: 0,
         }
     }
 
@@ -133,8 +139,11 @@ impl UiApp {
         self.result = None;
         self.selected = 0;
         self.scanning = true;
+        self.show_help = false;
         self.runtime_notices.clear();
         self.scan_started_at = Instant::now();
+        self.detail_scroll = 0;
+        self.notices_scroll = 0;
         let request_id = self.next_request_id;
         self.next_request_id += 1;
         self.active_request_id = request_id;
@@ -163,12 +172,27 @@ impl UiApp {
         }
     }
 
-    fn handle_key(&mut self, key: KeyCode) -> ControlFlow {
-        if self.search_mode {
-            return self.handle_search_key(key);
+    fn handle_key(&mut self, key: KeyEvent) -> ControlFlow {
+        if matches!(key.code, KeyCode::Char('?')) {
+            self.show_help = !self.show_help;
+            return ControlFlow::Continue;
         }
 
-        match key {
+        if self.show_help {
+            return match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.show_help = false;
+                    ControlFlow::Continue
+                }
+                _ => ControlFlow::Continue,
+            };
+        }
+
+        if self.search_mode {
+            return self.handle_search_key(key.code);
+        }
+
+        match key.code {
             KeyCode::Char('q') => ControlFlow::Exit,
             KeyCode::Char('j') | KeyCode::Down => {
                 self.move_selection(1);
@@ -209,10 +233,27 @@ impl UiApp {
             }
             KeyCode::Char('e') => {
                 self.show_trace = !self.show_trace;
+                self.detail_scroll = 0;
                 ControlFlow::Continue
             }
             KeyCode::Char('w') => {
                 self.show_notices = !self.show_notices;
+                ControlFlow::Continue
+            }
+            KeyCode::PageDown => {
+                self.scroll_detail(8);
+                ControlFlow::Continue
+            }
+            KeyCode::PageUp => {
+                self.scroll_detail(-8);
+                ControlFlow::Continue
+            }
+            KeyCode::Char(']') => {
+                self.scroll_notices(3);
+                ControlFlow::Continue
+            }
+            KeyCode::Char('[') => {
+                self.scroll_notices(-3);
                 ControlFlow::Continue
             }
             KeyCode::Char('o') => ControlFlow::OpenSelected,
@@ -252,6 +293,7 @@ impl UiApp {
         let len = filtered.len() as isize;
         let next = (self.selected as isize + delta).clamp(0, len - 1);
         self.selected = next as usize;
+        self.detail_scroll = 0;
     }
 
     fn clamp_selection(&mut self) {
@@ -273,13 +315,19 @@ impl UiApp {
         };
 
         let needle = self.search_query.to_ascii_lowercase();
-        result
+        let mut indices = result
             .findings
             .iter()
             .enumerate()
             .filter(|(_, finding)| self.matches_filters(finding, &needle))
             .map(|(index, _)| index)
-            .collect()
+            .collect::<Vec<_>>();
+
+        indices.sort_by(|left, right| {
+            compare_findings(&result.findings[*left], &result.findings[*right])
+        });
+
+        indices
     }
 
     fn matches_filters(&self, finding: &Finding, needle: &str) -> bool {
@@ -335,6 +383,10 @@ impl UiApp {
         }
 
         self.draw_footer(frame, layout[2]);
+
+        if self.show_help {
+            self.draw_help(frame);
+        }
     }
 
     fn draw_loading(&self, frame: &mut ratatui::Frame, area: Rect) {
@@ -429,9 +481,19 @@ impl UiApp {
                 .split(area)
         };
 
+        let direction = if body_layout[0].width < 110 {
+            Direction::Vertical
+        } else {
+            Direction::Horizontal
+        };
+        let constraints = if matches!(direction, Direction::Vertical) {
+            vec![Constraint::Percentage(45), Constraint::Percentage(55)]
+        } else {
+            vec![Constraint::Percentage(42), Constraint::Percentage(58)]
+        };
         let layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+            .direction(direction)
+            .constraints(constraints)
             .split(body_layout[0]);
 
         let filtered = self.filtered_indices();
@@ -447,8 +509,19 @@ impl UiApp {
         let list_title = self
             .result
             .as_ref()
-            .map(|result| mode_findings_title(&result.mode))
-            .unwrap_or("findings");
+            .map(|result| {
+                format!(
+                    "{} ({}/{})",
+                    mode_findings_title(&result.mode),
+                    if filtered.is_empty() {
+                        0
+                    } else {
+                        self.selected + 1
+                    },
+                    filtered.len()
+                )
+            })
+            .unwrap_or_else(|| "findings".to_string());
         let list = List::new(items)
             .block(Block::default().title(list_title).borders(Borders::ALL))
             .highlight_style(Style::default().bg(Color::DarkGray))
@@ -462,12 +535,14 @@ impl UiApp {
 
         let detail = Paragraph::new(self.detail_text())
             .block(Block::default().title("detail").borders(Borders::ALL))
+            .scroll((self.detail_scroll, 0))
             .wrap(Wrap { trim: false });
         frame.render_widget(detail, layout[1]);
 
         if body_layout.len() > 1 {
             let notices = Paragraph::new(self.notice_text())
                 .block(Block::default().title("notices").borders(Borders::ALL))
+                .scroll((self.notices_scroll, 0))
                 .wrap(Wrap { trim: false });
             frame.render_widget(notices, body_layout[1]);
         }
@@ -513,10 +588,11 @@ impl UiApp {
         }
 
         if self.show_trace {
+            lines.push(Line::from(""));
+            lines.push(section_heading("Dataflow", Color::Cyan));
             if let (Some(line), Some(description)) =
                 (finding.source_line, finding.source_description.as_ref())
             {
-                lines.push(Line::from(""));
                 lines.push(section_heading("Source", Color::Yellow));
                 lines.push(Line::from(format!("line {}: {}", line, description)));
             }
@@ -524,9 +600,14 @@ impl UiApp {
             if let (Some(line), Some(description)) =
                 (finding.sink_line, finding.sink_description.as_ref())
             {
-                lines.push(Line::from(""));
                 lines.push(section_heading("Sink", Color::Red));
                 lines.push(Line::from(format!("line {}: {}", line, description)));
+            }
+
+            if finding.source_line.is_none() && finding.sink_line.is_none() {
+                lines.push(Line::from(
+                    "No source/sink flow details for this finding type.",
+                ));
             }
         }
 
@@ -547,7 +628,7 @@ impl UiApp {
         let mode_label = if self.search_mode { "/" } else { "" };
         let notices = self.notice_count();
         let footer = Paragraph::new(format!(
-            "mode: {}  j/k move  / search  0-4 severity  e trace  o open  w notices({})  r rescan  q quit  filter: {}  search: {}{}",
+            "mode: {}  j/k move  / search  e flow  o open  ? help  notices:{}  filter: {}  search: {}{}",
             request_mode_label(&self.request),
             notices,
             filter,
@@ -557,6 +638,34 @@ impl UiApp {
         .block(Block::default().borders(Borders::ALL).title("keys"))
         .wrap(Wrap { trim: true });
         frame.render_widget(footer, area);
+    }
+
+    fn draw_help(&self, frame: &mut ratatui::Frame) {
+        let area = centered_rect(72, 70, frame.area());
+        let help = Paragraph::new(Text::from(vec![
+            Line::from(Span::styled(
+                "foxguard ui help",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("j/k or arrows  move between findings"),
+            Line::from("/              search findings"),
+            Line::from("0-4            set minimum severity filter"),
+            Line::from("e              toggle dataflow details (source/sink traces)"),
+            Line::from("o              open the selected finding in your editor"),
+            Line::from("w              show or hide notices panel"),
+            Line::from("PageUp/Down    scroll detail pane"),
+            Line::from("[/]            scroll notices pane"),
+            Line::from("r              rescan"),
+            Line::from("q              quit"),
+            Line::from("? or Esc       close this help"),
+        ]))
+        .alignment(Alignment::Left)
+        .block(Block::default().title("help").borders(Borders::ALL))
+        .wrap(Wrap { trim: false });
+        frame.render_widget(help, area);
     }
 
     fn open_selected_finding(&mut self, session: &mut TerminalSession) -> Result<(), String> {
@@ -602,6 +711,14 @@ impl UiApp {
 
     fn push_runtime_notice(&mut self, notice: String) {
         self.runtime_notices.push(notice);
+    }
+
+    fn scroll_detail(&mut self, delta: i32) {
+        self.detail_scroll = adjust_scroll(self.detail_scroll, delta);
+    }
+
+    fn scroll_notices(&mut self, delta: i32) {
+        self.notices_scroll = adjust_scroll(self.notices_scroll, delta);
     }
 
     fn notice_count(&self) -> usize {
@@ -800,6 +917,44 @@ fn resolve_finding_path(scan_path: &str, finding_file: &str) -> PathBuf {
     base.join(finding_path)
 }
 
+fn truncate_text(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let truncated = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{}...", truncated)
+    } else {
+        truncated
+    }
+}
+
+fn adjust_scroll(current: u16, delta: i32) -> u16 {
+    if delta.is_negative() {
+        current.saturating_sub(delta.unsigned_abs() as u16)
+    } else {
+        current.saturating_add(delta as u16)
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -880,6 +1035,42 @@ mod tests {
         assert!(app.runtime_notices.is_empty());
         assert_eq!(app.active_request_id, 2);
     }
+
+    #[test]
+    fn compare_findings_prioritizes_higher_severity() {
+        let critical = Finding {
+            rule_id: "js/no-command-injection".to_string(),
+            severity: Severity::Critical,
+            file: "a.js".to_string(),
+            line: 1,
+            column: 1,
+            end_line: 1,
+            end_column: 5,
+            description: "critical".to_string(),
+            snippet: "exec(cmd)".to_string(),
+            cwe: None,
+            source_line: None,
+            source_description: None,
+            sink_line: None,
+            sink_description: None,
+            fix_suggestion: None,
+        };
+        let medium = Finding {
+            severity: Severity::Medium,
+            ..critical.clone()
+        };
+
+        assert_eq!(
+            compare_findings(&critical, &medium),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn truncate_text_adds_ellipsis_when_needed() {
+        assert_eq!(truncate_text("abcdef", 3), "abc...");
+        assert_eq!(truncate_text("abc", 3), "abc");
+    }
 }
 
 fn append_diff_summary(spans: &mut Vec<Span<'static>>, summary: &DiffSummary) {
@@ -897,6 +1088,7 @@ fn append_diff_summary(spans: &mut Vec<Span<'static>>, summary: &DiffSummary) {
 }
 
 fn list_item(finding: &Finding) -> ListItem<'static> {
+    let summary = truncate_text(&finding.description, 56);
     let line = Line::from(vec![
         Span::styled(
             severity_label(finding.severity),
@@ -912,8 +1104,27 @@ fn list_item(finding: &Finding) -> ListItem<'static> {
             format!("{}:{}", short_path(&finding.file), finding.line),
             Style::default().fg(Color::Gray),
         ),
+        Span::raw("  "),
+        Span::styled(summary, Style::default().fg(Color::DarkGray)),
     ]);
     ListItem::new(line)
+}
+
+fn compare_findings(left: &Finding, right: &Finding) -> std::cmp::Ordering {
+    severity_rank(right.severity)
+        .cmp(&severity_rank(left.severity))
+        .then(left.file.cmp(&right.file))
+        .then(left.line.cmp(&right.line))
+        .then(left.column.cmp(&right.column))
+}
+
+fn severity_rank(severity: Severity) -> u8 {
+    match severity {
+        Severity::Critical => 4,
+        Severity::High => 3,
+        Severity::Medium => 2,
+        Severity::Low => 1,
+    }
 }
 
 fn severity_counts(findings: &[Finding]) -> SeverityCounts {
