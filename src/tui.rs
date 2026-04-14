@@ -870,7 +870,7 @@ impl TuiApp {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
-                    format!("{shortcut}"),
+                    shortcut.to_string(),
                     Style::default().fg(accent).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
