@@ -746,7 +746,7 @@ impl TuiApp {
 
         let intro = Paragraph::new(Text::from(vec![
             Line::from(Span::styled(
-                "interactive local security triage",
+                "a security scanner as fast as your linter",
                 Style::default()
                     .fg(Color::Rgb(208, 190, 150))
                     .add_modifier(Modifier::BOLD),
