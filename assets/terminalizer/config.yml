@@ -1,9 +1,9 @@
 command: zsh
-cwd: ~/coding/tools/foxguard
+cwd: ~/coding/tools/foxguard/assets/terminalizer
 env:
   recording: "true"
-cols: 92
-rows: 18
+cols: 110
+rows: 22
 frameDelay: auto
 maxIdleTime: 180
 quality: 90
@@ -36,7 +36,8 @@ theme:
 watermark:
   imagePath: null
 frameBox:
-  type: window
-  title: foxguard demo
+  type: solid
+  title:
   style:
     boxShadow: none
+    margin: 0px

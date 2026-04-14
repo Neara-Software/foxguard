@@ -1,0 +1,81 @@
+---
+config:
+  command: zsh
+  cwd: "~/coding/tools/foxguard/assets/terminalizer"
+  env:
+    recording: 'true'
+  cols: 110
+  rows: 22
+  frameDelay: auto
+  maxIdleTime: 180
+  quality: 90
+  repeat: 0
+  cursorStyle: block
+  fontFamily: Menlo, Monaco, monospace
+  fontSize: 14
+  lineHeight: 1.2
+  letterSpacing: 0
+  theme:
+    background: "#0b1020"
+    foreground: "#e5e7eb"
+    cursor: "#f59e0b"
+    black: "#111827"
+    red: "#f87171"
+    green: "#34d399"
+    yellow: "#fbbf24"
+    blue: "#60a5fa"
+    magenta: "#a78bfa"
+    cyan: "#22d3ee"
+    white: "#e5e7eb"
+    brightBlack: "#6b7280"
+    brightRed: "#fca5a5"
+    brightGreen: "#6ee7b7"
+    brightYellow: "#fcd34d"
+    brightBlue: "#93c5fd"
+    brightMagenta: "#c4b5fd"
+    brightCyan: "#67e8f9"
+    brightWhite: "#f9fafb"
+  watermark:
+    imagePath:
+  frameBox:
+    type: solid
+    title:
+    style:
+      boxShadow: none
+      margin: 0px
+records:
+- delay: 1
+  content: "\e[3J\e[H\e[2J^D\b\b\e[3J\e[H\e[2J\e[3J\e[H\e[2J\e[38;5;223m# foxguard
+    dark demo\e[0m\r\n\e[38;5;223m# code scan, secrets, baseline\e[0m\r\n$ ls -1 story-target\r\nroutes.js\r\nsecrets.env\r\nservices.js\r\n"
+- delay: 1900
+  content: "\e[3J\e[H\e[2J\e[3J\e[H\e[2J\e[38;5;223m# explain traces source -> sink\e[0m\r\n$
+    fg story-target --explain || true\r\n    \e[31m█\e[0m   \e[2;36mjs/express-no-hardcoded-session-secret\e[0m\e[2m
+    (CWE-798)\e[0m  \e[2mline 7:25\e[0m\r\n    \e[90m█\e[0m \e[33msource →\e[0m \e[2mstory-target/routes.js\e[0m:\e[2m11\e[0m
+    \ req.query\r\n    \e[90m█\e[0m \e[31msink   →\e[0m \e[2mstory-target/routes.js\e[0m:\e[2m12\e[0m
+    \ SQL .query() call (via cross-file call to runQuery)\r\n    \e[90m█\e[0m \e[1;32mFix:\e[0m
+    Use parameterized queries: `db.query(\"SELECT * FROM users WHERE name = $1\",
+    [name])`\r\n\r\n    \e[90m█\e[0m \e[1;100;37m CRITICAL \e[0m exec() called with
+    dynamic argument — risk of command injection\r\n    \e[90m█\e[0m   \e[2;36mjs/no-command-injection\e[0m\e[2m
+    (CWE-78)\e[0m  \e[2mline 18:3\e[0m\r\n    \e[90m█\e[0m   \e[2mchildProcess.exec(cmd);\e[0m\r\n
+    \   \e[90m█\e[0m \e[33msource →\e[0m \e[2mstory-target/routes.js\e[0m:\e[2m17\e[0m
+    \ req.query\r\n    \e[90m█\e[0m \e[31msink   →\e[0m \e[2mstory-target/routes.js\e[0m:\e[2m18\e[0m
+    \ child_process.exec()\r\n    \e[90m█\e[0m \e[1;32mFix:\e[0m Pass arguments as
+    an array to `child_process.execFile()` instead of building a shell string\r\n\r\n\r\n
+    \ \e[1mstory-target/services.js\e[0m \e[2m·\e[0m \e[2m1 issue\e[0m\r\n\r\n\r\n\r\n$
+    fg secrets story-target || true\r\n"
+- delay: 1900
+  content: "\e[3J\e[H\e[2J  \e[1mstory-target/secrets.env\e[0m \e[2m·\e[0m \e[2m4
+    issues\e[0m\r\n\r\n    \e[90m█\e[0m   \e[2;36msecret/aws-access-key-id\e[0m\e[2m
+    (CWE-798)\e[0m  \e[2mline 1:19\e[0m\r\n\r\n    \e[90m█\e[0m \e[1;100;37m CRITICAL
+    \e[0m Possible AWS secret access key detected\r\n    \e[90m█\e[0m   \e[2;36msecret/aws-secret-access-key\e[0m\e[2m
+    (CWE-798)\e[0m  \e[2mline 2:1\e[0m\r\n    \e[90m█\e[0m   \e[2m[REDACTED]\e[0m\r\n\r\n
+    \   \e[90m█\e[0m \e[1;100;37m CRITICAL \e[0m Possible Stripe live secret key detected\r\n
+    \   \e[90m█\e[0m   \e[2;36msecret/stripe-live-key\e[0m\e[2m (CWE-798)\e[0m  \e[2mline
+    4:19\e[0m\r\n    \e[90m█\e[0m   \e[2mSTRIPE_SECRET_KEY=[REDACTED]\e[0m\r\n\r\n\r\n
+    \ \e[2m──────────────────────────────────────────────────\e[0m\r\n\r\n\r\n\r\n$
+    fg baseline story-target --output .demo-baseline.json\r\n"
+- delay: 2000
+  content: "\e[3J\e[H\e[2J\e[3J\e[H\e[2J\e[38;5;223m# next run stays clean\e[0m\r\n$
+    fg story-target --baseline .demo-baseline.json\r\n\r  \e[1;33mfoxguard\e[0m \e[2mv0.6.3\e[0m
+    \e[2m· scanning...\e[0m \r                                                            \r\r\n
+    \ \e[32m✔\e[0m Scanned 2 files in 0.01s.\r\n\r\n\r\n\r\n"
