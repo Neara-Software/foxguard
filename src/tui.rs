@@ -1241,6 +1241,9 @@ mod tests {
         assert!(rendered.iter().any(|line| line.contains("^")));
         assert!(rendered
             .iter()
+            .any(|line| line.contains("selected range") && line.starts_with("     | ")));
+        assert!(rendered
+            .iter()
             .any(|line| line.contains("4 | console.log(cmd);")));
     }
 
@@ -1502,8 +1505,8 @@ fn render_source_context(source: &str, finding: &Finding, radius: usize) -> Vec<
             Span::styled(rendered.text, text_style),
         ]));
 
-        if let Some((offset, width)) = rendered.highlight {
-            lines.push(context_caret_line(width, offset, width, accent));
+        if let Some((offset, highlight_width)) = rendered.highlight {
+            lines.push(context_caret_line(width, offset, highlight_width, accent));
         }
     }
 
