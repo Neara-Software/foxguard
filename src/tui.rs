@@ -2277,7 +2277,7 @@ mod tests {
             .any(|line| line.contains("Enter opens") && line.contains("finding")));
         assert!(rendered
             .iter()
-            .any(|line| line.contains("current: finding @ src/main.js:42:7")));
+            .any(|line| line.contains("@ src/main.js:42:7")));
     }
 
     #[test]
@@ -2883,6 +2883,7 @@ fn dataflow_lines(finding: &Finding, active_focus: OpenFocus) -> Vec<Line<'stati
 }
 
 fn open_target_lines(finding: &Finding, active_focus: OpenFocus) -> Vec<Line<'static>> {
+    let active_location = open_focus_location(finding, active_focus);
     let mut selector = vec![Span::styled(
         "Enter opens ",
         Style::default()
@@ -2901,17 +2902,19 @@ fn open_target_lines(finding: &Finding, active_focus: OpenFocus) -> Vec<Line<'st
         ));
     }
 
-    vec![
-        Line::from(selector),
-        preview_line(
-            "current",
-            &format!(
-                "{} @ {}",
-                open_focus_label(active_focus),
-                open_focus_location(finding, active_focus)
-            ),
-        ),
-    ]
+    selector.push(Span::raw("  "));
+    selector.push(Span::styled(
+        "@ ",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    ));
+    selector.push(Span::styled(
+        active_location,
+        Style::default().fg(Color::White),
+    ));
+
+    vec![Line::from(selector)]
 }
 
 fn render_source_context(source: &str, finding: &Finding, radius: usize) -> Vec<Line<'static>> {
