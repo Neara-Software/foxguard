@@ -19,7 +19,7 @@ use ratatui::Terminal;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, IsTerminal};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -1934,7 +1934,18 @@ fn resolve_finding_path(scan_path: &str, finding_file: &str) -> PathBuf {
         return finding_path.to_path_buf();
     }
 
+    if finding_path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+    {
+        return finding_path.to_path_buf();
+    }
+
     let scan_root = Path::new(scan_path);
+    if finding_path.starts_with(scan_root) {
+        return finding_path.to_path_buf();
+    }
+
     let scan_root_is_file = scan_root.is_file() || scan_root.extension().is_some();
     let base = if scan_root_is_file {
         scan_root.parent().unwrap_or_else(|| Path::new("."))
@@ -1998,6 +2009,18 @@ mod tests {
     fn resolve_finding_path_uses_parent_for_file_roots() {
         let resolved = resolve_finding_path("/tmp/project/app.py", "app.py");
         assert_eq!(resolved, PathBuf::from("/tmp/project/app.py"));
+    }
+
+    #[test]
+    fn resolve_finding_path_keeps_parent_relative_paths() {
+        let resolved = resolve_finding_path(
+            "../foxguard/tests/fixtures/realistic",
+            "../foxguard/tests/fixtures/realistic/fastapi_app.py",
+        );
+        assert_eq!(
+            resolved,
+            PathBuf::from("../foxguard/tests/fixtures/realistic/fastapi_app.py")
+        );
     }
 
     #[test]
