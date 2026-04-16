@@ -1099,6 +1099,10 @@ impl TuiApp {
             )));
         }
 
+        lines.push(Line::from(""));
+        lines.push(section_heading("Open", Color::Cyan));
+        lines.extend(open_target_lines(&finding, self.open_focus));
+
         if finding_has_dataflow(&finding) {
             lines.push(Line::from(""));
             lines.push(section_heading("Dataflow", Color::Cyan));
@@ -2204,9 +2208,11 @@ mod tests {
         assert!(rendered
             .iter()
             .any(|line| line.contains("source @ /tmp/project/src/main.js:12")));
-        assert!(rendered
-            .iter()
-            .any(|line| line.contains("> finding @ /tmp/project/src/main.js:42:7")));
+        assert!(rendered.iter().any(|line| {
+            line.contains("> ")
+                && line.contains("finding")
+                && line.contains("@ /tmp/project/src/main.js:42:7")
+        }));
         assert!(rendered
             .iter()
             .any(|line| line.contains("sink @ /tmp/project/src/main.js:42")));
@@ -2239,6 +2245,39 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["No source/sink flow details for this finding type.".to_string()]
         );
+    }
+
+    #[test]
+    fn open_target_lines_show_finding_even_without_trace_details() {
+        let finding = Finding {
+            rule_id: "js/no-command-injection".to_string(),
+            severity: Severity::High,
+            file: "src/main.js".to_string(),
+            line: 42,
+            column: 7,
+            end_line: 42,
+            end_column: 18,
+            description: "untrusted input reaches exec".to_string(),
+            snippet: "exec(cmd)".to_string(),
+            cwe: None,
+            source_line: None,
+            source_description: None,
+            sink_line: None,
+            sink_description: None,
+            fix_suggestion: None,
+        };
+
+        let rendered = open_target_lines(&finding, OpenFocus::Finding)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(rendered
+            .iter()
+            .any(|line| line.contains("Enter opens") && line.contains("finding")));
+        assert!(rendered
+            .iter()
+            .any(|line| line.contains("current: finding @ src/main.js:42:7")));
     }
 
     #[test]
@@ -2618,9 +2657,9 @@ mod tests {
         assert!(rendered
             .iter()
             .any(|line| line.contains("finding @ src/main.js:42:7")));
-        assert!(rendered
-            .iter()
-            .any(|line| line.contains("> source @ src/main.js:12")));
+        assert!(rendered.iter().any(|line| {
+            line.contains("> ") && line.contains("source") && line.contains("@ src/main.js:12")
+        }));
         assert!(rendered
             .iter()
             .any(|line| line.contains("sink @ src/main.js:42")));
@@ -2810,17 +2849,7 @@ fn dataflow_lines(finding: &Finding, active_focus: OpenFocus) -> Vec<Line<'stati
                     })
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                label.to_string(),
-                if is_active {
-                    Style::default()
-                        .fg(color)
-                        .bg(Color::Rgb(28, 34, 44))
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(color).add_modifier(Modifier::BOLD)
-                },
-            ),
+            open_focus_span(label, color, is_active),
             Span::styled(
                 format!(" @ {}", location),
                 if is_active {
@@ -2851,6 +2880,38 @@ fn dataflow_lines(finding: &Finding, active_focus: OpenFocus) -> Vec<Line<'stati
     }
 
     lines
+}
+
+fn open_target_lines(finding: &Finding, active_focus: OpenFocus) -> Vec<Line<'static>> {
+    let mut selector = vec![Span::styled(
+        "Enter opens ",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )];
+
+    for (index, focus) in available_open_focuses(finding).into_iter().enumerate() {
+        if index > 0 {
+            selector.push(Span::raw(" "));
+        }
+        selector.push(open_focus_span(
+            open_focus_label(focus),
+            open_focus_color(finding, focus),
+            focus == active_focus,
+        ));
+    }
+
+    vec![
+        Line::from(selector),
+        preview_line(
+            "current",
+            &format!(
+                "{} @ {}",
+                open_focus_label(active_focus),
+                open_focus_location(finding, active_focus)
+            ),
+        ),
+    ]
 }
 
 fn render_source_context(source: &str, finding: &Finding, radius: usize) -> Vec<Line<'static>> {
@@ -2902,6 +2963,69 @@ fn render_source_context(source: &str, finding: &Finding, radius: usize) -> Vec<
     }
 
     lines
+}
+
+fn open_focus_location(finding: &Finding, focus: OpenFocus) -> String {
+    match focus {
+        OpenFocus::Finding => format!(
+            "{}:{}:{}",
+            display_path(&finding.file),
+            finding.line,
+            finding.column
+        ),
+        OpenFocus::Source => format!(
+            "{}:{}",
+            display_path(&finding.file),
+            finding.source_line.unwrap_or(finding.line)
+        ),
+        OpenFocus::Sink => format!(
+            "{}:{}",
+            display_path(&finding.file),
+            finding.sink_line.unwrap_or(finding.line)
+        ),
+    }
+}
+
+fn open_focus_label(focus: OpenFocus) -> &'static str {
+    match focus {
+        OpenFocus::Finding => "finding",
+        OpenFocus::Source => "source",
+        OpenFocus::Sink => "sink",
+    }
+}
+
+fn open_focus_color(finding: &Finding, focus: OpenFocus) -> Color {
+    match focus {
+        OpenFocus::Finding => flow_accent_color(finding.severity),
+        OpenFocus::Source => Color::Yellow,
+        OpenFocus::Sink => Color::Red,
+    }
+}
+
+fn open_focus_span(label: &str, color: Color, selected: bool) -> Span<'static> {
+    let style = if selected {
+        Style::default()
+            .fg(open_focus_selected_fg(color))
+            .bg(color)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
+    };
+
+    let text = if selected {
+        format!(" {} ", label)
+    } else {
+        label.to_string()
+    };
+
+    Span::styled(text, style)
+}
+
+fn open_focus_selected_fg(color: Color) -> Color {
+    match color {
+        Color::Yellow => Color::Black,
+        _ => Color::White,
+    }
 }
 
 fn render_context_line(line: &str, finding: &Finding, line_number: usize) -> RenderedContextLine {
