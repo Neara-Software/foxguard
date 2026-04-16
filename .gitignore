@@ -23,3 +23,8 @@ benchmarks/results*.md
 
 # Sync conflict artifacts
 *.sync-conflict-*
+
+# Local terminalizer artifacts
+.terminalizer-bin/
+assets/terminalizer/
+assets/foxguard-terminalizer*.gif
