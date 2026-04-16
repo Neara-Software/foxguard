@@ -1,3 +1,4 @@
+pub mod app;
 pub mod baseline;
 pub mod cli;
 pub mod config;
@@ -7,6 +8,7 @@ pub mod git;
 pub mod report;
 pub mod rules;
 pub mod secrets;
+pub mod tui;
 
 use serde::{Deserialize, Serialize};
 

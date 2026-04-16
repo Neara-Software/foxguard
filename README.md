@@ -59,12 +59,15 @@ See [docs/precision.md](docs/precision.md) for per-rule precision tiers and our 
 
 ```sh
 npx foxguard .                        # scan the repo
+npx foxguard tui .                    # interactive findings explorer
 npx foxguard --changed .              # only modified files
 npx foxguard diff main .              # new findings vs target branch
+npx foxguard tui --diff main .        # interactive diff triage
 npx foxguard --explain .              # show source-to-sink dataflow traces
 npx foxguard --quiet .                # exit code only (CI mode)
 npx foxguard --github-pr 42 .         # post findings as PR review comments
 npx foxguard secrets .                # leaked credentials and private keys
+npx foxguard tui --secrets .          # interactive secrets triage
 npx foxguard init                     # install a local pre-commit hook
 ```
 

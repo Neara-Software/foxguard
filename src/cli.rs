@@ -192,6 +192,57 @@ pub struct DiffArgs {
     pub max_file_size: u64,
 }
 
+#[derive(Args, Debug, Clone)]
+pub struct TuiArgs {
+    /// Path to scan
+    #[arg(default_value = ".")]
+    pub path: String,
+
+    /// Path to foxguard config file
+    #[arg(long)]
+    pub config: Option<String>,
+
+    /// Minimum severity to report
+    #[arg(short, long, value_enum)]
+    pub severity: Option<SeverityFilter>,
+
+    /// Path to Semgrep YAML rule file or directory
+    #[arg(short, long)]
+    pub rules: Option<String>,
+
+    /// Disable built-in rules and run only external rules loaded via --rules
+    #[arg(long, default_value_t = false)]
+    pub no_builtins: bool,
+
+    /// Scan changed files only (staged first, then unstaged)
+    #[arg(long, default_value_t = false)]
+    pub changed: bool,
+
+    /// Exclude scan-relative paths by glob or prefix (repeatable)
+    #[arg(long)]
+    pub exclude: Vec<String>,
+
+    /// Apply a baseline file to suppress known findings
+    #[arg(long)]
+    pub baseline: Option<String>,
+
+    /// Show only new findings compared to a target branch
+    #[arg(long, value_name = "TARGET", conflicts_with = "secrets")]
+    pub diff: Option<String>,
+
+    /// Scan repositories and changed files for common secrets
+    #[arg(long, default_value_t = false, conflicts_with = "diff")]
+    pub secrets: bool,
+
+    /// Show source-to-sink dataflow traces in the detail pane when available
+    #[arg(long, default_value_t = false)]
+    pub explain: bool,
+
+    /// Maximum file size in bytes to scan (default: 1 MB)
+    #[arg(long, default_value_t = 1_048_576)]
+    pub max_file_size: u64,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// Install a pre-commit hook for local foxguard runs
@@ -202,6 +253,8 @@ pub enum Command {
     Secrets(SecretsArgs),
     /// Show only new findings compared to a target branch
     Diff(DiffArgs),
+    /// Explore scan findings in the interactive terminal TUI
+    Tui(TuiArgs),
 }
 
 #[derive(Parser, Debug)]
