@@ -20,3 +20,6 @@ www/.astro/
 benchmarks/repos/
 benchmarks/results*.md
 .claude/
+
+# Sync conflict artifacts
+*.sync-conflict-*
