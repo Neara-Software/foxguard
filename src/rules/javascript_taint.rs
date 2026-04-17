@@ -1784,6 +1784,41 @@ fn expression_taint(
                 }
             }
         }
+
+        // Cross-file return-taint: if the callee is an imported function
+        // whose summary says a tainted argument flows to the return value,
+        // the call expression is tainted. This enables multi-hop chains
+        // (A → B → C) where B is a passthrough.
+        if let Some(cross_file) = ctx.cross_file {
+            if let Some(func) = expr.child_by_field_name("function") {
+                let callee_text = node_text(func, ctx.source);
+                if let Some((file_path, func_name)) =
+                    resolve_cross_file_callee(func, callee_text, ctx.source, cross_file)
+                {
+                    if let Some(file_summaries) = cross_file.summaries.get(&file_path) {
+                        if let Some(summary) = file_summaries.iter().find(|s| s.name == func_name) {
+                            if let Some(args) = expr.child_by_field_name("arguments") {
+                                let mut cursor = args.walk();
+                                let arg_nodes: Vec<Node<'_>> =
+                                    args.named_children(&mut cursor).collect();
+                                for &param_idx in &summary.params_to_return {
+                                    if param_idx < arg_nodes.len() {
+                                        if let Some((desc, src_line)) =
+                                            expression_taint(arg_nodes[param_idx], ctx, state)
+                                        {
+                                            return Some((
+                                                format!("{desc} (via cross-file {func_name})"),
+                                                src_line,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     None

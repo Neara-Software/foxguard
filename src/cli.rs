@@ -64,6 +64,10 @@ pub struct ScanArgs {
     #[arg(long, default_value_t = false)]
     pub explain: bool,
 
+    /// Auto-fix supported taint findings (writes changes to disk)
+    #[arg(long, default_value_t = false)]
+    pub fix: bool,
+
     /// Post findings as inline review comments on a GitHub PR
     #[arg(long)]
     pub github_pr: Option<u64>,

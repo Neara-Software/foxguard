@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 /// Summary of a function's taint behavior for cross-file analysis.
 /// Generated in pass 1, consumed in pass 2.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FunctionTaintSummary {
     /// Function name as exported.
     pub name: String,
@@ -26,7 +26,7 @@ pub struct FunctionTaintSummary {
 
 /// Records that when parameter at `param_index` is tainted, it reaches
 /// a specific sink identified by the rule that would fire.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParamSinkFlow {
     pub param_index: usize,
     pub sink_rule_id: String,

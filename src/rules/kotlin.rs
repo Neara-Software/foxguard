@@ -1129,6 +1129,8 @@ fn run_kt_taint(
                     sink_line: Some(sink.line),
                     sink_description: Some(sink.description.clone()),
                     fix_suggestion: None,
+                    sink_start_byte: None,
+                    sink_end_byte: None,
                 });
             }
         }

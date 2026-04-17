@@ -107,7 +107,7 @@ impl InlineIgnoreSpec {
 }
 
 /// Detect language from file extension.
-fn detect_language(path: &Path) -> Option<Language> {
+pub fn detect_language(path: &Path) -> Option<Language> {
     match path.extension()?.to_str()? {
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" => Some(Language::JavaScript),
         "py" | "pyw" => Some(Language::Python),

@@ -179,6 +179,8 @@ mod tests {
                 "Use parameterized queries: `cur.execute(\"SELECT * FROM users WHERE name = ?\", (name,))`"
                     .to_string(),
             ),
+            sink_start_byte: None,
+            sink_end_byte: None,
         }
     }
 

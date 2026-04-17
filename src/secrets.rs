@@ -277,6 +277,8 @@ pub fn scan_paths_with_config_and_notices(
                         sink_line: None,
                         sink_description: None,
                         fix_suggestion: None,
+                        sink_start_byte: None,
+                        sink_end_byte: None,
                     });
                 }
             }

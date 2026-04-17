@@ -1136,6 +1136,44 @@ fn expression_taint(
                 }
             }
         }
+
+        // Cross-file return-taint: if the callee is a same-package function
+        // whose summary says a tainted argument flows to the return value,
+        // the call expression is tainted. This enables multi-hop chains
+        // (A → B → C) where B is a passthrough.
+        if let Some(cross_file) = ctx.cross_file {
+            if let Some(func) = expr.child_by_field_name("function") {
+                if func.kind() == "identifier" {
+                    let func_name = node_text(func, ctx.source);
+                    for pkg_path in cross_file.same_package_paths {
+                        if let Some(file_summaries) = cross_file.summaries.get(pkg_path) {
+                            if let Some(summary) =
+                                file_summaries.iter().find(|s| s.name == func_name)
+                            {
+                                if let Some(args) = expr.child_by_field_name("arguments") {
+                                    let mut cursor = args.walk();
+                                    let arg_nodes: Vec<Node<'_>> =
+                                        args.named_children(&mut cursor).collect();
+                                    for &param_idx in &summary.params_to_return {
+                                        if param_idx < arg_nodes.len() {
+                                            if let Some((desc, src_line)) =
+                                                expression_taint(arg_nodes[param_idx], ctx, state)
+                                            {
+                                                return Some((
+                                                    format!("{desc} (via cross-file {func_name})"),
+                                                    src_line,
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     None

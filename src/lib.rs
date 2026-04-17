@@ -4,6 +4,7 @@ pub mod cli;
 pub mod config;
 pub mod diff;
 pub mod engine;
+pub mod fix;
 pub mod git;
 pub mod report;
 pub mod rules;
@@ -86,4 +87,8 @@ pub struct Finding {
     pub sink_description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix_suggestion: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sink_start_byte: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sink_end_byte: Option<usize>,
 }

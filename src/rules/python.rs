@@ -1694,6 +1694,8 @@ fn map_taint_findings(
             sink_line: Some(t.sink_line),
             sink_description: Some(t.sink_description),
             fix_suggestion: meta.fix_suggestion.map(|s| s.to_string()),
+            sink_start_byte: Some(t.sink_start_byte),
+            sink_end_byte: Some(t.sink_end_byte),
         })
         .collect()
 }

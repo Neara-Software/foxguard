@@ -710,6 +710,8 @@ mod tests {
             sink_line: None,
             sink_description: None,
             fix_suggestion: None,
+            sink_start_byte: None,
+            sink_end_byte: None,
         };
 
         let (config_path, added) =

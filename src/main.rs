@@ -43,6 +43,14 @@ fn run_scan(scan: &ScanArgs) -> i32 {
         eprintln!("{}", notice);
     }
 
+    // Apply auto-fixes if --fix is set
+    if scan.fix && !result.findings.is_empty() {
+        let files_fixed = foxguard::fix::apply_all_fixes(&result.findings, &scan.path);
+        if files_fixed > 0 {
+            eprintln!("Fixed findings in {} file(s)", files_fixed);
+        }
+    }
+
     match result.args.format {
         OutputFormat::Terminal => {
             if !result.args.quiet {
@@ -279,6 +287,7 @@ fn run_init(args: &InitArgs) -> i32 {
                 baseline: None,
                 write_baseline: None,
                 explain: false,
+                fix: false,
                 github_pr: None,
                 quiet: false,
                 max_file_size: 1_048_576,

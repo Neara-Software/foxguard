@@ -124,6 +124,8 @@ pub fn make_finding(
         sink_line: None,
         sink_description: None,
         fix_suggestion: None,
+        sink_start_byte: None,
+        sink_end_byte: None,
     }
 }
 
@@ -165,6 +167,8 @@ pub fn make_finding_from_offsets(
         sink_line: None,
         sink_description: None,
         fix_suggestion: None,
+        sink_start_byte: None,
+        sink_end_byte: None,
     }
 }
 

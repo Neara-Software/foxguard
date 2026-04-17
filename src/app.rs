@@ -306,6 +306,7 @@ fn tui_scan_args(args: &TuiArgs) -> ScanArgs {
         github_pr: None,
         quiet: false,
         max_file_size: args.max_file_size,
+        fix: false,
     }
 }
 

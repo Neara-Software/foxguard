@@ -202,6 +202,8 @@ impl Rule for SemgrepRule {
                 sink_line: None,
                 sink_description: None,
                 fix_suggestion: None,
+                sink_start_byte: None,
+                sink_end_byte: None,
             });
         }
 

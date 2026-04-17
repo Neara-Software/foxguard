@@ -320,6 +320,8 @@ impl Rule for SemgrepTaintRule {
                 sink_line: Some(t.sink_line),
                 sink_description: Some(t.sink_description),
                 fix_suggestion: None,
+                sink_start_byte: None,
+                sink_end_byte: None,
             })
             .collect()
     }
