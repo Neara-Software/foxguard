@@ -646,20 +646,18 @@ fn scan_files(
 
     let has_cross_file = !cross_file_summaries.is_empty();
 
-    let canonical_path_lookup: HashMap<PathBuf, PathBuf> = prepared_files
-        .iter()
-        .flat_map(|(path, prepared)| {
-            let canonical = prepared.canonical_path.clone();
-            let mut entries = vec![
-                (path.clone(), canonical.clone()),
-                (canonical.clone(), canonical),
-            ];
+    let canonical_path_lookup: HashMap<PathBuf, PathBuf> = {
+        let mut lookup = HashMap::with_capacity(prepared_files.len() * 3);
+        for (path, prepared) in &prepared_files {
+            let canonical = &prepared.canonical_path;
+            lookup.insert(path.clone(), canonical.clone());
+            lookup.insert(canonical.clone(), canonical.clone());
             if path.is_relative() {
-                entries.push((scan_root.join(path), prepared.canonical_path.clone()));
+                lookup.insert(scan_root.join(path), canonical.clone());
             }
-            entries
-        })
-        .collect();
+        }
+        lookup
+    };
 
     // Build a directory→files index for Go same-package resolution.
     // All .go files in the same directory share the same package.

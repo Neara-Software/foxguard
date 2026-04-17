@@ -375,6 +375,33 @@ pub fn extract_cross_file_summaries(
 
         let empty_summary = ReturnSummary::new();
 
+        // Pre-build reusable specs outside the per-param loop. Only the
+        // `sources` field changes per parameter; sinks and sanitizers are
+        // constant. This avoids cloning the entire sink/sanitizer vecs on
+        // every iteration.
+        let placeholder_source = NodeMatcher::ParamName {
+            names: vec![],
+            description: String::new(),
+        };
+        let mut return_spec = TaintSpec {
+            sources: vec![placeholder_source.clone()],
+            sinks: vec![],
+            sanitizers: vec![],
+        };
+        let mut batched_spec = TaintSpec {
+            sources: vec![placeholder_source.clone()],
+            sinks: batched_sinks,
+            sanitizers: vec![],
+        };
+        let mut sanitizer_specs: Vec<TaintSpec> = sanitizer_rules
+            .iter()
+            .map(|(_, rule_spec)| TaintSpec {
+                sources: vec![placeholder_source.clone()],
+                sinks: rule_spec.sinks.clone(),
+                sanitizers: rule_spec.sanitizers.clone(),
+            })
+            .collect();
+
         for (param_idx, param_name) in param_names.iter().enumerate() {
             let synthetic_source = NodeMatcher::ParamName {
                 names: vec![param_name.clone()],
@@ -382,11 +409,7 @@ pub fn extract_cross_file_summaries(
             };
 
             // Check return-taint: does this parameter flow to a return value?
-            let return_spec = TaintSpec {
-                sources: vec![synthetic_source.clone()],
-                sinks: vec![],
-                sanitizers: vec![],
-            };
+            return_spec.sources[0] = synthetic_source.clone();
             let return_ctx = AnalysisContext {
                 source,
                 spec: &return_spec,
@@ -402,12 +425,8 @@ pub fn extract_cross_file_summaries(
             let mut seen: HashSet<(usize, &str)> = HashSet::new();
 
             // Batched pass: one call for all no-sanitizer rules.
-            if !batched_sinks.is_empty() {
-                let batched_spec = TaintSpec {
-                    sources: vec![synthetic_source.clone()],
-                    sinks: batched_sinks.clone(),
-                    sanitizers: vec![],
-                };
+            if !batched_spec.sinks.is_empty() {
+                batched_spec.sources[0] = synthetic_source.clone();
                 let batched_ctx = AnalysisContext {
                     source,
                     spec: &batched_spec,
@@ -431,15 +450,11 @@ pub fn extract_cross_file_summaries(
             }
 
             // Individual pass: rules with sanitizers run separately.
-            for (rule_id, rule_spec) in &sanitizer_rules {
-                let synthetic_spec = TaintSpec {
-                    sources: vec![synthetic_source.clone()],
-                    sinks: rule_spec.sinks.clone(),
-                    sanitizers: rule_spec.sanitizers.clone(),
-                };
+            for (idx, (rule_id, _)) in sanitizer_rules.iter().enumerate() {
+                sanitizer_specs[idx].sources[0] = synthetic_source.clone();
                 let sink_ctx = AnalysisContext {
                     source,
-                    spec: &synthetic_spec,
+                    spec: &sanitizer_specs[idx],
                     aliases,
                     summaries: &empty_summary,
                     cross_file: None,
