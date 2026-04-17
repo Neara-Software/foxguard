@@ -37,7 +37,7 @@
 use super::common::AliasTable;
 use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary, ParamSinkFlow};
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tree_sitter::{Node, Tree};
 
@@ -356,6 +356,25 @@ pub fn extract_cross_file_summaries(
         let mut params_to_sink: Vec<ParamSinkFlow> = Vec::new();
         let mut params_to_return: Vec<usize> = Vec::new();
 
+        // Partition rules: those without sanitizers can be batched into a
+        // single analyze_function call per parameter; rules with sanitizers
+        // must run individually to avoid incorrect taint clearing.
+        let mut batched_sinks: Vec<NodeMatcher> = Vec::new();
+        let mut sink_desc_to_rule: HashMap<&str, &str> = HashMap::new();
+        let mut sanitizer_rules: Vec<(&str, &TaintSpec)> = Vec::new();
+        for (rule_id, rule_spec) in rule_specs {
+            if rule_spec.sanitizers.is_empty() {
+                for sink in &rule_spec.sinks {
+                    sink_desc_to_rule.insert(sink.description(), rule_id);
+                    batched_sinks.push(sink.clone());
+                }
+            } else {
+                sanitizer_rules.push((rule_id, rule_spec));
+            }
+        }
+
+        let empty_summary = ReturnSummary::new();
+
         for (param_idx, param_name) in param_names.iter().enumerate() {
             let synthetic_source = NodeMatcher::ParamName {
                 names: vec![param_name.clone()],
@@ -368,7 +387,6 @@ pub fn extract_cross_file_summaries(
                 sinks: vec![],
                 sanitizers: vec![],
             };
-            let empty_summary = ReturnSummary::new();
             let return_ctx = AnalysisContext {
                 source,
                 spec: &return_spec,
@@ -381,8 +399,39 @@ pub fn extract_cross_file_summaries(
                 params_to_return.push(param_idx);
             }
 
-            // Check sink-taint: does this parameter reach any sink?
-            for (rule_id, rule_spec) in rule_specs {
+            let mut seen: HashSet<(usize, &str)> = HashSet::new();
+
+            // Batched pass: one call for all no-sanitizer rules.
+            if !batched_sinks.is_empty() {
+                let batched_spec = TaintSpec {
+                    sources: vec![synthetic_source.clone()],
+                    sinks: batched_sinks.clone(),
+                    sanitizers: vec![],
+                };
+                let batched_ctx = AnalysisContext {
+                    source,
+                    spec: &batched_spec,
+                    aliases,
+                    summaries: &empty_summary,
+                    cross_file: None,
+                };
+                let mut findings = Vec::new();
+                analyze_function(func_node, &batched_ctx, &mut findings);
+                for f in &findings {
+                    if let Some(&rule_id) = sink_desc_to_rule.get(f.sink_description.as_str()) {
+                        if seen.insert((param_idx, rule_id)) {
+                            params_to_sink.push(ParamSinkFlow {
+                                param_index: param_idx,
+                                sink_rule_id: rule_id.to_string(),
+                                sink_description: f.sink_description.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Individual pass: rules with sanitizers run separately.
+            for (rule_id, rule_spec) in &sanitizer_rules {
                 let synthetic_spec = TaintSpec {
                     sources: vec![synthetic_source.clone()],
                     sinks: rule_spec.sinks.clone(),
@@ -397,17 +446,12 @@ pub fn extract_cross_file_summaries(
                 };
                 let mut findings = Vec::new();
                 analyze_function(func_node, &sink_ctx, &mut findings);
-                if !findings.is_empty() {
-                    let already = params_to_sink
-                        .iter()
-                        .any(|f| f.param_index == param_idx && f.sink_rule_id == *rule_id);
-                    if !already {
-                        params_to_sink.push(ParamSinkFlow {
-                            param_index: param_idx,
-                            sink_rule_id: rule_id.to_string(),
-                            sink_description: findings[0].sink_description.clone(),
-                        });
-                    }
+                if !findings.is_empty() && seen.insert((param_idx, rule_id)) {
+                    params_to_sink.push(ParamSinkFlow {
+                        param_index: param_idx,
+                        sink_rule_id: rule_id.to_string(),
+                        sink_description: findings[0].sink_description.clone(),
+                    });
                 }
             }
         }

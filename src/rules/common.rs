@@ -83,10 +83,16 @@ pub fn walk_tree(
     let mut stack: Vec<tree_sitter::Node> = vec![node];
     while let Some(current) = stack.pop() {
         callback(current, source);
+        let start = stack.len();
         let mut cursor = current.walk();
-        let children: Vec<_> = current.children(&mut cursor).collect();
-        for child in children.into_iter().rev() {
-            stack.push(child);
+        if cursor.goto_first_child() {
+            loop {
+                stack.push(cursor.node());
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+            stack[start..].reverse();
         }
     }
 }
