@@ -649,6 +649,7 @@ impl RuleRegistry {
                 config::ApachePqVulnerableTls,
                 config::HAProxyPqVulnerableTls,
                 config::DockerfileInsecureTlsEnv,
+                manifest::OsvVulnerableDependency,
                 manifest::CargoLockPqCrypto,
                 manifest::RequirementsTxtPqCrypto,
                 manifest::PoetryLockPqCrypto,
