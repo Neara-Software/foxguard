@@ -13,15 +13,17 @@ jobs:
     name: Run labeled precision corpus
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
         with:
           path: |
             ~/.cargo/registry
@@ -32,7 +34,7 @@ jobs:
             ${{ runner.os }}-cargo-precision-
             ${{ runner.os }}-cargo-build-
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
         with:
           path: benchmarks/precision/clones
           key: precision-clones-${{ hashFiles('benchmarks/precision/corpus.toml') }}
@@ -45,7 +47,7 @@ jobs:
         run: FOXGUARD=target/release/foxguard ./benchmarks/precision/run.sh --check
 
       - name: Upload precision dashboard
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: precision-corpus
           path: benchmarks/precision/results/
