@@ -444,6 +444,10 @@ fn scan_args(request: &AdapterRequest, path: String, pq_mode: bool) -> ScanArgs 
         min_confidence: request.min_confidence,
         pq_mode,
         cnsa2: pq_mode,
+        sca: false,
+        sca_offline: false,
+        sca_db: None,
+        sca_cache: None,
     }
 }
 

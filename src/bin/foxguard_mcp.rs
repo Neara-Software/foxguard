@@ -457,6 +457,10 @@ fn scan_args(arguments: &Value, pq_mode: bool) -> Result<ScanArgs, String> {
         min_confidence: optional_f32(arguments, "min_confidence")?,
         pq_mode,
         cnsa2: pq_mode || optional_bool(arguments, "cnsa2")?,
+        sca: false,
+        sca_offline: false,
+        sca_db: None,
+        sca_cache: None,
     })
 }
 
