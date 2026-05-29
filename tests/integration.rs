@@ -1315,6 +1315,68 @@ mod java {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    #[test]
+    fn test_vulnerable_java_taint_catches_every_flow() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/vulnerable_java_taint.java", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard"); // foxguard: ignore[rs/no-unwrap-in-lib]
+
+        assert!(!output.status.success());
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for f in &findings {
+            if let Some(rule) = f["rule_id"].as_str() {
+                *counts.entry(rule).or_insert(0) += 1;
+            }
+        }
+
+        for (taint_rule, expected) in [
+            ("java/taint-command-injection", 1usize),
+            ("java/taint-sql-injection", 1),
+            ("java/taint-ssrf", 1),
+            ("java/taint-unsafe-deserialization", 1),
+        ] {
+            assert_eq!(
+                counts.get(taint_rule).copied(),
+                Some(expected),
+                "{} should fire exactly {} time(s) on vulnerable_java_taint.java. counts={:?}",
+                taint_rule,
+                expected,
+                counts
+            );
+        }
+    }
+
+    #[test]
+    fn test_safe_java_taint_has_no_taint_findings() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/safe_java_taint.java", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard"); // foxguard: ignore[rs/no-unwrap-in-lib]
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        for taint_rule in [
+            "java/taint-command-injection",
+            "java/taint-sql-injection",
+            "java/taint-ssrf",
+            "java/taint-unsafe-deserialization",
+        ] {
+            let n = findings
+                .iter()
+                .filter(|f| f["rule_id"].as_str() == Some(taint_rule))
+                .count();
+            assert_eq!(
+                n, 0,
+                "{} should not fire on safe_java_taint.java, got {} findings",
+                taint_rule, n
+            );
+        }
+    }
 }
 
 // ─── Crypto agility negative fixtures ──────────────────────────────────────
@@ -4993,6 +5055,231 @@ mod config_files {
     }
 
     #[test]
+    fn sca_reports_osv_vulnerabilities_for_supported_lockfiles() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("osv.json");
+        let advisories = serde_json::json!([
+            osv_fixture(
+                "OSV-CRATE-RUSTLS",
+                "crates.io",
+                "rustls",
+                "0.23.4",
+                "0.23.5",
+                "HIGH"
+            ),
+            osv_fixture(
+                "OSV-PY-RSA",
+                "PyPI",
+                "python-rsa",
+                "4.9",
+                "4.9.1",
+                "CRITICAL"
+            ),
+            osv_fixture(
+                "OSV-PY-CRYPTOGRAPHY",
+                "PyPI",
+                "cryptography",
+                "41.0.7",
+                "42.0.0",
+                "MODERATE"
+            ),
+            osv_fixture(
+                "OSV-PY-PARAMIKO",
+                "PyPI",
+                "paramiko",
+                "3.4.0",
+                "3.4.1",
+                "LOW"
+            ),
+            osv_fixture(
+                "OSV-NPM-ELLIPTIC",
+                "npm",
+                "elliptic",
+                "6.5.4",
+                "6.5.5",
+                "HIGH"
+            ),
+            osv_fixture(
+                "OSV-NPM-JWT",
+                "npm",
+                "jsonwebtoken",
+                "9.0.2",
+                "9.0.3",
+                "HIGH"
+            )
+        ]);
+        fs::write(
+            &db_path,
+            serde_json::to_string_pretty(&advisories).expect("json"),
+        )
+        .expect("write osv fixture");
+
+        let output = foxguard_cmd()
+            .args([
+                "sca",
+                "--config",
+                "/dev/null",
+                "tests/fixtures/deps",
+                "--sca-offline",
+                "--sca-db",
+                db_path.to_str().expect("utf8 path"),
+                "-f",
+                "json",
+            ])
+            .output()
+            .expect("failed to execute foxguard");
+
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "expected findings; stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+        assert!(
+            findings.len() >= 6,
+            "expected SCA findings for all supported lockfiles, got {findings:#?}"
+        );
+
+        assert_sca_finding(
+            &findings,
+            "Cargo.lock",
+            "rustls",
+            "0.23.4",
+            "crates.io",
+            "OSV-CRATE-RUSTLS",
+            "0.23.5",
+        );
+        assert_sca_finding(
+            &findings,
+            "requirements.txt",
+            "python-rsa",
+            "4.9",
+            "PyPI",
+            "OSV-PY-RSA",
+            "4.9.1",
+        );
+        assert_sca_finding(
+            &findings,
+            "poetry.lock",
+            "cryptography",
+            "41.0.7",
+            "PyPI",
+            "OSV-PY-CRYPTOGRAPHY",
+            "42.0.0",
+        );
+        assert_sca_finding(
+            &findings,
+            "Pipfile.lock",
+            "paramiko",
+            "3.4.0",
+            "PyPI",
+            "OSV-PY-PARAMIKO",
+            "3.4.1",
+        );
+        assert_sca_finding(
+            &findings,
+            "pnpm-lock.yaml",
+            "elliptic",
+            "6.5.4",
+            "npm",
+            "OSV-NPM-ELLIPTIC",
+            "6.5.5",
+        );
+        assert_sca_finding(
+            &findings,
+            "package-lock.json",
+            "jsonwebtoken",
+            "9.0.2",
+            "npm",
+            "OSV-NPM-JWT",
+            "9.0.3",
+        );
+    }
+
+    #[test]
+    fn sca_sarif_includes_dependency_properties() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("osv.json");
+        let advisories = serde_json::json!([osv_fixture(
+            "OSV-NPM-ELLIPTIC",
+            "npm",
+            "elliptic",
+            "6.5.4",
+            "6.5.5",
+            "HIGH"
+        )]);
+        fs::write(
+            &db_path,
+            serde_json::to_string_pretty(&advisories).expect("json"),
+        )
+        .expect("write osv fixture");
+
+        let output = foxguard_cmd()
+            .args([
+                "sca",
+                "--config",
+                "/dev/null",
+                "tests/fixtures/deps/package-lock.json",
+                "--sca-offline",
+                "--sca-db",
+                db_path.to_str().expect("utf8 path"),
+                "-f",
+                "sarif",
+            ])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let text = String::from_utf8_lossy(&output.stdout);
+        for property in [
+            "depName",
+            "depVersion",
+            "depEcosystem",
+            "depPurl",
+            "depVulnerabilityId",
+            "depFixedVersion",
+            "depSource",
+            "depVulnerabilitySeverity",
+            "depPath",
+        ] {
+            assert!(
+                text.contains(property),
+                "SARIF should include {property}; got:\n{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn sca_offline_without_db_does_not_disable_pq_manifest_rules() {
+        let output = foxguard_cmd()
+            .args([
+                "--config",
+                "/dev/null",
+                "--sca",
+                "--sca-offline",
+                "tests/fixtures/deps/requirements.txt",
+                "-f",
+                "json",
+            ])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f["rule_id"] == "manifest/pip-pq-vulnerable-dep"),
+            "expected existing PQ manifest findings to remain available"
+        );
+        assert!(
+            findings
+                .iter()
+                .all(|f| f["rule_id"] != "manifest/osv-vulnerable-dep"),
+            "offline SCA without db/cache should not invent OSV findings"
+        );
+    }
+
+    #[test]
     fn detect_language_recognises_manifest_files() {
         assert_eq!(
             detect_language(Path::new("Cargo.lock")),
@@ -5024,5 +5311,83 @@ mod config_files {
         // Regular .json and .yaml should not match
         assert_eq!(detect_language(Path::new("config.json")), None);
         assert_eq!(detect_language(Path::new("config.yaml")), None);
+    }
+
+    fn osv_fixture(
+        id: &str,
+        ecosystem: &str,
+        name: &str,
+        version: &str,
+        fixed: &str,
+        severity: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "summary": "fixture advisory",
+            "affected": [{
+                "package": {
+                    "ecosystem": ecosystem,
+                    "name": name
+                },
+                "versions": [version],
+                "ranges": [{
+                    "type": "ECOSYSTEM",
+                    "events": [
+                        {"introduced": "0"},
+                        {"fixed": fixed}
+                    ]
+                }]
+            }],
+            "database_specific": {
+                "severity": severity
+            }
+        })
+    }
+
+    fn assert_sca_finding(
+        findings: &[serde_json::Value],
+        file_suffix: &str,
+        dep_name: &str,
+        dep_version: &str,
+        ecosystem: &str,
+        vulnerability_id: &str,
+        fixed_version: &str,
+    ) {
+        let finding = findings
+            .iter()
+            .find(|f| {
+                f["file"]
+                    .as_str()
+                    .is_some_and(|file| file.ends_with(file_suffix))
+                    && f["dep_name"].as_str() == Some(dep_name)
+                    && f["dep_vulnerability_id"].as_str() == Some(vulnerability_id)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing SCA finding for {file_suffix} {dep_name} {vulnerability_id}; got {findings:#?}"
+                )
+            });
+        assert_eq!(finding["rule_id"], "manifest/osv-vulnerable-dep");
+        assert_eq!(finding["dep_version"], dep_version);
+        assert_eq!(finding["dep_ecosystem"], ecosystem);
+        assert_eq!(finding["dep_fixed_version"], fixed_version);
+        assert_eq!(finding["dep_source"], "OSV");
+        assert!(
+            finding["dep_purl"].as_str().is_some_and(|purl| {
+                purl.contains(dep_name) && purl.ends_with(&format!("@{dep_version}"))
+            }),
+            "expected dep_purl for {dep_name}, got {}",
+            finding["dep_purl"]
+        );
+        assert!(
+            finding["dep_vulnerability_severity"].as_str().is_some(),
+            "expected advisory severity metadata"
+        );
+        assert!(
+            finding["dep_path"]
+                .as_array()
+                .is_some_and(|path| !path.is_empty()),
+            "expected stable dependency path metadata"
+        );
     }
 }

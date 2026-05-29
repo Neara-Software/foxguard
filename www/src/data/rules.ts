@@ -160,6 +160,10 @@ const javaRules: Rule[] = [
   { id: 'java/pq-vulnerable-crypto', cwe: 'CWE-327', desc: 'Use of quantum-vulnerable cryptographic algorithm (RSA/EC/DSA/DH/Ed25519/X25519)', severity: 'high' },
   { id: 'java/spring-cors-permissive', cwe: 'CWE-942', desc: 'Permissive CORS configuration allows any origin', severity: 'medium' },
   { id: 'java/spring-csrf-disabled', cwe: 'CWE-352', desc: 'Spring Security CSRF protection is disabled', severity: 'high' },
+  { id: 'java/taint-command-injection', cwe: 'CWE-78', desc: 'Untrusted Java servlet or Spring input reaches command execution sink', severity: 'critical' },
+  { id: 'java/taint-sql-injection', cwe: 'CWE-89', desc: 'Untrusted Java servlet or Spring input reaches SQL query sink', severity: 'critical' },
+  { id: 'java/taint-ssrf', cwe: 'CWE-918', desc: 'Untrusted Java servlet or Spring input reaches outbound URL sink', severity: 'high' },
+  { id: 'java/taint-unsafe-deserialization', cwe: 'CWE-502', desc: 'Untrusted Java servlet or Spring input reaches unsafe deserialization sink', severity: 'critical' },
 ];
 
 const phpRules: Rule[] = [
@@ -250,6 +254,7 @@ const dockerfileRules: Rule[] = [
 const manifestRules: Rule[] = [
   { id: 'manifest/cargo-pq-vulnerable-dep', cwe: 'CWE-327', desc: 'Dependency uses quantum-vulnerable cryptographic algorithm (dev-dependencies not distinguished)', severity: 'high' },
   { id: 'manifest/npm-pq-vulnerable-dep', cwe: 'CWE-327', desc: 'Dependency uses quantum-vulnerable cryptographic algorithm', severity: 'high' },
+  { id: 'manifest/osv-vulnerable-dep', cwe: 'CWE-937', desc: 'Dependency is affected by a known OSV vulnerability', severity: 'high' },
   { id: 'manifest/pip-pq-vulnerable-dep', cwe: 'CWE-327', desc: 'Dependency uses quantum-vulnerable cryptographic algorithm', severity: 'high' },
   { id: 'manifest/pipfile-pq-vulnerable-dep', cwe: 'CWE-327', desc: 'Dependency uses quantum-vulnerable cryptographic algorithm', severity: 'high' },
   { id: 'manifest/pnpm-pq-vulnerable-dep', cwe: 'CWE-327', desc: 'Dependency uses quantum-vulnerable cryptographic algorithm', severity: 'high' },
