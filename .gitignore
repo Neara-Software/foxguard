@@ -1,5 +1,8 @@
 # Rust
 /target
+# Ad-hoc cargo target dirs (e.g. false-positive check runs)
+*-target/
+.fp-check-target/
 
 # Node
 node_modules/
