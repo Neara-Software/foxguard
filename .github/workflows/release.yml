@@ -134,6 +134,10 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v6
 
@@ -153,6 +157,16 @@ jobs:
           sha256sum * > checksums.txt
           echo "--- checksums.txt ---"
           cat checksums.txt
+
+      - name: Attest release binaries
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-checksums: release/checksums.txt
+
+      - name: Attest checksum manifest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

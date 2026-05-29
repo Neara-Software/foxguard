@@ -21,6 +21,11 @@ It scans for SQL injection, XSS, SSRF, hardcoded secrets, command injection, wea
 
 This is the npm wrapper. It downloads the correct prebuilt Rust binary for your platform from GitHub Releases and caches it locally.
 
+The wrapper verifies the downloaded binary against the release `checksums.txt`
+before caching it. Release binaries also have GitHub artifact attestations for
+manual or CI verification with `gh attestation verify`; see the repository's
+release provenance documentation for the trust model and failure modes.
+
 ```sh
 npx foxguard .                    # scan everything
 npx foxguard --changed .          # only modified files
