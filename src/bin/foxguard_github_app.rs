@@ -959,7 +959,7 @@ mod tests {
             url: "https://github.com/0sec-labs/foxguard.git".to_string(),
             auth_header_key: "http.https://github.com/.extraheader".to_string(),
         };
-        let checkout = Path::new("/tmp/foxguard-checkout");
+        let checkout_path = "/tmp/foxguard-checkout";
         // Synthetic token literal used solely to verify command construction.
         // foxguard: ignore[rs/no-hardcoded-secret]
         let token = "ghs_command_test_token";
@@ -969,7 +969,7 @@ mod tests {
                 "--filter=blob:none",
                 "--no-checkout",
                 clone_target.url.as_str(),
-                checkout.to_str().expect("test path should be valid UTF-8"),
+                checkout_path,
             ],
             &clone_target.auth_header_key,
             token,
@@ -1011,9 +1011,9 @@ mod tests {
             envs.get("GIT_CONFIG_KEY_0").map(String::as_str),
             Some("http.https://github.com/.extraheader")
         );
-        let header = envs
-            .get("GIT_CONFIG_VALUE_0")
-            .expect("git auth header should be configured");
+        let Some(header) = envs.get("GIT_CONFIG_VALUE_0") else {
+            panic!("git auth header should be configured");
+        };
         assert!(header.starts_with("AUTHORIZATION: basic "));
         assert!(!header.contains(token), "token leaked into auth header");
     }
