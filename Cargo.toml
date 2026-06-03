@@ -50,6 +50,7 @@ reqwest = { version = "0.13.3", default-features = false, features = ["blocking"
 # Optional deps for the GitHub App webhook receiver (gated behind the
 # `github-app` feature). Off by default so the core scanner build stays
 # lean. See src/github_app/README.md and issue #246.
+base64 = { version = "0.22", optional = true }
 axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "json", "macros"], optional = true }
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "signal"], optional = true }
 hmac = { version = "0.12", optional = true }
@@ -62,7 +63,7 @@ jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"], optional = true
 [features]
 default = []
 # Builds the foxguard-github-app binary plus its dependency closure.
-github-app = ["dep:axum", "dep:tokio", "dep:hmac", "dep:hex", "dep:tower-http", "dep:tracing", "dep:tracing-subscriber", "dep:jsonwebtoken"]
+github-app = ["dep:base64", "dep:axum", "dep:tokio", "dep:hmac", "dep:hex", "dep:tower-http", "dep:tracing", "dep:tracing-subscriber", "dep:jsonwebtoken"]
 
 [[bin]]
 name = "foxguard-mcp"

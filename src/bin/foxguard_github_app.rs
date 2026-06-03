@@ -25,6 +25,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use base64::Engine;
 use foxguard::github_app::auth::{
     AppCredentials, AuthError, GitHubAppAuthClient, InstallationToken, InstallationTokenCache,
 };
@@ -545,19 +546,16 @@ fn git_clone_head(
     installation_token: &str,
     checkout: &Path,
 ) -> Result<(), String> {
-    let authed_url = clone_target.url.replace(
-        "https://",
-        &format!("https://x-access-token:{installation_token}@"),
-    );
+    let checkout_path = checkout
+        .to_str()
+        .ok_or_else(|| "checkout path is not valid UTF-8".to_string())?;
     run_git(
         &[
             "clone",
             "--filter=blob:none",
             "--no-checkout",
-            &authed_url,
-            checkout
-                .to_str()
-                .ok_or_else(|| "checkout path is not valid UTF-8".to_string())?,
+            clone_target.url.as_str(),
+            checkout_path,
         ],
         &clone_target.auth_header_key,
         installation_token,
@@ -579,22 +577,51 @@ fn git_clone_head(
 
 fn run_git(
     args: &[&str],
-    _auth_header_key: &str,
+    auth_header_key: &str,
     installation_token: &str,
     current_dir: Option<&Path>,
 ) -> Result<(), String> {
+    let command = build_git_command(args, auth_header_key, installation_token, current_dir);
+    run_command_with_timeout(command, PULL_REQUEST_SCAN_TIMEOUT, "git")
+        .map(|_| ())
+        .map_err(|error| redact_git_error(&error, installation_token))
+}
+
+fn build_git_command(
+    args: &[&str],
+    auth_header_key: &str,
+    installation_token: &str,
+    current_dir: Option<&Path>,
+) -> Command {
     let mut command = Command::new("git");
     command
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    install_git_auth_env(&mut command, auth_header_key, installation_token);
     if let Some(current_dir) = current_dir {
         command.current_dir(current_dir);
     }
-    run_command_with_timeout(command, PULL_REQUEST_SCAN_TIMEOUT, "git")
-        .map(|_| ())
-        .map_err(|error| redact_git_error(&error, installation_token))
+    command
+}
+
+fn install_git_auth_env(command: &mut Command, auth_header_key: &str, installation_token: &str) {
+    // Use git's environment-backed config so the installation token stays out
+    // of `git` argv while still scoping the extra header to the validated host.
+    command
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", auth_header_key)
+        .env(
+            "GIT_CONFIG_VALUE_0",
+            git_auth_header_value(installation_token),
+        );
+}
+
+fn git_auth_header_value(installation_token: &str) -> String {
+    let credentials = format!("x-access-token:{installation_token}");
+    let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
+    format!("AUTHORIZATION: basic {encoded}")
 }
 
 /// Strip the installation token (and any line that names the
@@ -911,6 +938,84 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("not allowlisted"));
+    }
+
+    #[test]
+    fn git_auth_header_value_uses_basic_auth_without_leaking_token() {
+        // Synthetic token literal used solely to verify auth header construction.
+        // foxguard: ignore[rs/no-hardcoded-secret]
+        let token = "ghs_header_test_token";
+        let header = git_auth_header_value(token);
+        assert!(header.starts_with("AUTHORIZATION: basic "));
+        assert!(
+            !header.contains(token),
+            "token leaked into header: {header}"
+        );
+    }
+
+    #[test]
+    fn build_git_command_uses_raw_clone_url_and_env_backed_auth() {
+        let clone_target = CloneTarget {
+            url: "https://github.com/0sec-labs/foxguard.git".to_string(),
+            auth_header_key: "http.https://github.com/.extraheader".to_string(),
+        };
+        let checkout = Path::new("/tmp/foxguard-checkout");
+        // Synthetic token literal used solely to verify command construction.
+        // foxguard: ignore[rs/no-hardcoded-secret]
+        let token = "ghs_command_test_token";
+        let command = build_git_command(
+            &[
+                "clone",
+                "--filter=blob:none",
+                "--no-checkout",
+                clone_target.url.as_str(),
+                checkout.to_str().expect("test path should be valid UTF-8"),
+            ],
+            &clone_target.auth_header_key,
+            token,
+            None,
+        );
+
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "clone",
+                "--filter=blob:none",
+                "--no-checkout",
+                "https://github.com/0sec-labs/foxguard.git",
+                "/tmp/foxguard-checkout",
+            ]
+        );
+        assert!(
+            args.iter().all(|arg| !arg.contains(token)),
+            "token leaked into git argv: {args:?}"
+        );
+
+        let envs: HashMap<String, String> = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value
+                        .map(|value| value.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(envs.get("GIT_CONFIG_COUNT").map(String::as_str), Some("1"));
+        assert_eq!(
+            envs.get("GIT_CONFIG_KEY_0").map(String::as_str),
+            Some("http.https://github.com/.extraheader")
+        );
+        let header = envs
+            .get("GIT_CONFIG_VALUE_0")
+            .expect("git auth header should be configured");
+        assert!(header.starts_with("AUTHORIZATION: basic "));
+        assert!(!header.contains(token), "token leaked into auth header");
     }
 
     #[test]

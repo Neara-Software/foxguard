@@ -849,6 +849,7 @@ name = "foxguard"
 version = "0.8.1"
 dependencies = [
  "axum",
+ "base64",
  "clap",
  "colored",
  "crossterm",
