@@ -2,6 +2,7 @@ use crate::engine::{
     coccinelle, scan_directory_with_notices, scan_paths_with_root_with_notices, ScanResult,
     ScanStats,
 };
+use crate::path_identity::{finding_path_key, stored_path_key};
 use crate::rules::RuleRegistry;
 use crate::Finding;
 use std::collections::HashSet;
@@ -126,6 +127,10 @@ fn scan_target_branch_files_with_warnings(
         max_file_size,
         None,
     );
+    // Rewrite temp-checkout findings back to repo-relative paths before diffing.
+    for finding in &mut result.findings {
+        finding.file = stored_path_key(temp_dir.path(), &finding.file);
+    }
 
     if !coccinelle_rules.is_empty() {
         append_coccinelle_scan(
@@ -144,39 +149,43 @@ fn scan_target_branch_files_with_warnings(
     Ok((result, warnings))
 }
 
-/// Two findings are "the same" if they share the same rule_id and snippet content.
-/// We deliberately ignore line numbers since they shift with edits.
-/// File path is normalized to just the filename for comparison since base findings
-/// use temp dir paths while current findings use real paths.
-fn finding_key(finding: &Finding) -> (String, String, String) {
-    // Use just the relative path tail (last 3 components) to match regardless of prefix
-    let path_tail: String = finding
-        .file
-        .split('/')
-        .rev()
-        .take(3)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join("/");
+/// Two findings are "the same" if they share the same rule id, full normalized
+/// relative path, and snippet content. We deliberately ignore line numbers since
+/// they shift with edits, but we keep the whole path so distinct files do not
+/// collapse just because their tail components happen to match.
+fn stored_finding_key(root: &Path, finding: &Finding) -> (String, String, String) {
     (
         finding.rule_id.clone(),
-        path_tail,
+        stored_path_key(root, &finding.file),
+        finding.snippet.trim().to_string(),
+    )
+}
+
+fn current_finding_key(root: &Path, finding: &Finding) -> (String, String, String) {
+    (
+        finding.rule_id.clone(),
+        finding_path_key(root, &finding.file),
         finding.snippet.trim().to_string(),
     )
 }
 
 /// Compute new findings: those in current but not in base.
-/// Matching is by (rule_id, path_tail, snippet_content).
+/// Matching is by (rule_id, full_normalized_path, snippet_content).
 pub fn diff_findings(current: Vec<Finding>, base: Vec<Finding>) -> DiffResult {
+    diff_findings_with_root(current, base, Path::new("."))
+}
+
+fn diff_findings_with_root(current: Vec<Finding>, base: Vec<Finding>, root: &Path) -> DiffResult {
     let total_current = current.len();
 
-    let base_keys: HashSet<(String, String, String)> = base.iter().map(finding_key).collect();
+    let base_keys: HashSet<(String, String, String)> = base
+        .iter()
+        .map(|finding| stored_finding_key(root, finding))
+        .collect();
 
     let new_findings: Vec<Finding> = current
         .into_iter()
-        .filter(|f| !base_keys.contains(&finding_key(f)))
+        .filter(|finding| !base_keys.contains(&current_finding_key(root, finding)))
         .collect();
 
     let existing_count = total_current - new_findings.len();
@@ -287,7 +296,7 @@ pub fn run_diff_with_coccinelle_warnings(
                 .any(|rel| f.file.ends_with(rel) || rel.ends_with(&f.file))
         });
 
-    let diff = diff_findings(changed_findings, base_result.findings);
+    let diff = diff_findings_with_root(changed_findings, base_result.findings, &repo);
     let total_current = diff.total_current + unchanged_findings.len();
     let existing_count = diff.existing_count + unchanged_findings.len();
 
@@ -334,6 +343,7 @@ fn append_coccinelle_scan(
 mod tests {
     use super::*;
     use crate::Severity;
+    use tempfile::TempDir;
 
     fn make_finding(rule_id: &str, file: &str, line: usize, snippet: &str) -> Finding {
         Finding {
@@ -419,5 +429,64 @@ mod tests {
             0,
             "whitespace-trimmed snippets should match"
         );
+    }
+
+    #[test]
+    fn test_diff_findings_distinguishes_same_tail_in_different_directories() {
+        let current = vec![make_finding(
+            "rule-1",
+            "packages/a/src/app.js",
+            10,
+            "eval(input)",
+        )];
+        let base = vec![make_finding(
+            "rule-1",
+            "services/a/src/app.js",
+            10,
+            "eval(input)",
+        )];
+
+        let result = diff_findings(current, base);
+        assert_eq!(
+            result.new_findings.len(),
+            1,
+            "distinct files must not collapse just because their path tails match"
+        );
+        assert_eq!(result.existing_count, 0);
+    }
+
+    #[test]
+    fn test_diff_findings_with_root_matches_absolute_current_paths() {
+        let repo = match TempDir::new() {
+            Ok(repo) => repo,
+            Err(error) => panic!("failed to create temp dir: {error}"),
+        };
+        let current_path = repo.path().join("packages/a/src/app.js");
+        let Some(parent) = current_path.parent() else {
+            panic!("test file should have parent");
+        };
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            panic!("failed to create test directories: {error}");
+        }
+        if let Err(error) = std::fs::write(&current_path, "eval(input)\n") {
+            panic!("failed to create test file: {error}");
+        }
+        let current_file = current_path.to_string_lossy().into_owned();
+
+        let current = vec![make_finding("rule-1", &current_file, 10, "eval(input)")];
+        let base = vec![make_finding(
+            "rule-1",
+            "packages/a/src/app.js",
+            8,
+            "eval(input)",
+        )];
+
+        let result = diff_findings_with_root(current, base, repo.path());
+        assert_eq!(
+            result.new_findings.len(),
+            0,
+            "absolute current paths should match stored repo-relative base paths"
+        );
+        assert_eq!(result.existing_count, 1);
     }
 }
