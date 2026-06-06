@@ -30,6 +30,10 @@ fn command_uses_const() {
     let _ = Command::new(GIT_BINARY).arg("status").spawn();
 }
 
+fn command_uses_env_macro() {
+    let _ = Command::new(env!("CARGO")).arg("--version").spawn();
+}
+
 // A user helper whose name merely contains "transmute" is not std::mem::transmute.
 fn my_transmute_wrapper(value: u32) -> u32 {
     value.swap_bytes()
@@ -85,6 +89,10 @@ fn map_get(map: &HashMap<String, String>, key: &str) -> Option<String> {
 
 fn static_path() {
     let _ = std::path::Path::new("config/settings.toml");
+}
+
+fn env_path() {
+    let _ = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
 }
 
 fn avoid_unwrap(value: Option<i32>) -> i32 {

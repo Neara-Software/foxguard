@@ -55,10 +55,12 @@ fn last_two_path_segments(func_text: &str) -> String {
 
 fn rust_sql_methods_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"(?i)\b(query|sql_query|execute|raw_sql)\b")
-            .expect("static Rust SQL method regex should compile")
-    })
+    RE.get_or_init(
+        || match Regex::new(r"(?i)\b(query|sql_query|execute|raw_sql)\b") {
+            Ok(re) => re,
+            Err(error) => panic!("static Rust SQL method regex should compile: {error}"),
+        },
+    )
 }
 
 /// Returns true if a call argument node is a compile-time constant that cannot
@@ -68,7 +70,7 @@ fn rust_sql_methods_re() -> &'static Regex {
 /// values (locals, function results, format! results) are not constant.
 fn arg_is_constant(arg: tree_sitter::Node<'_>, src: &str) -> bool {
     match arg.kind() {
-        "string_literal" => true,
+        "string_literal" | "raw_string_literal" => true,
         "identifier" | "scoped_identifier" => {
             let text = &src[arg.byte_range()];
             // Take the final path segment and check it is a SCREAMING_SNAKE_CASE
@@ -80,6 +82,15 @@ fn arg_is_constant(arg: tree_sitter::Node<'_>, src: &str) -> bool {
                 && name
                     .chars()
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        }
+        "macro_invocation" => {
+            let text = &src[arg.byte_range()];
+            // These macros expand to compile-time string constants, so they do
+            // not carry runtime attacker input into Command::new / Path::new.
+            matches!(
+                text.split_once('!').map(|(name, _)| name.trim()),
+                Some("env" | "concat" | "stringify" | "include_str")
+            )
         }
         _ => false,
     }
@@ -634,7 +645,7 @@ impl_rule! {
                     if tail == "Path::new" || tail == "PathBuf::from" {
                         if let Some(args) = node.child_by_field_name("arguments") {
                             if let Some(first_arg) = args.named_child(0) {
-                                if first_arg.kind() != "string_literal" {
+                                if !arg_is_constant(first_arg, src) {
                                     findings.push(make_finding(
                                         _self.id(),
                                         _self.severity(),
