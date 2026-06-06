@@ -919,10 +919,9 @@ fn version_in_range(package: &PackageRef, range: &OsvRange) -> bool {
     let mut vulnerable = false;
     for event in &range.events {
         if let Some(introduced) = event.introduced.as_deref() {
-            if introduced == "0" {
-                vulnerable = true;
-            } else if compare_versions_for_package(package, range.range_type.as_deref(), introduced)
-                .is_some_and(|ordering| ordering != Ordering::Less)
+            if introduced == "0"
+                || compare_versions_for_package(package, range.range_type.as_deref(), introduced)
+                    .is_some_and(|ordering| ordering != Ordering::Less)
             {
                 vulnerable = true;
             }
@@ -1421,7 +1420,6 @@ mod tests {
                     ..OsvEvent::default()
                 },
             ],
-            ..OsvRange::default()
         };
         let matching = package_ref(
             "crates.io",
