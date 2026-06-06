@@ -1,6 +1,8 @@
 //! Pull request review posting for the GitHub App receiver.
 
-use crate::report::github_pr::{review_comments_for_commentable_lines, COMMENT_MARKER};
+use crate::report::github_pr::{
+    review_body_for_findings, review_comments_for_commentable_lines, COMMENT_MARKER,
+};
 use crate::{Finding, Severity};
 use reqwest::Url;
 use serde::Deserialize;
@@ -107,8 +109,9 @@ impl GitHubReviewClient {
                 &owned_lines
             }
         };
+        let review_findings = filter_findings_to_changed_lines(findings, commentable_lines);
         let comments =
-            review_comments_for_commentable_lines(findings, commentable_lines, scan_root);
+            review_comments_for_commentable_lines(&review_findings, commentable_lines, scan_root);
         if comments.is_empty() {
             let deleted_comments = self
                 .delete_foxguard_comment_ids(&repo, &existing_comment_ids, installation_token)
@@ -120,10 +123,15 @@ impl GitHubReviewClient {
         }
 
         let posted_comments = comments.len();
-        for comment in comments {
-            self.post_inline_comment(&repo, pr_number, head_sha, comment, installation_token)
-                .await?;
-        }
+        self.post_review(
+            &repo,
+            pr_number,
+            head_sha,
+            &review_findings,
+            comments,
+            installation_token,
+        )
+        .await?;
 
         let deleted_comments = self
             .delete_foxguard_comment_ids(&repo, &existing_comment_ids, installation_token)
@@ -256,25 +264,20 @@ impl GitHubReviewClient {
             .collect())
     }
 
-    async fn post_inline_comment(
+    async fn post_review(
         &self,
         repo: &RepositoryPath,
         pr_number: u64,
         head_sha: &str,
-        comment: Value,
+        findings: &[Finding],
+        comments: Vec<Value>,
         installation_token: &str,
     ) -> Result<(), ReviewError> {
         let url = self.endpoint(&format!(
-            "repos/{}/{}/pulls/{pr_number}/comments",
+            "repos/{}/{}/pulls/{pr_number}/reviews",
             repo.owner, repo.name
         ))?;
-        let body = serde_json::json!({
-            "body": comment["body"],
-            "commit_id": head_sha,
-            "path": comment["path"],
-            "line": comment["line"],
-            "side": comment["side"],
-        });
+        let body = review_request_body(head_sha, findings, comments);
         // URL construction is restricted to a validated GitHub API base URL plus
         // repository path segments parsed by `RepositoryPath::parse`.
         let request = self.http.post(url); // foxguard: ignore[rs/no-ssrf]
@@ -569,6 +572,14 @@ fn check_run_annotations(findings: &[Finding]) -> Vec<Value> {
         .collect()
 }
 
+fn review_request_body(head_sha: &str, findings: &[Finding], comments: Vec<Value>) -> Value {
+    let mut body = review_body_for_findings(findings, comments);
+    if let Some(object) = body.as_object_mut() {
+        object.insert("commit_id".to_string(), Value::String(head_sha.to_string()));
+    }
+    body
+}
+
 fn annotation_level(severity: Severity) -> &'static str {
     match severity {
         Severity::Low => "notice",
@@ -723,6 +734,38 @@ mod tests {
         assert_eq!(annotations[0]["path"], "src/app.js");
         assert_eq!(annotations[0]["start_line"], 1);
         assert_eq!(annotations[0]["annotation_level"], "failure");
+    }
+
+    #[test]
+    fn review_request_body_bundles_comments_into_single_review() {
+        let findings = vec![
+            finding(Severity::High, 10),
+            finding_in_file(Severity::Medium, "src/other.js", 12),
+        ];
+        let comments = vec![
+            serde_json::json!({
+                "path": "src/app.js",
+                "line": 10,
+                "side": "RIGHT",
+                "body": "<!-- foxguard:pr-review -->\n\none",
+            }),
+            serde_json::json!({
+                "path": "src/other.js",
+                "line": 12,
+                "side": "RIGHT",
+                "body": "<!-- foxguard:pr-review -->\n\ntwo",
+            }),
+        ];
+
+        let body = review_request_body("deadbeef", &findings, comments);
+        assert_eq!(body["event"], "COMMENT");
+        assert_eq!(body["commit_id"], "deadbeef");
+        assert_eq!(body["comments"].as_array().map(Vec::len), Some(2));
+        let summary = body["body"]
+            .as_str()
+            .unwrap_or_else(|| panic!("review summary should be a string"));
+        assert!(summary.contains("**By class**"));
+        assert!(summary.contains("**By severity**"));
     }
 
     #[test]
