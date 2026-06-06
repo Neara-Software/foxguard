@@ -3,8 +3,10 @@ use std::time::Duration;
 
 use foxguard::engine::process::{wait_with_output_timeout, TimedOutput};
 
+const PROCESS_TEST_HELPER: &str = env!("CARGO_BIN_EXE_foxguard_process_test_helper");
+
 fn helper_command(mode: &str) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_foxguard_process_test_helper"));
+    let mut command = Command::new(PROCESS_TEST_HELPER);
     command
         .arg(mode)
         .stdout(Stdio::piped())

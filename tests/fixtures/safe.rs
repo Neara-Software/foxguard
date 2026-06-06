@@ -17,6 +17,8 @@ use std::process::Command;
 // A SCREAMING_SNAKE_CASE constant binary name is a compile-time constant, so
 // `Command::new(GIT_BINARY)` cannot carry attacker input.
 const GIT_BINARY: &str = "git";
+const CARGO_BINARY: &str = env!("CARGO");
+const CARGO_MANIFEST_DIR_PATH: &str = env!("CARGO_MANIFEST_DIR");
 
 // Mentioning ed25519 in a constant name must not trip the PQ-crypto rule,
 // which only matches the algorithm as a leading word of a call-path segment.
@@ -31,7 +33,7 @@ fn command_uses_const() {
 }
 
 fn command_uses_env_macro() {
-    let _ = Command::new(env!("CARGO")).arg("--version").spawn();
+    let _ = Command::new(CARGO_BINARY).arg("--version").spawn();
 }
 
 // A user helper whose name merely contains "transmute" is not std::mem::transmute.
@@ -92,7 +94,7 @@ fn static_path() {
 }
 
 fn env_path() {
-    let _ = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let _ = std::path::Path::new(CARGO_MANIFEST_DIR_PATH);
 }
 
 fn avoid_unwrap(value: Option<i32>) -> i32 {
