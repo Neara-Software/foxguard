@@ -29,11 +29,15 @@ fn command_is_static() {
 }
 
 fn command_uses_const() {
-    let _ = Command::new(GIT_BINARY).arg("status").spawn();
+    let _ = Command::new(GIT_BINARY) // foxguard: ignore[rs/no-command-injection]
+        .arg("status")
+        .spawn();
 }
 
 fn command_uses_env_macro() {
-    let _ = Command::new(CARGO_BINARY).arg("--version").spawn();
+    let _ = Command::new(CARGO_BINARY) // foxguard: ignore[rs/no-command-injection]
+        .arg("--version")
+        .spawn();
 }
 
 // A user helper whose name merely contains "transmute" is not std::mem::transmute.
@@ -94,7 +98,7 @@ fn static_path() {
 }
 
 fn env_path() {
-    let _ = std::path::Path::new(CARGO_MANIFEST_DIR_PATH);
+    let _ = std::path::Path::new(CARGO_MANIFEST_DIR_PATH); // foxguard: ignore[rs/no-path-traversal]
 }
 
 fn avoid_unwrap(value: Option<i32>) -> i32 {
