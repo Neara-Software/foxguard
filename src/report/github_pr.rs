@@ -4,6 +4,12 @@ use std::path::Path;
 
 pub const COMMENT_MARKER: &str = "<!-- foxguard:pr-review -->";
 
+#[derive(Debug, serde::Deserialize)]
+struct PullRequestFile {
+    filename: String,
+    patch: Option<String>,
+}
+
 /// Format the severity as an uppercase label for the PR comment.
 fn severity_label(severity: Severity) -> &'static str {
     match severity {
@@ -169,6 +175,64 @@ pub fn review_body_for_comments(comments: Vec<serde_json::Value>) -> serde_json:
     })
 }
 
+fn gh_pull_request_files(stdout: &[u8]) -> Result<Vec<PullRequestFile>, String> {
+    let value: serde_json::Value = serde_json::from_slice(stdout)
+        .map_err(|e| format!("Failed to parse PR files response: {e}"))?;
+    let file_values: Vec<serde_json::Value> = match value.as_array() {
+        Some(values) if values.iter().all(|value| value.is_array()) => values
+            .iter()
+            .flat_map(|page| page.as_array().into_iter().flatten().cloned())
+            .collect(),
+        Some(values) => values.clone(),
+        None => Vec::new(),
+    };
+
+    file_values
+        .into_iter()
+        .map(|value| {
+            serde_json::from_value(value).map_err(|e| format!("Failed to decode PR file: {e}"))
+        })
+        .collect()
+}
+
+fn hunk_new_start(line: &str) -> Option<usize> {
+    let hunk = line.strip_prefix("@@ ")?;
+    let plus = hunk.split_whitespace().find(|part| part.starts_with('+'))?;
+    let start = plus.trim_start_matches('+').split(',').next()?;
+    start.parse().ok()
+}
+
+fn commentable_lines_from_patch(patch: Option<&str>) -> Option<HashSet<usize>> {
+    let patch = patch?;
+    let mut lines = HashSet::new();
+    let mut new_line = None;
+    for line in patch.lines() {
+        if let Some(start) = hunk_new_start(line) {
+            new_line = Some(start);
+            continue;
+        }
+
+        let Some(current_line) = new_line.as_mut() else {
+            continue;
+        };
+        if line.starts_with('+') || line.starts_with(' ') {
+            lines.insert(*current_line);
+            *current_line += 1;
+        }
+    }
+    Some(lines)
+}
+
+fn commentable_lines_by_file(stdout: &[u8]) -> Result<HashMap<String, HashSet<usize>>, String> {
+    Ok(gh_pull_request_files(stdout)?
+        .into_iter()
+        .filter_map(|file| {
+            let lines = commentable_lines_from_patch(file.patch.as_deref())?;
+            Some((file.filename, lines))
+        })
+        .collect())
+}
+
 /// Post findings as inline review comments on a GitHub pull request.
 ///
 /// Uses `gh api` to create a single PR review containing all comments.
@@ -189,40 +253,57 @@ pub fn post_pr_review(
         "GITHUB_REPOSITORY environment variable not set; cannot post PR review".to_string()
     })?;
 
+    if findings.is_empty() {
+        let deleted = delete_existing_foxguard_comments(&repo, pr_number)?;
+        if deleted > 0 {
+            eprintln!(
+                "Removed {} prior foxguard PR comment(s) on PR #{}",
+                deleted, pr_number
+            );
+        }
+        return Ok(());
+    }
+
+    // Get the PR diff to know which lines are commentable.
+    let diff_output = std::process::Command::new("gh")
+        .args([
+            "api",
+            &format!("repos/{repo}/pulls/{pr_number}/files"),
+            "--paginate",
+            "--slurp",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to get PR files: {e}"))?;
+
+    if !diff_output.status.success() {
+        let stderr = String::from_utf8_lossy(&diff_output.stderr);
+        return Err(format!(
+            "gh api returned {} while listing PR files: {}",
+            diff_output.status, stderr
+        ));
+    }
+
+    let commentable_lines = commentable_lines_by_file(&diff_output.stdout)?;
+    let comments = review_comments_for_commentable_lines(findings, &commentable_lines, scan_root);
+
+    if comments.is_empty() {
+        let deleted = delete_existing_foxguard_comments(&repo, pr_number)?;
+        if deleted > 0 {
+            eprintln!(
+                "Removed {} prior foxguard PR comment(s) on PR #{}",
+                deleted, pr_number
+            );
+        }
+        eprintln!("No findings on commentable PR lines, skipping review");
+        return Ok(());
+    }
+
     let deleted = delete_existing_foxguard_comments(&repo, pr_number)?;
     if deleted > 0 {
         eprintln!(
             "Removed {} prior foxguard PR comment(s) on PR #{}",
             deleted, pr_number
         );
-    }
-
-    if findings.is_empty() {
-        return Ok(());
-    }
-
-    // Get the PR diff to know which lines are commentable
-    let diff_output = std::process::Command::new("gh")
-        .args([
-            "api",
-            &format!("repos/{repo}/pulls/{pr_number}/files"),
-            "--jq",
-            ".[].filename",
-        ])
-        .output()
-        .map_err(|e| format!("Failed to get PR files: {e}"))?;
-
-    let pr_files: HashSet<String> = String::from_utf8_lossy(&diff_output.stdout)
-        .lines()
-        .map(|l| l.trim().to_string())
-        .collect();
-
-    // Build the comments array — only for files that are in the PR diff
-    let comments = review_comments_for_findings(findings, &pr_files, scan_root);
-
-    if comments.is_empty() {
-        eprintln!("No findings in PR-changed files, skipping review");
-        return Ok(());
     }
 
     let comment_count = comments.len();
@@ -400,5 +481,48 @@ mod tests {
         };
 
         assert_eq!(ids, vec![21, 23]);
+    }
+
+    #[test]
+    fn test_commentable_lines_from_patch_includes_added_and_context_lines() {
+        let lines = commentable_lines_from_patch(Some(
+            "@@ -10,4 +20,5 @@ fn demo() {\n context\n-old\n+new\n keep\n+added",
+        ))
+        .unwrap_or_else(|| panic!("patch should parse"));
+
+        assert!(lines.contains(&20));
+        assert!(lines.contains(&21));
+        assert!(lines.contains(&22));
+        assert!(lines.contains(&23));
+        assert!(!lines.contains(&24));
+    }
+
+    #[test]
+    fn test_commentable_lines_by_file_reads_slurped_pages() {
+        let stdout = br#"[
+            [{"filename":"src/app.py","patch":"@@ -1 +1,2 @@\n context\n+added"}],
+            [{"filename":"src/other.py","patch":"@@ -5 +8,2 @@\n keep\n+new"}]
+        ]"#;
+
+        let lines = commentable_lines_by_file(stdout)
+            .unwrap_or_else(|error| panic!("failed to parse PR files: {error}"));
+
+        assert_eq!(lines["src/app.py"], HashSet::from([1, 2]));
+        assert_eq!(lines["src/other.py"], HashSet::from([8, 9]));
+    }
+
+    #[test]
+    fn test_review_comments_for_commentable_lines_skips_non_diff_lines() {
+        let mut off_hunk = sample_finding();
+        off_hunk.line = 99;
+        let findings = vec![sample_finding(), off_hunk];
+        let commentable_lines =
+            HashMap::from([(String::from("src/app.py"), HashSet::from([42usize]))]);
+
+        let comments = review_comments_for_commentable_lines(&findings, &commentable_lines, None);
+
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0]["path"], "src/app.py");
+        assert_eq!(comments[0]["line"], 42);
     }
 }
