@@ -747,6 +747,7 @@ fn scan_files(
 ) -> (ScanResult, Vec<String>) {
     let start = Instant::now();
     let warnings = Mutex::new(Vec::new());
+    let secret_thresholds = registry.secret_thresholds();
 
     let mut taint_specs_by_lang: HashMap<Language, Vec<crate::rules::RegistryTaintSpec>> =
         HashMap::new();
@@ -1198,6 +1199,7 @@ fn scan_files(
                 python_import_paths: python_import_paths.as_ref(),
                 javascript_import_paths: javascript_import_paths.as_ref(),
                 go_same_package_paths,
+                secret_thresholds,
             };
 
             let mut file_findings = Vec::new();
@@ -1425,7 +1427,7 @@ mod tests {
     use super::*;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, Barrier,
     };
 
     struct CountingRule {
@@ -1557,6 +1559,73 @@ mod tests {
         assert!(findings.is_empty());
         assert_eq!(syntax_calls.load(Ordering::SeqCst), 1);
         assert_eq!(context_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn concurrent_scans_keep_secret_thresholds_per_registry() {
+        let repo = tempfile::tempdir().expect("failed to create temp dir");
+        for index in 0..64 {
+            std::fs::write(
+                repo.path().join(format!("file-{index}.js")),
+                "const apiKey = \"secret1\";\n",
+            )
+            .expect("failed to write fixture");
+        }
+
+        let barrier = Arc::new(Barrier::new(2));
+        let low_path = repo.path().to_path_buf();
+        let high_path = repo.path().to_path_buf();
+        let low_barrier = Arc::clone(&barrier);
+        let high_barrier = Arc::clone(&barrier);
+
+        let low_threshold = std::thread::spawn(move || {
+            let mut registry = RuleRegistry::empty();
+            registry.register(Box::new(crate::rules::javascript::NoHardcodedSecret));
+            registry.set_secret_thresholds(crate::rules::common::SecretScanThresholds::new(
+                Some(4),
+                None,
+            ));
+            low_barrier.wait();
+
+            for _ in 0..8 {
+                let (result, notices) = scan_directory_with_notices(
+                    low_path.to_str().expect("non-utf8 path"),
+                    &registry,
+                    1_000_000,
+                    None,
+                );
+                assert!(notices.is_empty());
+                assert_eq!(result.findings.len(), 64);
+            }
+        });
+
+        let high_threshold = std::thread::spawn(move || {
+            let mut registry = RuleRegistry::empty();
+            registry.register(Box::new(crate::rules::javascript::NoHardcodedSecret));
+            registry.set_secret_thresholds(crate::rules::common::SecretScanThresholds::new(
+                Some(9),
+                None,
+            ));
+            high_barrier.wait();
+
+            for _ in 0..8 {
+                let (result, notices) = scan_directory_with_notices(
+                    high_path.to_str().expect("non-utf8 path"),
+                    &registry,
+                    1_000_000,
+                    None,
+                );
+                assert!(notices.is_empty());
+                assert!(result.findings.is_empty());
+            }
+        });
+
+        low_threshold
+            .join()
+            .unwrap_or_else(|_| panic!("low-threshold scan panicked"));
+        high_threshold
+            .join()
+            .unwrap_or_else(|_| panic!("high-threshold scan panicked"));
     }
 
     #[test]

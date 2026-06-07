@@ -1,8 +1,8 @@
 use crate::baseline::{load_baseline, suppress_with_baseline_at_root, write_baseline_at_root};
 use crate::cli::{DiffArgs, OutputFormat, ScanArgs, SecretsArgs, TuiArgs};
 use crate::config::{
-    apply_scan_defaults, apply_scan_thresholds, apply_secrets_defaults, apply_severity_overrides,
-    load_for_scan, suppress_with_patterns, suppress_with_scan_ignores, FoxguardConfig,
+    apply_scan_defaults, apply_secrets_defaults, apply_severity_overrides, load_for_scan,
+    secret_scan_thresholds, suppress_with_patterns, suppress_with_scan_ignores, FoxguardConfig,
 };
 use crate::deps::{scan_dependency_vulnerabilities, DependencyScanOptions};
 use crate::diff::run_diff_with_coccinelle_warnings;
@@ -114,12 +114,8 @@ fn execute_scan_resolved(scan: ScanArgs) -> Result<ScanExecution, String> {
     validate_rules_path(scan.rules.as_deref())?;
     let identity_root = finding_identity_root(Path::new(&scan.path), config.as_ref());
 
-    // Install any `scan.thresholds.*` overrides into process-wide state
-    // before the rules run. Must happen after config load and before
-    // `scan_directory_with_notices` dispatches parallel rule execution.
-    apply_scan_thresholds(config.as_ref());
-
     let mut registry = build_registry(scan.no_builtins, scan.rules.as_deref())?;
+    registry.set_secret_thresholds(secret_scan_thresholds(config.as_ref()));
     let (mut coccinelle_rules, mut coccinelle_notices) = match scan.rules.as_deref() {
         Some(rules_path) => coccinelle::load_coccinelle_rules(Path::new(rules_path)),
         None => (Vec::new(), Vec::new()),
@@ -433,7 +429,6 @@ pub fn execute_diff(args: &DiffArgs) -> Result<DiffExecution, String> {
     validate_root_path(&args.path)?;
     let config = load_for_scan(Path::new(&args.path), args.config.as_deref())?;
     let identity_root = finding_identity_root(Path::new(&args.path), config.as_ref());
-    apply_scan_thresholds(config.as_ref());
     let config_scan = config.as_ref().map(|config| &config.scan);
     let rules_path = args
         .rules
@@ -448,6 +443,7 @@ pub fn execute_diff(args: &DiffArgs) -> Result<DiffExecution, String> {
         .or_else(|| config_scan.and_then(|scan_config| scan_config.severity));
     let min_confidence = config_scan.and_then(|scan_config| scan_config.min_confidence);
     let mut registry = build_registry(no_builtins, rules_path)?;
+    registry.set_secret_thresholds(secret_scan_thresholds(config.as_ref()));
     let (mut coccinelle_rules, mut coccinelle_notices) = match rules_path {
         Some(rules_path) => coccinelle::load_coccinelle_rules(Path::new(rules_path)),
         None => (Vec::new(), Vec::new()),

@@ -466,7 +466,7 @@ impl_rule! {
     cwe = Some("CWE-798"),
     description = "Hardcoded secret or credential detected",
     language = Language::Rust,
-    fn check(_self, source, tree) {
+    fn check_with_context(_self, source, tree, ctx) {
 
         let mut findings = Vec::new();
         let secret_pattern = hardcoded_secret_re();
@@ -481,7 +481,7 @@ impl_rule! {
                             if value.kind() == "string_literal" {
                                 let val = &src[value.byte_range()];
                                 let inner = val.trim_matches('"');
-                                if is_secret_value_long_enough(inner) {
+                                if is_secret_value_long_enough(inner, ctx.secret_thresholds) {
                                     findings.push(make_finding(
                                         _self.id(),
                                         _self.severity(),
