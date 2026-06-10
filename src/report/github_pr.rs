@@ -1,5 +1,5 @@
 use crate::{Finding, Severity};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 pub const COMMENT_MARKER: &str = "<!-- foxguard:pr-review -->";
@@ -167,12 +167,133 @@ pub fn review_comments_for_commentable_lines(
         .collect()
 }
 
-pub fn review_body_for_comments(comments: Vec<serde_json::Value>) -> serde_json::Value {
+/// Findings that land on a commentable (added/context) line of the PR diff.
+pub fn findings_on_commentable_lines(
+    findings: &[Finding],
+    commentable_lines: &HashMap<String, HashSet<usize>>,
+    scan_root: Option<&Path>,
+) -> Vec<Finding> {
+    findings
+        .iter()
+        .filter(|f| {
+            commentable_lines
+                .get(&relative_path(&f.file, scan_root))
+                .is_some_and(|lines| lines.contains(&f.line))
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn review_body_for_findings(
+    findings: &[Finding],
+    comments: Vec<serde_json::Value>,
+) -> serde_json::Value {
     serde_json::json!({
         "event": "COMMENT",
-        "body": format!("{COMMENT_MARKER}\n\n**foxguard** found {} issue(s) in this PR", comments.len()),
+        "body": review_summary_body(findings),
         "comments": comments,
     })
+}
+
+fn review_summary_body(findings: &[Finding]) -> String {
+    let mut low = 0;
+    let mut medium = 0;
+    let mut high = 0;
+    let mut critical = 0;
+    let mut class_counts: BTreeMap<String, (usize, BTreeSet<String>)> = BTreeMap::new();
+
+    for finding in findings {
+        match finding.severity {
+            Severity::Low => low += 1,
+            Severity::Medium => medium += 1,
+            Severity::High => high += 1,
+            Severity::Critical => critical += 1,
+        }
+
+        let class = finding_class_label(&finding.rule_id);
+        let entry = class_counts
+            .entry(class)
+            .or_insert_with(|| (0, BTreeSet::new()));
+        entry.0 += 1;
+        entry.1.insert(finding.rule_id.clone());
+    }
+
+    let mut classes: Vec<(String, usize, BTreeSet<String>)> = class_counts
+        .into_iter()
+        .map(|(class, (count, rule_ids))| (class, count, rule_ids))
+        .collect();
+    classes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    let mut body = format!(
+        "{COMMENT_MARKER}\n\n**foxguard** found {} issue(s) in this PR",
+        findings.len()
+    );
+    body.push_str(&format!(
+        "\n\n**By severity**\n- `CRITICAL`: {critical}\n- `HIGH`: {high}\n- `MEDIUM`: {medium}\n- `LOW`: {low}"
+    ));
+
+    if !classes.is_empty() {
+        body.push_str("\n\n**By class**");
+        for (class, count, rule_ids) in classes {
+            let rules = rule_ids.into_iter().collect::<Vec<_>>().join("`, `");
+            body.push_str(&format!("\n- `{class}`: {count} (`{rules}`)"));
+        }
+    }
+
+    body
+}
+
+fn finding_class_label(rule_id: &str) -> String {
+    let family = rule_id
+        .split_once('/')
+        .map(|(_, suffix)| suffix)
+        .unwrap_or(rule_id);
+    let mut parts: Vec<&str> = family.split('-').collect();
+    while parts
+        .first()
+        .is_some_and(|part| matches!(*part, "no" | "taint" | "detect"))
+    {
+        parts.remove(0);
+    }
+    if parts.is_empty() {
+        parts = family.split('-').collect();
+    }
+    parts
+        .into_iter()
+        .map(display_class_token)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn display_class_token(token: &str) -> String {
+    match token {
+        "api" => "API".to_string(),
+        "cbom" => "CBOM".to_string(),
+        "cli" => "CLI".to_string(),
+        "cors" => "CORS".to_string(),
+        "csrf" => "CSRF".to_string(),
+        "dos" => "DoS".to_string(),
+        "html" => "HTML".to_string(),
+        "http" => "HTTP".to_string(),
+        "https" => "HTTPS".to_string(),
+        "jwt" => "JWT".to_string(),
+        "osv" => "OSV".to_string(),
+        "pq" => "PQ".to_string(),
+        "pqc" => "PQC".to_string(),
+        "sarif" => "SARIF".to_string(),
+        "sql" => "SQL".to_string(),
+        "ssrf" => "SSRF".to_string(),
+        "tls" => "TLS".to_string(),
+        "xss" => "XSS".to_string(),
+        "xxe" => "XXE".to_string(),
+        _ => {
+            let mut chars = token.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        }
+    }
 }
 
 fn gh_pull_request_files(stdout: &[u8]) -> Result<Vec<PullRequestFile>, String> {
@@ -284,7 +405,10 @@ pub fn post_pr_review(
     }
 
     let commentable_lines = commentable_lines_by_file(&diff_output.stdout)?;
-    let comments = review_comments_for_commentable_lines(findings, &commentable_lines, scan_root);
+    let commentable_findings =
+        findings_on_commentable_lines(findings, &commentable_lines, scan_root);
+    let comments =
+        review_comments_for_commentable_lines(&commentable_findings, &commentable_lines, scan_root);
 
     if comments.is_empty() {
         let deleted = delete_existing_foxguard_comments(&repo, pr_number)?;
@@ -307,7 +431,7 @@ pub fn post_pr_review(
     }
 
     let comment_count = comments.len();
-    let review_body = review_body_for_comments(comments);
+    let review_body = review_body_for_findings(&commentable_findings, comments);
 
     let json_str = serde_json::to_string(&review_body)
         .map_err(|e| format!("Failed to serialize review body: {e}"))?;
@@ -524,5 +648,40 @@ mod tests {
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0]["path"], "src/app.py");
         assert_eq!(comments[0]["line"], 42);
+    }
+
+    #[test]
+    fn test_review_body_for_findings_groups_by_class_and_severity() {
+        let mut secret = sample_finding();
+        secret.rule_id = "js/no-hardcoded-secret".to_string();
+        secret.severity = Severity::High;
+        secret.description = "Hardcoded secret".to_string();
+
+        let mut taint = sample_finding();
+        taint.rule_id = "py/taint-sql-injection".to_string();
+        taint.description = "Tainted SQL".to_string();
+
+        let mut direct = sample_finding();
+        direct.rule_id = "py/no-sql-injection".to_string();
+        direct.description = "Direct SQL".to_string();
+        direct.severity = Severity::Medium;
+
+        let comments =
+            vec![serde_json::json!({"path":"src/app.py","line":1,"side":"RIGHT","body":"x"})];
+        let review = review_body_for_findings(&[secret, taint, direct], comments);
+        let body = review["body"]
+            .as_str()
+            .unwrap_or_else(|| panic!("review body should be a string"));
+
+        assert!(body.contains("**foxguard** found 3 issue(s)"));
+        assert!(body.contains("**By severity**"));
+        assert!(body.contains("`CRITICAL`: 1"));
+        assert!(body.contains("`HIGH`: 1"));
+        assert!(body.contains("`MEDIUM`: 1"));
+        assert!(body.contains("**By class**"));
+        assert!(body.contains("`SQL Injection`: 2"));
+        assert!(body.contains("`py/no-sql-injection`"));
+        assert!(body.contains("`py/taint-sql-injection`"));
+        assert!(body.contains("`Hardcoded Secret`: 1"));
     }
 }
