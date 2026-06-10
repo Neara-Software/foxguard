@@ -8,7 +8,8 @@
 //!
 //! - `mode: taint` with `languages: [python]`, `languages: [javascript]` /
 //!   `[typescript]` / `[js]` / `[ts]`, `languages: [go]` / `[golang]`,
-//!   or `languages: [java]`.
+//!   `languages: [java]`, `languages: [c]`, or `languages: [kotlin]` /
+//!   `[kt]`.
 //!   Other languages are rejected with a warning and the rule is skipped;
 //!   non-taint rules fall through to the regular Semgrep bridge.
 //! - `pattern-sources`, `pattern-sinks`, `pattern-sanitizers` as lists of
@@ -23,7 +24,7 @@
 //! - `pattern-inside:`, `metavariable-pattern:`, `patterns:` inside
 //!   source/sink blocks.
 //! - Any `mode: taint` rule that does not target Python, JavaScript/TypeScript,
-//!   Go, or Java.
+//!   Go, Java, C, or Kotlin.
 //! - Any `pattern:` string whose shape is not one of:
 //!   - bare identifier (`request`) — compiled to `ParamName`
 //!   - dotted attribute chain (`request.data`, `request.json`) — compiled
@@ -38,10 +39,12 @@
 //! rule* to be skipped (with an explanatory warning) so the user sees a
 //! clear signal rather than a silently-degraded match surface.
 
+use crate::rules::c_taint;
 use crate::rules::common::get_source_line;
 use crate::rules::go_taint;
 use crate::rules::java_taint;
 use crate::rules::javascript_taint;
+use crate::rules::kotlin_taint;
 use crate::rules::python_taint;
 use crate::rules::{FileContext, Rule};
 use crate::{Finding, Language, Severity};
@@ -217,6 +220,74 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
     }
 }
 
+/// Convert the generic spec into a C taint spec.
+fn to_c_spec(g: &GenericSpec) -> c_taint::TaintSpec {
+    c_taint::TaintSpec {
+        sources: g.sources.iter().map(to_c_matcher).collect(),
+        sinks: g.sinks.iter().map(to_c_matcher).collect(),
+        sanitizers: g.sanitizers.iter().map(to_c_matcher).collect(),
+    }
+}
+
+fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
+    match m {
+        GenericMatcher::Attribute {
+            root,
+            field,
+            description,
+        } => c_taint::NodeMatcher::Attribute {
+            root: root.clone(),
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Call {
+            canonical,
+            description,
+        } => c_taint::NodeMatcher::Call {
+            canonical: canonical.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ParamName { names, description } => c_taint::NodeMatcher::ParamName {
+            names: names.clone(),
+            description: description.clone(),
+        },
+    }
+}
+
+/// Convert the generic spec into a Kotlin taint spec.
+fn to_kotlin_spec(g: &GenericSpec) -> kotlin_taint::TaintSpec {
+    kotlin_taint::TaintSpec {
+        sources: g.sources.iter().map(to_kotlin_matcher).collect(),
+        sinks: g.sinks.iter().map(to_kotlin_matcher).collect(),
+        sanitizers: g.sanitizers.iter().map(to_kotlin_matcher).collect(),
+    }
+}
+
+fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
+    match m {
+        GenericMatcher::Attribute {
+            root,
+            field,
+            description,
+        } => kotlin_taint::NodeMatcher::Attribute {
+            root: root.clone(),
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Call {
+            canonical,
+            description,
+        } => kotlin_taint::NodeMatcher::Call {
+            canonical: canonical.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ParamName { names, description } => kotlin_taint::NodeMatcher::ParamName {
+            names: names.clone(),
+            description: description.clone(),
+        },
+    }
+}
+
 /// A compiled Semgrep `mode: taint` rule.
 pub struct SemgrepTaintRule {
     pub id: String,
@@ -281,6 +352,32 @@ impl TaintFindingView {
         }
     }
     fn from_java(f: java_taint::TaintFinding) -> Self {
+        Self {
+            sink_start_byte: f.sink_start_byte,
+            sink_line: f.sink_line,
+            sink_column: f.sink_column,
+            sink_end_line: f.sink_end_line,
+            sink_end_column: f.sink_end_column,
+            source_description: f.source_description,
+            sink_description: f.sink_description,
+            source_line: f.source_line,
+            hops: f.hops,
+        }
+    }
+    fn from_c(f: c_taint::TaintFinding) -> Self {
+        Self {
+            sink_start_byte: f.sink_start_byte,
+            sink_line: f.sink_line,
+            sink_column: f.sink_column,
+            sink_end_line: f.sink_end_line,
+            sink_end_column: f.sink_end_column,
+            source_description: f.source_description,
+            sink_description: f.sink_description,
+            source_line: f.source_line,
+            hops: f.hops,
+        }
+    }
+    fn from_kotlin(f: kotlin_taint::TaintFinding) -> Self {
         Self {
             sink_start_byte: f.sink_start_byte,
             sink_line: f.sink_line,
@@ -362,6 +459,20 @@ impl Rule for SemgrepTaintRule {
                     .map(TaintFindingView::from_java)
                     .collect()
             }
+            Language::C => {
+                let spec = to_c_spec(&self.spec);
+                c_taint::analyze_tree(tree.root_node(), source, &spec, None)
+                    .into_iter()
+                    .map(TaintFindingView::from_c)
+                    .collect()
+            }
+            Language::Kotlin => {
+                let spec = to_kotlin_spec(&self.spec);
+                kotlin_taint::analyze_tree(tree.root_node(), source, &spec, None)
+                    .into_iter()
+                    .map(TaintFindingView::from_kotlin)
+                    .collect()
+            }
             _ => Vec::new(),
         };
         raw.into_iter()
@@ -438,7 +549,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
     };
 
     // Determine the target language. We support Python, JavaScript/TypeScript,
-    // and Go. The first recognised language wins.
+    // Go, Java, C, and Kotlin. The first recognised language wins.
     let lang = match yaml.get("languages").and_then(YamlValue::as_sequence) {
         Some(langs) => {
             let mut detected: Option<Language> = None;
@@ -460,6 +571,14 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                         detected = Some(Language::Java);
                         break;
                     }
+                    "c" => {
+                        detected = Some(Language::C);
+                        break;
+                    }
+                    "kotlin" | "kt" => {
+                        detected = Some(Language::Kotlin);
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -467,7 +586,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                 Some(l) => l,
                 None => {
                     return TaintRuleParse::Skip(format!(
-                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, and Java are supported",
+                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, and Kotlin are supported",
                         id
                     ));
                 }
@@ -927,6 +1046,71 @@ pattern-sinks: [{pattern: eval($X)}]
     }
 
     #[test]
+    fn taint_rule_with_c_language_compiles() {
+        let yaml = r#"
+id: c-taint
+mode: taint
+languages: [c]
+severity: ERROR
+message: m
+pattern-sources: [{pattern: getenv($X)}]
+pattern-sinks: [{pattern: system($X)}]
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Compiled(r) => {
+                assert_eq!(r.lang, Language::C);
+                assert_eq!(r.spec.sources.len(), 1);
+                assert_eq!(r.spec.sinks.len(), 1);
+            }
+            TaintRuleParse::Skip(msg) => panic!("unexpected skip: {}", msg),
+            TaintRuleParse::NotTaint => panic!("expected taint rule"),
+        }
+    }
+
+    #[test]
+    fn taint_rule_with_kotlin_language_compiles() {
+        let yaml = r#"
+id: kotlin-taint
+mode: taint
+languages: [kotlin]
+severity: ERROR
+message: m
+pattern-sources: [{pattern: request.getParameter($X)}]
+pattern-sinks: [{pattern: Runtime.exec($X)}]
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Compiled(r) => {
+                assert_eq!(r.lang, Language::Kotlin);
+                assert_eq!(r.spec.sources.len(), 1);
+                assert_eq!(r.spec.sinks.len(), 1);
+            }
+            TaintRuleParse::Skip(msg) => panic!("unexpected skip: {}", msg),
+            TaintRuleParse::NotTaint => panic!("expected taint rule"),
+        }
+    }
+
+    #[test]
+    fn taint_rule_with_kt_alias_compiles_as_kotlin() {
+        let yaml = r#"
+id: kt-taint
+mode: taint
+languages: [kt]
+severity: ERROR
+message: m
+pattern-sources: [{pattern: call.receiveText($X)}]
+pattern-sinks: [{pattern: Runtime.exec($X)}]
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Compiled(r) => assert_eq!(r.lang, Language::Kotlin),
+            TaintRuleParse::Skip(msg) => panic!("unexpected skip: {}", msg),
+            TaintRuleParse::NotTaint => panic!("expected taint rule"),
+        }
+    }
+
+    #[test]
     fn taint_rule_with_javascript_language_compiles() {
         let yaml = r#"
 id: js-taint
@@ -1108,6 +1292,172 @@ class Controller {
         );
         // Run the check and ensure no crash (result depends on engine sanitizer support).
         let tree = parse_file(src, Language::Java).expect("Java fixture should parse");
+        let _ = rule.check(src, &tree); // must not panic
+    }
+
+    #[test]
+    fn c_taint_rule_produces_finding_for_getenv_to_system() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: c-cmd-injection
+mode: taint
+languages: [c]
+severity: ERROR
+message: "Tainted env var reaches system()"
+metadata:
+  cwe: "CWE-78"
+pattern-sources:
+  - pattern: getenv($X)
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        // getenv() result assigned to cmd, then passed to system().
+        let src = r#"
+#include <stdlib.h>
+void handler() {
+    char *cmd = getenv("CMD");
+    system(cmd);
+}
+"#;
+        let tree = parse_file(src, Language::C).expect("C fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "expected a finding for getenv -> system flow, got none"
+        );
+        assert!(
+            findings[0].description.contains("system")
+                || findings[0]
+                    .sink_description
+                    .as_deref()
+                    .is_some_and(|d| d.contains("system")),
+            "sink description should mention system: {:?}",
+            findings[0]
+        );
+    }
+
+    #[test]
+    fn c_taint_sanitizer_no_panic() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: c-cmd-sanitized
+mode: taint
+languages: [c]
+severity: ERROR
+message: "Tainted input reaches system()"
+pattern-sources:
+  - pattern: getenv($X)
+pattern-sinks:
+  - pattern: system($X)
+pattern-sanitizers:
+  - pattern: strlcpy($X)
+"#,
+        );
+
+        // Verify sanitizer compiles correctly and rule doesn't panic.
+        assert_eq!(
+            rule.spec.sanitizers.len(),
+            1,
+            "sanitizer spec should compile"
+        );
+        let src = r#"
+#include <stdlib.h>
+#include <string.h>
+void handler() {
+    char *input = getenv("CMD");
+    char safe[64];
+    strlcpy(safe, input, sizeof(safe));
+    system(safe);
+}
+"#;
+        let tree = parse_file(src, Language::C).expect("C fixture should parse");
+        let _ = rule.check(src, &tree); // must not panic
+    }
+
+    #[test]
+    fn kotlin_taint_rule_produces_finding_for_receive_to_exec() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: kotlin-cmd-injection
+mode: taint
+languages: [kotlin]
+severity: ERROR
+message: "Tainted request body reaches Runtime.exec"
+metadata:
+  cwe: "CWE-78"
+pattern-sources:
+  - pattern: call.receiveText($X)
+pattern-sinks:
+  - pattern: Runtime.exec($X)
+"#,
+        );
+
+        // call.receiveText() → cmd → Runtime.getRuntime().exec(cmd)
+        let src = r#"
+fun handler(call: ApplicationCall) {
+    val cmd = call.receiveText()
+    Runtime.getRuntime().exec(cmd)
+}
+"#;
+        let tree = parse_file(src, Language::Kotlin).expect("Kotlin fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "expected a finding for call.receiveText -> Runtime.exec flow, got none"
+        );
+        assert!(
+            findings[0].description.contains("exec")
+                || findings[0]
+                    .sink_description
+                    .as_deref()
+                    .is_some_and(|d| d.contains("exec")),
+            "sink description should mention exec: {:?}",
+            findings[0]
+        );
+    }
+
+    #[test]
+    fn kotlin_taint_sanitizer_no_panic() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: kotlin-cmd-sanitized
+mode: taint
+languages: [kotlin]
+severity: ERROR
+message: "Tainted request body reaches Runtime.exec"
+pattern-sources:
+  - pattern: call.receiveText($X)
+pattern-sinks:
+  - pattern: Runtime.exec($X)
+pattern-sanitizers:
+  - pattern: validate($X)
+"#,
+        );
+
+        // Verify sanitizer compiles correctly and rule doesn't panic.
+        assert_eq!(
+            rule.spec.sanitizers.len(),
+            1,
+            "sanitizer spec should compile"
+        );
+        let src = r#"
+fun handler(call: ApplicationCall) {
+    val body = call.receiveText()
+    val safe = validate(body)
+    Runtime.getRuntime().exec(safe)
+}
+"#;
+        let tree = parse_file(src, Language::Kotlin).expect("Kotlin fixture should parse");
         let _ = rule.check(src, &tree); // must not panic
     }
 
