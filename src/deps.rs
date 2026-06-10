@@ -1,12 +1,15 @@
 use crate::engine::PathExcludeMatcher;
 use crate::{Finding, Severity};
 use ignore::WalkBuilder;
+use pep440_rs::Version as Pep440Version;
+use semver::Version as SemverVersion;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 
 pub const OSV_RULE_ID: &str = "manifest/osv-vulnerable-dep";
@@ -79,6 +82,7 @@ struct OsvEvent {
     introduced: Option<String>,
     fixed: Option<String>,
     last_affected: Option<String>,
+    limit: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -882,53 +886,99 @@ fn affected_package_matches(package: &PackageRef, affected: &OsvAffected) -> boo
 }
 
 fn affected_version_matches(package: &PackageRef, affected: &OsvAffected) -> bool {
-    if !affected.versions.is_empty() {
-        return affected
-            .versions
-            .iter()
-            .any(|version| version == &package.version);
+    if affected
+        .versions
+        .iter()
+        .any(|version| version_matches(package, version))
+    {
+        return true;
     }
 
     if affected.ranges.is_empty() {
-        return true;
+        return affected.versions.is_empty();
     }
 
     affected
         .ranges
         .iter()
-        .any(|range| version_in_range(&package.version, range))
+        .any(|range| version_in_range(package, range))
 }
 
-fn version_in_range(version: &str, range: &OsvRange) -> bool {
-    let mut active = false;
+fn version_matches(package: &PackageRef, advisory_version: &str) -> bool {
+    compare_versions_for_package(package, None, advisory_version)
+        .map_or(package.version == advisory_version, |ordering| {
+            ordering == Ordering::Equal
+        })
+}
+
+fn version_in_range(package: &PackageRef, range: &OsvRange) -> bool {
+    if !version_before_limits(package, range) {
+        return false;
+    }
+
+    let mut vulnerable = false;
     for event in &range.events {
         if let Some(introduced) = event.introduced.as_deref() {
-            active = introduced == "0" || compare_versions(version, introduced) != Ordering::Less;
+            if introduced == "0"
+                || compare_versions_for_package(package, range.range_type.as_deref(), introduced)
+                    .is_some_and(|ordering| ordering != Ordering::Less)
+            {
+                vulnerable = true;
+            }
         }
         if let Some(fixed) = event.fixed.as_deref() {
-            if active && compare_versions(version, fixed) == Ordering::Less {
-                return true;
-            }
-            if compare_versions(version, fixed) != Ordering::Less {
-                active = false;
+            if compare_versions_for_package(package, range.range_type.as_deref(), fixed)
+                .is_some_and(|ordering| ordering != Ordering::Less)
+            {
+                vulnerable = false;
             }
         }
         if let Some(last_affected) = event.last_affected.as_deref() {
-            if active && compare_versions(version, last_affected) != Ordering::Greater {
-                return true;
+            if compare_versions_for_package(package, range.range_type.as_deref(), last_affected)
+                .is_some_and(|ordering| ordering == Ordering::Greater)
+            {
+                vulnerable = false;
             }
         }
     }
-    active
+    vulnerable
+}
+
+fn version_before_limits(package: &PackageRef, range: &OsvRange) -> bool {
+    let mut saw_limit = false;
+    for event in &range.events {
+        let Some(limit) = event.limit.as_deref() else {
+            continue;
+        };
+        saw_limit = true;
+        if compare_versions_for_package(package, range.range_type.as_deref(), limit)
+            .is_some_and(|ordering| ordering == Ordering::Less)
+        {
+            return true;
+        }
+    }
+    !saw_limit
 }
 
 fn first_fixed_version(package: &PackageRef, vuln: &OsvVulnerability) -> Option<String> {
-    vuln.affected
+    let mut fallback = None;
+    for affected in vuln
+        .affected
         .iter()
         .filter(|affected| affected_package_matches(package, affected))
-        .flat_map(|affected| affected.ranges.iter())
-        .flat_map(|range| range.events.iter())
-        .find_map(|event| event.fixed.clone())
+        .filter(|affected| affected_version_matches(package, affected))
+    {
+        for range in &affected.ranges {
+            let fixed = range.events.iter().find_map(|event| event.fixed.clone());
+            if fallback.is_none() {
+                fallback = fixed.clone();
+            }
+            if version_in_range(package, range) {
+                return fixed;
+            }
+        }
+    }
+    fallback
 }
 
 fn finding_for_vulnerability(package: &PackageRef, vuln: &OsvVulnerability) -> Finding {
@@ -1103,27 +1153,82 @@ fn ecosystems_equal(left: &str, right: &str) -> bool {
         || (left.eq_ignore_ascii_case("cargo") && right.eq_ignore_ascii_case("crates.io"))
 }
 
-fn compare_versions(left: &str, right: &str) -> Ordering {
-    let left_parts = version_parts(left);
-    let right_parts = version_parts(right);
-    for (left, right) in left_parts.iter().zip(right_parts.iter()) {
-        let ordering = match (left.parse::<u64>(), right.parse::<u64>()) {
-            (Ok(left), Ok(right)) => left.cmp(&right),
-            _ => left.cmp(right),
-        };
-        if ordering != Ordering::Equal {
-            return ordering;
-        }
-    }
-    left_parts.len().cmp(&right_parts.len())
+fn compare_versions_for_package(
+    package: &PackageRef,
+    range_type: Option<&str>,
+    advisory_version: &str,
+) -> Option<Ordering> {
+    compare_versions(
+        &package.ecosystem,
+        range_type,
+        &package.version,
+        advisory_version,
+    )
 }
 
-fn version_parts(value: &str) -> Vec<String> {
-    value
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter(|part| !part.is_empty())
-        .map(ToString::to_string)
-        .collect()
+fn compare_versions(
+    ecosystem: &str,
+    range_type: Option<&str>,
+    left: &str,
+    right: &str,
+) -> Option<Ordering> {
+    match range_type {
+        Some(range_type) if range_type.eq_ignore_ascii_case("GIT") => None,
+        Some(range_type) if range_type.eq_ignore_ascii_case("SEMVER") => {
+            compare_semver_versions(left, right)
+        }
+        Some(range_type) if range_type.eq_ignore_ascii_case("ECOSYSTEM") => {
+            compare_ecosystem_versions(ecosystem, left, right)
+        }
+        _ => compare_ecosystem_versions(ecosystem, left, right),
+    }
+}
+
+fn compare_ecosystem_versions(ecosystem: &str, left: &str, right: &str) -> Option<Ordering> {
+    if ecosystem.eq_ignore_ascii_case("PyPI") {
+        return compare_pep440_versions(left, right);
+    }
+    if ecosystem.eq_ignore_ascii_case("npm")
+        || ecosystem.eq_ignore_ascii_case("crates.io")
+        || ecosystem.eq_ignore_ascii_case("cargo")
+    {
+        return compare_semver_versions(left, right);
+    }
+    None
+}
+
+fn compare_pep440_versions(left: &str, right: &str) -> Option<Ordering> {
+    Some(
+        Pep440Version::from_str(left)
+            .ok()?
+            .cmp(&Pep440Version::from_str(right).ok()?),
+    )
+}
+
+fn compare_semver_versions(left: &str, right: &str) -> Option<Ordering> {
+    Some(parse_relaxed_semver(left)?.cmp(&parse_relaxed_semver(right)?))
+}
+
+fn parse_relaxed_semver(value: &str) -> Option<SemverVersion> {
+    let value = value.trim();
+    SemverVersion::parse(value).ok().or_else(|| {
+        let value = value.strip_prefix('v').unwrap_or(value);
+        let suffix_start = value.find(['-', '+']).unwrap_or(value.len());
+        let (core, suffix) = value.split_at(suffix_start);
+        let mut parts = core.split('.').collect::<Vec<_>>();
+        if parts.is_empty()
+            || parts.len() > 3
+            || parts
+                .iter()
+                .any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()))
+        {
+            return None;
+        }
+        while parts.len() < 3 {
+            parts.push("0");
+        }
+        SemverVersion::parse(&format!("{}{}", parts.join("."), suffix)).ok()
+    })
 }
 
 fn find_name_version_offset(source: &str, name_pat: &str, ver_pat: &str) -> Option<(usize, usize)> {
@@ -1304,6 +1409,7 @@ mod tests {
     #[test]
     fn range_matching_respects_fixed_event() {
         let range = OsvRange {
+            range_type: Some("SEMVER".to_string()),
             events: vec![
                 OsvEvent {
                     introduced: Some("1.0.0".to_string()),
@@ -1314,9 +1420,218 @@ mod tests {
                     ..OsvEvent::default()
                 },
             ],
-            ..OsvRange::default()
         };
-        assert!(version_in_range("1.1.9", &range));
-        assert!(!version_in_range("1.2.0", &range));
+        let matching = package_ref(
+            "crates.io",
+            "demo",
+            "1.1.9",
+            "demo = 1.1.9\n",
+            Path::new("Cargo.lock"),
+            0,
+            12,
+        );
+        let fixed = package_ref(
+            "crates.io",
+            "demo",
+            "1.2.0",
+            "demo = 1.2.0\n",
+            Path::new("Cargo.lock"),
+            0,
+            12,
+        );
+        assert!(version_in_range(&matching, &range));
+        assert!(!version_in_range(&fixed, &range));
+    }
+
+    #[test]
+    fn pypi_prerelease_range_matches_before_final_release() {
+        let package = package_ref(
+            "PyPI",
+            "mypkg",
+            "1.0.0rc1",
+            "mypkg==1.0.0rc1\n",
+            Path::new("requirements.txt"),
+            0,
+            16,
+        );
+        let affected = OsvAffected {
+            package: Some(OsvPackage {
+                name: Some("mypkg".to_string()),
+                ecosystem: Some("PyPI".to_string()),
+                purl: None,
+            }),
+            ranges: vec![OsvRange {
+                range_type: Some("ECOSYSTEM".to_string()),
+                events: vec![
+                    OsvEvent {
+                        introduced: Some("0".to_string()),
+                        ..OsvEvent::default()
+                    },
+                    OsvEvent {
+                        fixed: Some("1.0.0".to_string()),
+                        ..OsvEvent::default()
+                    },
+                ],
+            }],
+            ..OsvAffected::default()
+        };
+
+        assert!(affected_version_matches(&package, &affected));
+    }
+
+    #[test]
+    fn pypi_exact_versions_use_pep440_equality() {
+        let package = package_ref(
+            "PyPI",
+            "mypkg",
+            "1.0",
+            "mypkg==1.0\n",
+            Path::new("requirements.txt"),
+            0,
+            10,
+        );
+        let affected = OsvAffected {
+            package: Some(OsvPackage {
+                name: Some("mypkg".to_string()),
+                ecosystem: Some("PyPI".to_string()),
+                purl: None,
+            }),
+            versions: vec!["1.0.0".to_string()],
+            ..OsvAffected::default()
+        };
+
+        assert!(affected_version_matches(&package, &affected));
+    }
+
+    #[test]
+    fn semver_prerelease_range_matches_before_final_release() {
+        let package = package_ref(
+            "npm",
+            "demo",
+            "1.0.0-rc.1",
+            "demo@1.0.0-rc.1\n",
+            Path::new("package-lock.json"),
+            0,
+            15,
+        );
+        let affected = OsvAffected {
+            package: Some(OsvPackage {
+                name: Some("demo".to_string()),
+                ecosystem: Some("npm".to_string()),
+                purl: None,
+            }),
+            ranges: vec![OsvRange {
+                range_type: Some("SEMVER".to_string()),
+                events: vec![
+                    OsvEvent {
+                        introduced: Some("0".to_string()),
+                        ..OsvEvent::default()
+                    },
+                    OsvEvent {
+                        fixed: Some("1.0.0".to_string()),
+                        ..OsvEvent::default()
+                    },
+                ],
+            }],
+            ..OsvAffected::default()
+        };
+
+        assert!(affected_version_matches(&package, &affected));
+    }
+
+    #[test]
+    fn range_matching_respects_limit_event() {
+        let range = OsvRange {
+            range_type: Some("SEMVER".to_string()),
+            events: vec![
+                OsvEvent {
+                    introduced: Some("1.0.0".to_string()),
+                    ..OsvEvent::default()
+                },
+                OsvEvent {
+                    limit: Some("2.0.0".to_string()),
+                    ..OsvEvent::default()
+                },
+            ],
+        };
+        let inside = package_ref(
+            "crates.io",
+            "demo",
+            "1.5.0",
+            "demo = 1.5.0\n",
+            Path::new("Cargo.lock"),
+            0,
+            12,
+        );
+        let at_limit = package_ref(
+            "crates.io",
+            "demo",
+            "2.0.0",
+            "demo = 2.0.0\n",
+            Path::new("Cargo.lock"),
+            0,
+            12,
+        );
+
+        assert!(version_in_range(&inside, &range));
+        assert!(!version_in_range(&at_limit, &range));
+    }
+
+    #[test]
+    fn first_fixed_version_uses_matching_range() {
+        let package = package_ref(
+            "npm",
+            "demo",
+            "3.1.0",
+            "demo@3.1.0\n",
+            Path::new("package-lock.json"),
+            0,
+            10,
+        );
+        let vuln = OsvVulnerability {
+            id: "GHSA-test-0001".to_string(),
+            affected: vec![OsvAffected {
+                package: Some(OsvPackage {
+                    name: Some("demo".to_string()),
+                    ecosystem: Some("npm".to_string()),
+                    purl: None,
+                }),
+                ranges: vec![
+                    OsvRange {
+                        range_type: Some("SEMVER".to_string()),
+                        events: vec![
+                            OsvEvent {
+                                introduced: Some("1.0.0".to_string()),
+                                ..OsvEvent::default()
+                            },
+                            OsvEvent {
+                                fixed: Some("1.2.0".to_string()),
+                                ..OsvEvent::default()
+                            },
+                        ],
+                    },
+                    OsvRange {
+                        range_type: Some("SEMVER".to_string()),
+                        events: vec![
+                            OsvEvent {
+                                introduced: Some("3.0.0".to_string()),
+                                ..OsvEvent::default()
+                            },
+                            OsvEvent {
+                                fixed: Some("3.2.5".to_string()),
+                                ..OsvEvent::default()
+                            },
+                        ],
+                    },
+                ],
+                ..OsvAffected::default()
+            }],
+            ..OsvVulnerability::default()
+        };
+
+        assert_eq!(
+            first_fixed_version(&package, &vuln).as_deref(),
+            Some("3.2.5")
+        );
     }
 }

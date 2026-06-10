@@ -5250,6 +5250,73 @@ mod config_files {
     }
 
     #[test]
+    fn sca_offline_matches_pypi_prerelease_range_before_final_release() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("advisory.json");
+        fs::write(dir.path().join("requirements.txt"), "mypkg==1.0.0rc1\n")
+            .expect("write requirements fixture");
+        let advisories = serde_json::json!([
+            {
+                "id": "GHSA-test-prerelease",
+                "summary": "pre-release should still be below 1.0.0",
+                "affected": [{
+                    "package": {
+                        "ecosystem": "PyPI",
+                        "name": "mypkg"
+                    },
+                    "ranges": [{
+                        "type": "ECOSYSTEM",
+                        "events": [
+                            {"introduced": "0"},
+                            {"fixed": "1.0.0"}
+                        ]
+                    }]
+                }],
+                "database_specific": {
+                    "severity": "HIGH"
+                }
+            }
+        ]);
+        fs::write(
+            &db_path,
+            serde_json::to_string_pretty(&advisories).expect("json"),
+        )
+        .expect("write osv fixture");
+
+        let output = foxguard_cmd()
+            .args([
+                "sca",
+                "--config",
+                "/dev/null",
+                dir.path().to_str().expect("utf8 dir"),
+                "--sca-offline",
+                "--sca-db",
+                db_path.to_str().expect("utf8 path"),
+                "-f",
+                "json",
+            ])
+            .output()
+            .expect("failed to execute foxguard");
+
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "expected findings; stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+        assert_sca_finding(
+            &findings,
+            "requirements.txt",
+            "mypkg",
+            "1.0.0rc1",
+            "PyPI",
+            "GHSA-test-prerelease",
+            "1.0.0",
+        );
+    }
+
+    #[test]
     fn sca_offline_without_db_does_not_disable_pq_manifest_rules() {
         let output = foxguard_cmd()
             .args([

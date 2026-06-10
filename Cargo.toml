@@ -46,6 +46,8 @@ unicode-width = "0.2"
 wait-timeout = "0.2.1"
 include_dir = "0.7"
 reqwest = { version = "0.13.3", default-features = false, features = ["blocking", "json", "rustls"] }
+semver = "1"
+pep440_rs = "0.7"
 
 # Optional deps for the GitHub App webhook receiver (gated behind the
 # `github-app` feature). Off by default so the core scanner build stays
