@@ -218,6 +218,86 @@ rules:
     assert!(findings[0].snippet.contains("user_input"));
 }
 
+/// Terraform/HCL is wired end to end: a semgrep-compat rule scoped to
+/// `languages: [terraform]` loads, the `.tf` source parses under the HCL
+/// grammar, and a `pattern-regex` rule (the shape the registry's HCL pack
+/// overwhelmingly uses) produces a finding on the vulnerable bucket only.
+#[test]
+fn test_hcl_terraform_pattern_regex_finding() {
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(
+        br#"
+rules:
+  - id: s3-bucket-public-acl
+    pattern-regex: 'acl\s*=\s*"(public-read|public-read-write)"'
+    message: S3 bucket grants public ACL
+    severity: ERROR
+    languages: [terraform]
+"#,
+    )
+    .unwrap();
+
+    let rules = parse_semgrep_file(file.path()).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].language(), Language::Hcl);
+
+    let source = concat!(
+        "resource \"aws_s3_bucket\" \"public\" {\n",
+        "  acl = \"public-read\"\n",
+        "}\n\n",
+        "resource \"aws_s3_bucket\" \"private\" {\n",
+        "  acl = \"private\"\n",
+        "}\n",
+    );
+    let tree = parse_file(source, Language::Hcl).unwrap();
+    assert!(!tree.root_node().has_error(), "HCL fixture should parse");
+
+    let findings = rules[0].check(source, &tree);
+    assert_eq!(
+        findings.len(),
+        1,
+        "expected only the public-read bucket to match, got {findings:?}"
+    );
+    assert!(findings[0].snippet.contains("public-read"));
+}
+
+/// An AST `pattern:` with a metavariable binds and a `metavariable-regex`
+/// filters it under the HCL grammar — the other registry rule shape.
+#[test]
+fn test_hcl_terraform_metavariable_regex_finding() {
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(
+        br#"
+rules:
+  - id: hardcoded-db-password
+    patterns:
+      - pattern: 'password = "$PW"'
+      - metavariable-regex:
+          metavariable: $PW
+          regex: '.+'
+    message: hardcoded password in HCL
+    severity: ERROR
+    languages: [hcl]
+"#,
+    )
+    .unwrap();
+
+    let rules = parse_semgrep_file(file.path()).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].language(), Language::Hcl);
+
+    let source = concat!("variable \"db\" {\n", "  password = \"hunter2\"\n", "}\n",);
+    let tree = parse_file(source, Language::Hcl).unwrap();
+    assert!(!tree.root_node().has_error(), "HCL fixture should parse");
+
+    let findings = rules[0].check(source, &tree);
+    assert_eq!(
+        findings.len(),
+        1,
+        "expected the hardcoded password to match, got {findings:?}"
+    );
+}
+
 #[test]
 fn test_pattern_not_inside_support_on_fixture() {
     let mut file = NamedTempFile::new().unwrap();

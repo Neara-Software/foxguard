@@ -349,6 +349,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "swift" => Some(Language::Swift),
         "kt" | "kts" => Some(Language::Kotlin),
         "c" | "h" => Some(Language::C),
+        "tf" | "hcl" | "tfvars" => Some(Language::Hcl),
         _ => None,
     }
 }
@@ -705,6 +706,7 @@ fn is_comment_only_line(trimmed_line: &str, language: Language) -> bool {
 fn comment_markers(language: Language) -> &'static [&'static str] {
     match language {
         Language::Python | Language::Ruby => &["#"],
+        Language::Hcl => &["#", "//"],
         Language::Php => &["//", "#"],
         Language::JavaScript
         | Language::Go

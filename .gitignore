@@ -41,3 +41,6 @@ www/public/foxguard-logo.png
 .togi-cache/
 .togi.lock
 togi.toml
+
+# Local semgrep-rules registry snapshot used for ad-hoc coverage checks
+.registry-snapshot/
