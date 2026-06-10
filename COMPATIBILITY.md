@@ -86,7 +86,7 @@ Metavariable filtering:
 
 Taint rules (`mode: taint`):
 
-- `mode: taint` for Python, JavaScript/TypeScript, Go, and Java; taint rules targeting other languages are skipped with a warning
+- `mode: taint` for Python, JavaScript/TypeScript, Go, Java, C, and Kotlin; taint rules targeting other languages are skipped with a warning
 - `pattern-sources`, `pattern-sinks`, `pattern-sanitizers` — each entry must be either a single `pattern:` string or a `pattern-either:` list (nested `pattern-either:` is supported and flattens recursively)
 - Supported `pattern:` shapes:
   - bare identifier (`request`) — a source-only shape compiled to a parameter-name match
@@ -95,6 +95,8 @@ Taint rules (`mode: taint`):
 - Severity mapping matches the pattern-rule bridge (`ERROR` → Critical, `WARNING` → High, `INFO` → Medium) and `metadata.cwe` is propagated to findings
 - Rules that use anything outside this subset (`patterns:` / `pattern-inside:` / `metavariable-pattern:` inside a source/sink/sanitizer block, unsupported pattern shapes, unsupported languages, missing sources or sinks) are skipped with a warning — other rules in the same file still load. Entries with unsupported keys are dropped individually so a single bad entry will not disable sibling entries in the same block.
 - Java taint rules match `Call { canonical }` patterns via receiver+method (e.g. `request.getParameter($X)` matches any method invocation where the receiver contains `request` and the method is `getParameter`); `Attribute` matchers are also accepted and compiled but the Java engine resolves them via method-invocation chains
+- C taint rules match `Call { canonical }` patterns as bare function-call callees (e.g. `getenv($X)` matches any `call_expression` whose callee identifier is `getenv`); the C engine recognises `argv` as a `ParamName` source and all libc/POSIX input functions as `Call` sources
+- Kotlin taint rules match `Call { canonical }` patterns using a receiver-substring rule (e.g. `call.receiveText($X)` matches any `call_expression` whose receiver contains `call` and whose method is `receiveText`); constructor-style calls (`Runtime`, `URL`, `ProcessBuilder`) are matched as bare `canonical` names; `Attribute` matchers are accepted and compiled but are reserved for forward compatibility (no current Kotlin rule uses them); language tag `kt` is accepted as an alias for `kotlin`
 
 Language mapping:
 
