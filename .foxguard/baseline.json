@@ -9972,6 +9972,210 @@
       "rule_id": "js/no-command-injection",
       "file": "vscode-extension/src/extension.ts",
       "line": 387
+    },
+    {
+      "fingerprint": "fee4af7e2caff5f0e303342d1892e514cf5b24968a0d06b77c7232e0ceb433fd",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 358
+    },
+    {
+      "fingerprint": "c5aaac546b3d5547fabd5481f516ee3cd9a6c495d6201eabb75ecaaa30fb61d7",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 366
+    },
+    {
+      "fingerprint": "87a9d63c7afed29047275a75c7bd22bbe30b0cd0888a5c89eb12bdd4dd18691d",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1114
+    },
+    {
+      "fingerprint": "a7b234fe854b39d86413c5562495a5eb61365d127bb8894046894be6ac159791",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/generic_mode.rs",
+      "line": 702
+    },
+    {
+      "fingerprint": "5fb232cdac6735826ab69190ec0b8a16ea97d92b6f67b9fad22a9c5e88c87f6a",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/generic_mode.rs",
+      "line": 721
+    },
+    {
+      "fingerprint": "5a23acd6ee0e5f83e496d7964d8b8f1c7529c1b82beba98e770865c2b74a6441",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/mod.rs",
+      "line": 1031
+    },
+    {
+      "fingerprint": "69ab8505ad446ecdb699049b2f5368d5c9aa95c8da6da6f4e77e71f55424e1a4",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/mod.rs",
+      "line": 1041
+    },
+    {
+      "fingerprint": "4b91033b8757857a2e6ce1ead4377c3f634290b3ef37db86a24e9140ea5d20c6",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/mod.rs",
+      "line": 1049
+    },
+    {
+      "fingerprint": "7a3d057f776b9582c40dd9389b8e0c4537f5368fdf374e2cea6b5440c80d27ea",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1415
+    },
+    {
+      "fingerprint": "9fdca6e5608b3c22e3d222567900c5a71aeb696a982f433407b9963829a85621",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1416
+    },
+    {
+      "fingerprint": "6b43c9b23edfb264d7fb0e065942698f82e588780bf2343d50643fb1ee088266",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1431
+    },
+    {
+      "fingerprint": "433fa3efe28087a870dfcb63d9c886baa67c87c50a27ef05199c7db640521dda",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1475
+    },
+    {
+      "fingerprint": "28edaac467193ae33aa009ca75c7273b7aa265ef7ec420508e690274703711d2",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1476
+    },
+    {
+      "fingerprint": "d53ef8af222411d0acb768bb0e15d6ebbf1e5cb733a3f559b50eb526c4c2a4c9",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1500
+    },
+    {
+      "fingerprint": "785b0c0f6d12744b280e2533c5eb85d5e6e4c1e1d081af3c58f5d76a12626b05",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1515
+    },
+    {
+      "fingerprint": "56b98609f456a566ed269abe00cfd846a8a5386caef87efdf91c76972271abe5",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1541
+    },
+    {
+      "fingerprint": "658ac6b197b7deb46c649dab3df2c0d86693b89ae9701fde85c986661578d607",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1544
+    },
+    {
+      "fingerprint": "7d44954417d0a8c2baa4506c8eeb7a13924ebde2bcddc44fd6b97e1523d281cf",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1564
+    },
+    {
+      "fingerprint": "6f3040444ec0d63810f950cd669b33dbb4f4632511be697ee76359b87fc64356",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1567
+    },
+    {
+      "fingerprint": "f2c4a841340d8623f9c6e835f9d27b1142bc445762ba6bba1a70925d36cfa09e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1584
+    },
+    {
+      "fingerprint": "65add9ac33e72bebabdfc54610517c06fd0883b80d9bedc2386a00d079ae3c3c",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1587
+    },
+    {
+      "fingerprint": "13de87321900623ec16d938bfda2eb596fef77dddea18ce2a70b6de7e046d556",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1604
+    },
+    {
+      "fingerprint": "eb3740bf60233d32c78f6f644d7acd8a155541d792ecd9ab7d8790585c27437e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1607
+    },
+    {
+      "fingerprint": "28666cef36bd4aceef75bae874d8b1aef0e47891620dd11fe98f61a5584c5fbf",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1624
+    },
+    {
+      "fingerprint": "c06e23a3def9213ae2a978ae1df4eaefc358cb4a61dcd7a15445d6506ef95e9f",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1627
+    },
+    {
+      "fingerprint": "4ed265a6cdd0dba5bf7a3f963e4b870cd03ccaac5fa82e82d85d97aa5f46a0dc",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1646
+    },
+    {
+      "fingerprint": "92616ebbd5c5fd0b6db8e51497888779aecb1c97599c298f2618416802731dff",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1649
+    },
+    {
+      "fingerprint": "580bf69881b5f0d1b331bfe642ce563a55d5e136a7787bb0bea7de98bf76bb04",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1670
+    },
+    {
+      "fingerprint": "848058e969aaf66038f2120b19c4ac886e011ce3353d9eab82865e6a4828e0b7",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1673
+    },
+    {
+      "fingerprint": "c9d5bf3ea41b2454b411c4d32797db090baf36650dde6199f46121b2a48bd913",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1694
+    },
+    {
+      "fingerprint": "6cd8a01544b75ed6c9c24418a32e9ef3393ade4609ba4e375e4ae60395512e67",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1697
+    },
+    {
+      "fingerprint": "5cab86939ebb9366f420a081367288eb544dad78a1d7b232feb0f8d7012e26a1",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_parity_generic.rs",
+      "line": 24
+    },
+    {
+      "fingerprint": "569367858491e1a0f091612aa5085ccd41b60137f421ad4822605541a5c28c09",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_parity_generic.rs",
+      "line": 52
+    },
+    {
+      "fingerprint": "d1bf5ac2ee2f8448c803b395b272509414301733ae787833dbfe57eb339345f3",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_parity_generic.rs",
+      "line": 80
     }
   ]
 }
