@@ -80,4 +80,8 @@ name = "foxguard-github-app"
 path = "src/bin/foxguard_github_app.rs"
 required-features = ["github-app"]
 
+[[bin]]
+name = "foxguard_process_test_helper"
+path = "tests/bin/process_test_helper.rs"
+
 [dev-dependencies]
