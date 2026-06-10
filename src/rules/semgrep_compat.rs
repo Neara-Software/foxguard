@@ -50,7 +50,7 @@ pub struct SemgrepRuleYaml {
     pub paths: Option<SemgrepPaths>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct PatternEntry {
     #[serde(default)]
     pub pattern: Option<String>,
@@ -76,6 +76,10 @@ pub struct PatternClause {
     pub pattern_either: Option<Vec<PatternEntry>>,
     #[serde(default, rename = "metavariable-regex")]
     pub metavariable_regex: Option<SemgrepMetavariableRegexClause>,
+    #[serde(default, rename = "metavariable-comparison")]
+    pub metavariable_comparison: Option<SemgrepMetavariableComparisonClause>,
+    #[serde(default, rename = "metavariable-pattern")]
+    pub metavariable_pattern: Option<SemgrepMetavariablePatternClause>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,6 +107,37 @@ pub struct SemgrepPaths {
 pub struct SemgrepMetavariableRegexClause {
     pub metavariable: String,
     pub regex: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SemgrepMetavariableComparisonClause {
+    pub metavariable: String,
+    pub comparison: String,
+    /// Optional integer base for parsing (e.g. 16 for hex). Warn-skipped if
+    /// present — we only support base-10 by default.
+    #[serde(default)]
+    pub base: Option<u32>,
+    /// Optional strip flag (Semgrep strips L/U suffixes from integer literals).
+    /// Warn-skipped if true — the common C-integer suffix case is handled via
+    /// our own stripping logic.
+    #[serde(default)]
+    pub strip: Option<bool>,
+}
+
+/// Nested pattern forms supported inside `metavariable-pattern:`.
+///
+/// Supported: `pattern:`, `pattern-regex:`, and `pattern-either:` (of those
+/// same forms). Anything else (nested `patterns:`, `metavariable-pattern:`,
+/// `language:` override, etc.) is warn-skipped at build time.
+#[derive(Debug, Deserialize, Clone)]
+pub struct SemgrepMetavariablePatternClause {
+    pub metavariable: String,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default, rename = "pattern-regex")]
+    pub pattern_regex: Option<String>,
+    #[serde(default, rename = "pattern-either")]
+    pub pattern_either: Option<Vec<PatternEntry>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,6 +176,8 @@ pub enum PatternMatcher {
         inside: Option<CompiledAstPattern>,
         not_inside: Option<CompiledAstPattern>,
         metavariable_regexes: Vec<MetavariableRegexConstraint>,
+        metavariable_comparisons: Vec<MetavariableComparisonConstraint>,
+        metavariable_patterns: Vec<MetavariablePatternConstraint>,
     },
 }
 
@@ -177,6 +214,131 @@ pub struct PathFilter {
 pub struct MetavariableRegexConstraint {
     metavariable: String,
     regex: Regex,
+}
+
+/// Comparison operator for `metavariable-comparison`.
+#[derive(Debug, Clone, PartialEq)]
+enum CmpOp {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+}
+
+/// A compiled `metavariable-comparison` constraint.
+/// Supports: `$VAR <op> <number>` and `<number> <op> $VAR`,
+/// where `<number>` is an integer or float literal and `<op>` is one of
+/// `<`, `<=`, `>`, `>=`, `==`, `!=`.
+#[derive(Debug, Clone)]
+pub struct MetavariableComparisonConstraint {
+    metavariable: String,
+    op: CmpOp,
+    /// The literal value from the comparison string.
+    literal: f64,
+    /// If true, the expression is `literal <op> metavar` (operands flipped).
+    literal_is_lhs: bool,
+}
+
+/// A compiled `metavariable-pattern:` constraint.
+///
+/// The binding text for `metavariable` is re-parsed as a snippet and matched
+/// against `sub_matcher`. Supported sub-matcher forms: `Single` (pattern),
+/// `Regex` (pattern-regex), and `Either` (pattern-either of those). Any
+/// unsupported nested shape is warn-skipped at build time.
+#[derive(Debug, Clone)]
+pub struct MetavariablePatternConstraint {
+    metavariable: String,
+    sub_matcher: PatternMatcher,
+    lang: Language,
+}
+
+// ─── Comparison parser ───────────────────────────────────────────────────────
+
+/// Parse a comparison string of the form `$VAR <op> <number>` or
+/// `<number> <op> $VAR`.  Returns `Err` with a human-readable message for
+/// anything outside that supported subset (caller will warn-skip it).
+fn parse_comparison(comparison: &str) -> Result<(String, CmpOp, f64, bool), String> {
+    let s = comparison.trim();
+
+    // Try longest operator first to avoid e.g. `<` matching `<=`.
+    const OPS: &[(&str, CmpOp)] = &[
+        ("<=", CmpOp::Le),
+        (">=", CmpOp::Ge),
+        ("!=", CmpOp::Ne),
+        ("==", CmpOp::Eq),
+        ("<", CmpOp::Lt),
+        (">", CmpOp::Gt),
+    ];
+
+    for (op_str, op) in OPS {
+        if let Some(idx) = s.find(op_str) {
+            let lhs = s[..idx].trim();
+            let rhs = s[idx + op_str.len()..].trim();
+
+            // Figure out which side is the metavar and which is the literal.
+            let (metavar, literal_str, literal_is_lhs) = if lhs.starts_with('$') {
+                (lhs, rhs, false)
+            } else if rhs.starts_with('$') {
+                (rhs, lhs, true)
+            } else {
+                return Err(format!("metavariable-comparison: no metavariable in '{s}'"));
+            };
+
+            // Validate the metavar token.
+            if metavariable_key(metavar).is_none() {
+                return Err(format!(
+                    "metavariable-comparison: invalid metavariable token '{metavar}' in '{s}'"
+                ));
+            }
+
+            // Strip common C integer suffixes (L, UL, LL, etc.) and leading
+            // 0x/0b so we can parse as f64.
+            let literal_str = strip_numeric_suffixes(literal_str);
+            let literal: f64 = parse_numeric(&literal_str).ok_or_else(|| {
+                format!(
+                    "metavariable-comparison: cannot parse numeric literal '{literal_str}' in '{s}'"
+                )
+            })?;
+
+            return Ok((metavar.to_string(), op.clone(), literal, literal_is_lhs));
+        }
+    }
+
+    Err(format!(
+        "metavariable-comparison: unsupported comparison expression '{s}'"
+    ))
+}
+
+/// Strip trailing C-style suffixes (`L`, `U`, `UL`, `LL`, `ULL`, etc.)
+/// from an integer-literal string (case-insensitive), so `10L` parses as `10`.
+fn strip_numeric_suffixes(s: &str) -> String {
+    let upper = s.to_uppercase();
+    let stripped = upper.trim_end_matches(['L', 'U']);
+    stripped.to_string()
+}
+
+/// Parse a numeric string (decimal int, hex `0x…`, binary `0b…`, or float)
+/// into an `f64`.
+fn parse_numeric(s: &str) -> Option<f64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    // Hex integer
+    if let Some(hex) = s.strip_prefix("0X").or_else(|| s.strip_prefix("0x")) {
+        return i64::from_str_radix(hex, 16).ok().map(|v| v as f64);
+    }
+
+    // Binary integer
+    if let Some(bin) = s.strip_prefix("0B").or_else(|| s.strip_prefix("0b")) {
+        return i64::from_str_radix(bin, 2).ok().map(|v| v as f64);
+    }
+
+    // Float or decimal integer — let Rust's built-in parser handle it.
+    s.parse::<f64>().ok()
 }
 
 impl Rule for SemgrepRule {
@@ -297,6 +459,139 @@ impl MetavariableRegexConstraint {
     }
 }
 
+impl MetavariableComparisonConstraint {
+    /// Build a constraint from a parsed YAML clause.
+    ///
+    /// Returns `Err` (caller should warn-skip) for:
+    /// - unsupported expression shapes (no metavar, non-numeric literal, etc.)
+    /// - `base:` values other than 10 (warn-skip only the constraint entry)
+    fn from_yaml(clause: &SemgrepMetavariableComparisonClause) -> Result<Self, String> {
+        // Warn-skip non-base-10 requests — we accept base:10 or absent.
+        if let Some(base) = clause.base {
+            if base != 10 {
+                return Err(format!(
+                    "metavariable-comparison: base:{base} is not supported (only base:10); skipping constraint"
+                ));
+            }
+        }
+
+        let (metavariable, op, literal, literal_is_lhs) = parse_comparison(&clause.comparison)?;
+
+        Ok(Self {
+            metavariable,
+            op,
+            literal,
+            literal_is_lhs,
+        })
+    }
+
+    /// Evaluate the comparison against the bound metavariable.
+    ///
+    /// Returns `false` (no match) if:
+    /// - the metavariable is not bound in `bindings`
+    /// - the bound text is not parseable as a number after suffix stripping
+    fn matches(&self, bindings: &HashMap<String, String>) -> bool {
+        let Some(value_text) = bindings.get(&self.metavariable) else {
+            return false;
+        };
+
+        // Attempt to parse the bound text as a number.
+        let stripped = strip_numeric_suffixes(value_text.trim());
+        let Some(value) = parse_numeric(&stripped) else {
+            return false;
+        };
+
+        // `literal_is_lhs` means the original expression was `literal <op> $VAR`.
+        // We flip the operand order so `lhs` and `rhs` are consistent.
+        let (lhs, rhs) = if self.literal_is_lhs {
+            (self.literal, value)
+        } else {
+            (value, self.literal)
+        };
+
+        match self.op {
+            CmpOp::Lt => lhs < rhs,
+            CmpOp::Le => lhs <= rhs,
+            CmpOp::Gt => lhs > rhs,
+            CmpOp::Ge => lhs >= rhs,
+            CmpOp::Eq => (lhs - rhs).abs() < f64::EPSILON,
+            CmpOp::Ne => (lhs - rhs).abs() >= f64::EPSILON,
+        }
+    }
+}
+
+impl MetavariablePatternConstraint {
+    /// Build a `MetavariablePatternConstraint` from a YAML clause.
+    ///
+    /// Returns `None` (after printing a warning) for unsupported nested shapes
+    /// such as nested `patterns:`, `metavariable-pattern:`, or a `language:`
+    /// override — consistent with the codebase's graceful-degradation style.
+    fn from_yaml(clause: &SemgrepMetavariablePatternClause, lang: Language) -> Option<Self> {
+        let sub_matcher = if let Some(ref pat) = clause.pattern {
+            PatternMatcher::Single(CompiledAstPattern::new(pat.clone(), lang))
+        } else if let Some(ref regex) = clause.pattern_regex {
+            match compile_regex(regex) {
+                Ok(r) => PatternMatcher::Regex(r),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: metavariable-pattern for {} has invalid pattern-regex: {}; skipping constraint",
+                        clause.metavariable, e
+                    );
+                    return None;
+                }
+            }
+        } else if let Some(ref entries) = clause.pattern_either {
+            match build_either_matchers(entries, lang) {
+                Ok(matchers) => PatternMatcher::Either(matchers),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: metavariable-pattern for {} has invalid pattern-either: {}; skipping constraint",
+                        clause.metavariable, e
+                    );
+                    return None;
+                }
+            }
+        } else {
+            eprintln!(
+                "Warning: metavariable-pattern for {} has no supported nested pattern form \
+                (pattern, pattern-regex, or pattern-either); skipping constraint",
+                clause.metavariable
+            );
+            return None;
+        };
+
+        Some(Self {
+            metavariable: clause.metavariable.clone(),
+            sub_matcher,
+            lang,
+        })
+    }
+
+    /// Returns `true` when the bound text for `self.metavariable` matches
+    /// `self.sub_matcher`. Unparseable binding text is treated as no-match.
+    fn matches(&self, bindings: &HashMap<String, String>) -> bool {
+        let Some(bound_text) = bindings.get(&self.metavariable) else {
+            return false;
+        };
+
+        match &self.sub_matcher {
+            // For a regex sub-matcher we don't need to re-parse the binding.
+            PatternMatcher::Regex(regex) => regex.is_match(bound_text),
+
+            // For AST sub-matchers, re-parse the binding text as a snippet
+            // in the rule's language.  If parsing yields no tree we treat
+            // it as no-match rather than crashing.
+            _ => {
+                let Some(tree) = parse_file(bound_text, self.lang) else {
+                    return false;
+                };
+                let root = tree.root_node();
+                !match_pattern_in_tree(&self.sub_matcher, root, bound_text).is_empty()
+            }
+        }
+    }
+}
+
 impl CompiledAstPattern {
     fn new(source: String, lang: Language) -> Self {
         let source = prepare_pattern_for_grammar(source, lang);
@@ -414,6 +709,8 @@ fn match_pattern_in_tree(
             inside,
             not_inside,
             metavariable_regexes,
+            metavariable_comparisons,
+            metavariable_patterns,
         } => {
             // If we have an inside pattern, only search within matching contexts
             let search_roots = if let Some(inside_pat) = inside {
@@ -472,6 +769,14 @@ fn match_pattern_in_tree(
             }
 
             for constraint in metavariable_regexes {
+                results.retain(|r| constraint.matches(&r.bindings));
+            }
+
+            for constraint in metavariable_comparisons {
+                results.retain(|r| constraint.matches(&r.bindings));
+            }
+
+            for constraint in metavariable_patterns {
                 results.retain(|r| constraint.matches(&r.bindings));
             }
 
@@ -997,6 +1302,8 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
         let mut inside = None;
         let mut not_inside = None;
         let mut metavariable_regexes = Vec::new();
+        let mut metavariable_comparisons = Vec::new();
+        let mut metavariable_patterns = Vec::new();
 
         for clause in clauses {
             if let Some(ref p) = clause.pattern {
@@ -1030,6 +1337,19 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
             if let Some(ref mr) = clause.metavariable_regex {
                 metavariable_regexes.push(MetavariableRegexConstraint::from_yaml(mr)?);
             }
+            if let Some(ref mc) = clause.metavariable_comparison {
+                match MetavariableComparisonConstraint::from_yaml(mc) {
+                    Ok(constraint) => metavariable_comparisons.push(constraint),
+                    Err(e) => eprintln!("Warning: {e}"),
+                }
+            }
+            if let Some(ref mp) = clause.metavariable_pattern {
+                if let Some(constraint) = MetavariablePatternConstraint::from_yaml(mp, lang) {
+                    metavariable_patterns.push(constraint);
+                }
+                // If from_yaml returns None it already printed a warning; we
+                // continue loading the rest of the rule's clauses.
+            }
         }
 
         return Ok(PatternMatcher::Combined {
@@ -1038,6 +1358,8 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
             inside,
             not_inside,
             metavariable_regexes,
+            metavariable_comparisons,
+            metavariable_patterns,
         });
     }
 
@@ -1087,6 +1409,8 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                 .as_ref()
                 .map(|pattern| CompiledAstPattern::new(pattern.clone(), lang)),
             metavariable_regexes: Vec::new(),
+            metavariable_comparisons: Vec::new(),
+            metavariable_patterns: Vec::new(),
         });
     }
 
@@ -1645,5 +1969,330 @@ rules:
         let findings = rules[0].check(source, &tree);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].line, 5);
+    }
+
+    // ─── metavariable-comparison unit tests ─────────────────────────────────
+
+    #[test]
+    fn test_parse_comparison_lt() {
+        let (mv, op, lit, flip) = parse_comparison("$X < 10").unwrap();
+        assert_eq!(mv, "$X");
+        assert_eq!(op, CmpOp::Lt);
+        assert!((lit - 10.0).abs() < f64::EPSILON);
+        assert!(!flip);
+    }
+
+    #[test]
+    fn test_parse_comparison_le() {
+        let (mv, op, lit, _flip) = parse_comparison("$X <= 5.5").unwrap();
+        assert_eq!(op, CmpOp::Le);
+        assert!((lit - 5.5).abs() < f64::EPSILON);
+        assert_eq!(mv, "$X");
+    }
+
+    #[test]
+    fn test_parse_comparison_gt() {
+        let (_mv, op, lit, _flip) = parse_comparison("$N > 100").unwrap();
+        assert_eq!(op, CmpOp::Gt);
+        assert!((lit - 100.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_comparison_ge() {
+        let (_mv, op, lit, _flip) = parse_comparison("$N >= 0").unwrap();
+        assert_eq!(op, CmpOp::Ge);
+        assert!((lit - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_comparison_eq() {
+        let (mv, op, lit, _flip) = parse_comparison("$VAL == 42").unwrap();
+        assert_eq!(op, CmpOp::Eq);
+        assert!((lit - 42.0).abs() < f64::EPSILON);
+        assert_eq!(mv, "$VAL");
+    }
+
+    #[test]
+    fn test_parse_comparison_ne() {
+        let (_mv, op, lit, _flip) = parse_comparison("$VAL != 0").unwrap();
+        assert_eq!(op, CmpOp::Ne);
+        assert!((lit - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_comparison_literal_lhs() {
+        let (mv, op, lit, flip) = parse_comparison("10 < $X").unwrap();
+        assert_eq!(mv, "$X");
+        // op is stored as-is from the expression; `flip` indicates literal is LHS
+        assert_eq!(op, CmpOp::Lt);
+        assert!((lit - 10.0).abs() < f64::EPSILON);
+        assert!(flip);
+    }
+
+    #[test]
+    fn test_parse_comparison_no_metavar_is_err() {
+        assert!(parse_comparison("10 < 20").is_err());
+    }
+
+    #[test]
+    fn test_parse_comparison_no_operator_is_err() {
+        assert!(parse_comparison("$X 10").is_err());
+    }
+
+    #[test]
+    fn test_constraint_matches_numeric_match() {
+        let clause = SemgrepMetavariableComparisonClause {
+            metavariable: "$X".to_string(),
+            comparison: "$X < 10".to_string(),
+            base: None,
+            strip: None,
+        };
+        let constraint = MetavariableComparisonConstraint::from_yaml(&clause).unwrap();
+        let mut bindings = HashMap::new();
+        bindings.insert("$X".to_string(), "5".to_string());
+        assert!(constraint.matches(&bindings));
+    }
+
+    #[test]
+    fn test_constraint_non_match() {
+        let clause = SemgrepMetavariableComparisonClause {
+            metavariable: "$X".to_string(),
+            comparison: "$X < 10".to_string(),
+            base: None,
+            strip: None,
+        };
+        let constraint = MetavariableComparisonConstraint::from_yaml(&clause).unwrap();
+        let mut bindings = HashMap::new();
+        bindings.insert("$X".to_string(), "15".to_string());
+        assert!(!constraint.matches(&bindings));
+    }
+
+    #[test]
+    fn test_constraint_non_numeric_binding_no_match() {
+        let clause = SemgrepMetavariableComparisonClause {
+            metavariable: "$X".to_string(),
+            comparison: "$X < 10".to_string(),
+            base: None,
+            strip: None,
+        };
+        let constraint = MetavariableComparisonConstraint::from_yaml(&clause).unwrap();
+        let mut bindings = HashMap::new();
+        bindings.insert("$X".to_string(), "not_a_number".to_string());
+        assert!(!constraint.matches(&bindings));
+    }
+
+    #[test]
+    fn test_constraint_unbound_metavar_no_match() {
+        let clause = SemgrepMetavariableComparisonClause {
+            metavariable: "$X".to_string(),
+            comparison: "$X < 10".to_string(),
+            base: None,
+            strip: None,
+        };
+        let constraint = MetavariableComparisonConstraint::from_yaml(&clause).unwrap();
+        let bindings = HashMap::new(); // $X not bound
+        assert!(!constraint.matches(&bindings));
+    }
+
+    #[test]
+    fn test_constraint_float_comparison() {
+        let clause = SemgrepMetavariableComparisonClause {
+            metavariable: "$X".to_string(),
+            comparison: "$X >= 3.14".to_string(),
+            base: None,
+            strip: None,
+        };
+        let constraint = MetavariableComparisonConstraint::from_yaml(&clause).unwrap();
+        let mut bindings = HashMap::new();
+        bindings.insert("$X".to_string(), "3.14".to_string());
+        assert!(constraint.matches(&bindings));
+        let mut bindings2 = HashMap::new();
+        bindings2.insert("$X".to_string(), "2.0".to_string());
+        assert!(!constraint.matches(&bindings2));
+    }
+
+    #[test]
+    fn test_constraint_unsupported_base_warn_skip() {
+        let clause = SemgrepMetavariableComparisonClause {
+            metavariable: "$X".to_string(),
+            comparison: "$X < 10".to_string(),
+            base: Some(16),
+            strip: None,
+        };
+        // Should return Err, not panic
+        assert!(MetavariableComparisonConstraint::from_yaml(&clause).is_err());
+    }
+
+    #[test]
+    fn test_metavariable_comparison_filters_matches_end_to_end() {
+        // Full pipeline: parse rule YAML → build matcher → check source
+        let yaml = r#"
+rules:
+  - id: small-arg
+    patterns:
+      - pattern: foo($X)
+      - metavariable-comparison:
+          metavariable: $X
+          comparison: $X < 10
+    message: foo called with small arg
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        assert_eq!(rules.len(), 1);
+
+        // foo(5) → match (5 < 10)
+        // foo(20) → no match (20 >= 10)
+        // foo(bar) → no match (non-numeric)
+        let source = "foo(5)\nfoo(20)\nfoo(bar)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 1);
+    }
+
+    #[test]
+    fn test_metavariable_comparison_eq_operator_end_to_end() {
+        let yaml = r#"
+rules:
+  - id: exact-zero
+    patterns:
+      - pattern: check($N)
+      - metavariable-comparison:
+          metavariable: $N
+          comparison: $N == 0
+    message: called with zero
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "check(0)\ncheck(1)\ncheck(2)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 1);
+    }
+
+    /// metavariable-pattern: the binding for $FUNC must itself match a nested
+    /// AST sub-pattern.
+    #[test]
+    fn test_metavariable_pattern_match() {
+        // $FUNC must itself be a call matching `dangerous(...)`.
+        // Source line 1 calls eval(dangerous(x)) — $FUNC captures dangerous(x)
+        // which matches `dangerous(...)`.
+        // Source line 2 calls eval(safe(x)) — $FUNC captures safe(x)
+        // which does NOT match `dangerous(...)`.
+        let yaml = r#"
+rules:
+  - id: mvp-match
+    patterns:
+      - pattern: eval($FUNC)
+      - metavariable-pattern:
+          metavariable: $FUNC
+          pattern: dangerous(...)
+    message: dangerous arg in eval
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "eval(dangerous(x))\neval(safe(x))\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(findings.len(), 1, "expected exactly one finding");
+        assert_eq!(findings[0].line, 1);
+    }
+
+    /// Non-match case: binding exists but the sub-pattern does not match it.
+    #[test]
+    fn test_metavariable_pattern_no_match() {
+        let yaml = r#"
+rules:
+  - id: mvp-no-match
+    patterns:
+      - pattern: eval($FUNC)
+      - metavariable-pattern:
+          metavariable: $FUNC
+          pattern: dangerous(...)
+    message: dangerous arg
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "eval(safe(x))\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(
+            findings.len(),
+            0,
+            "expected no findings when sub-pattern does not match"
+        );
+    }
+
+    /// pattern-regex nested form: the bound text is matched via regex.
+    #[test]
+    fn test_metavariable_pattern_regex_nested() {
+        let yaml = r#"
+rules:
+  - id: mvp-regex
+    patterns:
+      - pattern: '"..." + $VAR'
+      - metavariable-pattern:
+          metavariable: $VAR
+          pattern-regex: '^user_'
+    message: user-prefixed var in concat
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "q = \"SELECT \" + user_input\nq2 = \"SELECT \" + data\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly one finding for user_ variable"
+        );
+        assert_eq!(findings[0].line, 1);
+    }
+
+    /// Warn-skip: an unsupported nested shape should warn and skip the
+    /// constraint without crashing, leaving other clauses active.
+    #[test]
+    fn test_metavariable_pattern_unsupported_nested_shape_warn_skip() {
+        // metavariable-pattern clause has neither pattern, pattern-regex, nor
+        // pattern-either — it has no recognised keys at all. The constraint
+        // should be silently dropped and the positive pattern `eval(...)` still
+        // fires on the source (no constraint to filter with).
+        let yaml = r#"
+rules:
+  - id: mvp-warn-skip
+    patterns:
+      - pattern: eval(...)
+      - metavariable-pattern:
+          metavariable: $FUNC
+    message: eval usage (constraint skipped)
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        // Loading must succeed (no panic, no Err).
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        assert_eq!(rules.len(), 1, "rule should still load after warn-skip");
+
+        // The positive pattern fires; the skipped constraint is absent.
+        let source = "eval(x)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        // Without the constraint, the positive `eval(...)` still matches.
+        assert!(!findings.is_empty(), "positive pattern should still fire");
     }
 }

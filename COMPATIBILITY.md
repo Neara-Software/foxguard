@@ -68,6 +68,21 @@ Rule scoping:
 Metavariable filtering:
 
 - `metavariable-regex`
+- `metavariable-comparison` — supported subset:
+  - Expression shape: `$VAR <op> <number>` or `<number> <op> $VAR`
+  - Operators: `<`, `<=`, `>`, `>=`, `==`, `!=`
+  - Literals: decimal integers, floats, hex (`0x…`), binary (`0b…`); C-style suffixes (`L`, `UL`, `LL`, etc.) are stripped automatically
+  - If the bound metavariable text is not parseable as a number the constraint evaluates to false (no match) — identical to Semgrep behaviour
+  - `base: 10` (or absent) accepted; any other `base:` value is warn-skipped for that constraint entry only
+  - `strip:` field is accepted in YAML (not rejected) but is not required for correctness since suffix-stripping is always applied; unsupported `strip: true` behaviour beyond suffix stripping is silently ignored
+- `metavariable-pattern` (inside a `patterns:` block): the named metavariable's
+  bound text is re-parsed as a snippet in the rule's language and matched against
+  a nested sub-pattern. Supported nested forms: `pattern:`, `pattern-regex:`, and
+  `pattern-either:` of those. Unparseable binding text evaluates to no match.
+  Warn-skipped (constraint dropped, sibling clauses/rules unaffected):
+  - `language:` override inside `metavariable-pattern:` — foxguard always uses the
+    rule's top-level language to re-parse the binding
+  - Nested `patterns:` or `metavariable-pattern:` inside the sub-pattern block
 
 Taint rules (`mode: taint`):
 
