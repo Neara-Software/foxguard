@@ -68,6 +68,7 @@ Rule scoping:
 Metavariable filtering:
 
 - `metavariable-regex`
+- `focus-metavariable` (inside a `patterns:` block): shifts the reported finding range to point at the named metavariable's binding span instead of the full enclosing match. Accepts a single string (`"$X"`) or a list (`["$X", "$Y"]`) — when a list is given, the first metavar in the list that is bound in a given match determines the range. If none of the listed metavariables are bound, the finding is still emitted at the full match range (no drop). Only supported inside `patterns:`; has no effect at the top-level rule scope.
 - `metavariable-comparison` — supported subset:
   - Expression shape: `$VAR <op> <number>` or `<number> <op> $VAR`
   - Operators: `<`, `<=`, `>`, `>=`, `==`, `!=`
