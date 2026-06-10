@@ -68,6 +68,13 @@ Rule scoping:
 Metavariable filtering:
 
 - `metavariable-regex`
+- `metavariable-comparison` — supported subset:
+  - Expression shape: `$VAR <op> <number>` or `<number> <op> $VAR`
+  - Operators: `<`, `<=`, `>`, `>=`, `==`, `!=`
+  - Literals: decimal integers, floats, hex (`0x…`), binary (`0b…`); C-style suffixes (`L`, `UL`, `LL`, etc.) are stripped automatically
+  - If the bound metavariable text is not parseable as a number the constraint evaluates to false (no match) — identical to Semgrep behaviour
+  - `base: 10` (or absent) accepted; any other `base:` value is warn-skipped for that constraint entry only
+  - `strip:` field is accepted in YAML (not rejected) but is not required for correctness since suffix-stripping is always applied; unsupported `strip: true` behaviour beyond suffix stripping is silently ignored
 
 Taint rules (`mode: taint`):
 

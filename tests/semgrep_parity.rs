@@ -188,3 +188,34 @@ rules:
 
     assert_parity(repo.path(), &rules, ".");
 }
+
+#[test]
+fn test_parity_metavariable_comparison() {
+    if skip_if_semgrep_missing() {
+        return;
+    }
+
+    let repo = TempDir::new().expect("failed to create temp dir");
+    let rules = write_file(
+        repo.path(),
+        "rules/small-arg.yaml",
+        r#"
+rules:
+  - id: small-numeric-arg
+    patterns:
+      - pattern: foo($X)
+      - metavariable-comparison:
+          metavariable: $X
+          comparison: $X < 10
+    message: foo called with a small numeric argument
+    severity: WARNING
+    languages: [python]
+"#,
+    );
+    // foo(5)  → match  (5 < 10)
+    // foo(20) → no match
+    // foo(bar) → no match (non-numeric)
+    write_file(repo.path(), "app.py", "foo(5)\nfoo(20)\nfoo(bar)\n");
+
+    assert_parity(repo.path(), &rules, "app.py");
+}
