@@ -495,7 +495,17 @@ fn main() {
         for rule in rules {
             let langs = rule_languages(rule);
             let bucket = language_bucket(&langs);
-            let outcome = classify_rule(rule);
+            // The live loader is the ground truth for loaded-vs-skipped. The
+            // static `classify_rule` is used only to *attribute* a skip reason
+            // when the loader genuinely rejects the rule — otherwise the metric
+            // drifts stale every time the loader gains a new capability.
+            let outcome = match ground_truth(rule, "") {
+                Outcome::Loaded => Outcome::Loaded,
+                Outcome::Skipped(_) => match classify_rule(rule) {
+                    Outcome::Skipped(reason) => Outcome::Skipped(reason),
+                    Outcome::Loaded => Outcome::Skipped("loader rejected (other)".to_string()),
+                },
+            };
             stats.record(&bucket, &outcome);
         }
     }
