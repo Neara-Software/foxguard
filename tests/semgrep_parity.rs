@@ -251,3 +251,35 @@ rules:
 
     assert_parity(repo.path(), &rules, "app.py");
 }
+
+#[test]
+fn test_parity_focus_metavariable() {
+    if skip_if_semgrep_missing() {
+        return;
+    }
+
+    let repo = TempDir::new().expect("failed to create temp dir");
+    let rules = write_file(
+        repo.path(),
+        "rules/focus.yaml",
+        r#"
+rules:
+  - id: focus-on-arg
+    patterns:
+      - pattern: foo($ARG)
+      - focus-metavariable: $ARG
+    message: flagging the argument
+    severity: WARNING
+    languages: [python]
+"#,
+    );
+    // foo(bar) → match; focus should point at `bar`, not the whole call.
+    // safe(bar) → no match (pattern is specifically `foo(...)`).
+    write_file(
+        repo.path(),
+        "app.py",
+        "foo(bar)\nsafe(bar)\nfoo(another_arg)\n",
+    );
+
+    assert_parity(repo.path(), &rules, "app.py");
+}

@@ -80,6 +80,10 @@ pub struct PatternClause {
     pub metavariable_comparison: Option<SemgrepMetavariableComparisonClause>,
     #[serde(default, rename = "metavariable-pattern")]
     pub metavariable_pattern: Option<SemgrepMetavariablePatternClause>,
+    /// `focus-metavariable:` — report the range of the named metavariable(s)
+    /// instead of the full enclosing match.
+    #[serde(default, rename = "focus-metavariable")]
+    pub focus_metavariable: Option<FocusMetavariableValue>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +133,25 @@ pub struct SemgrepMetavariableComparisonClause {
 /// Supported: `pattern:`, `pattern-regex:`, and `pattern-either:` (of those
 /// same forms). Anything else (nested `patterns:`, `metavariable-pattern:`,
 /// `language:` override, etc.) is warn-skipped at build time.
+/// Accepts either a single metavariable name (`"$X"`) or a list (`["$X", "$Y"]`),
+/// matching the Semgrep `focus-metavariable:` YAML schema.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum FocusMetavariableValue {
+    Single(String),
+    List(Vec<String>),
+}
+
+impl FocusMetavariableValue {
+    /// Expand to a flat `Vec<String>` for uniform processing.
+    pub fn into_vec(self) -> Vec<String> {
+        match self {
+            FocusMetavariableValue::Single(s) => vec![s],
+            FocusMetavariableValue::List(v) => v,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct SemgrepMetavariablePatternClause {
     pub metavariable: String,
@@ -178,6 +201,10 @@ pub enum PatternMatcher {
         metavariable_regexes: Vec<MetavariableRegexConstraint>,
         metavariable_comparisons: Vec<MetavariableComparisonConstraint>,
         metavariable_patterns: Vec<MetavariablePatternConstraint>,
+        /// `focus-metavariable:` — when non-empty, the reported finding range is
+        /// overridden to point at the first listed metavariable's binding range
+        /// (falling back to the full match range if the metavar isn't bound).
+        focus_metavariables: Vec<String>,
     },
 }
 
@@ -672,6 +699,10 @@ fn rewrite_go_semgrep_micro_syntax(source: &str) -> String {
 
 // ─── Pattern Matching Engine ────────────────────────────────────────────────
 
+/// Source span for a single metavariable binding: (line, column, end_line, end_column).
+/// All values are 1-based, mirroring `MatchRange`.
+type MetavarRange = (usize, usize, usize, usize);
+
 #[derive(Debug, Clone)]
 struct MatchRange {
     start_byte: usize,
@@ -682,6 +713,8 @@ struct MatchRange {
     end_column: usize,
     snippet: String,
     bindings: HashMap<String, String>,
+    /// Source range for each bound metavariable: metavar name → (line, col, end_line, end_col).
+    binding_ranges: HashMap<String, MetavarRange>,
 }
 
 type MatchResult = Vec<MatchRange>;
@@ -711,6 +744,7 @@ fn match_pattern_in_tree(
             metavariable_regexes,
             metavariable_comparisons,
             metavariable_patterns,
+            focus_metavariables,
         } => {
             // If we have an inside pattern, only search within matching contexts
             let search_roots = if let Some(inside_pat) = inside {
@@ -780,6 +814,31 @@ fn match_pattern_in_tree(
                 results.retain(|r| constraint.matches(&r.bindings));
             }
 
+            // focus-metavariable: override each result's reported range with the
+            // first listed metavariable that is bound. Fall back to the full match
+            // range if none of the focus metavars are bound (do not drop the finding).
+            if !focus_metavariables.is_empty() {
+                for result in &mut results {
+                    for fmv in focus_metavariables.iter() {
+                        if let Some(&(fline, fcol, fend_line, fend_col)) =
+                            result.binding_ranges.get(fmv.as_str())
+                        {
+                            result.line = fline;
+                            result.column = fcol;
+                            result.end_line = fend_line;
+                            result.end_column = fend_col;
+                            // Update snippet to the focused metavar's source line.
+                            if let Some(bound_text) = result.bindings.get(fmv.as_str()) {
+                                // We derive the byte offset from line/col for snippet lookup.
+                                result.snippet = find_source_line_by_line(source, fline)
+                                    .unwrap_or_else(|| bound_text.clone());
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
             results
         }
     }
@@ -818,6 +877,7 @@ fn match_regex_pattern(regex: &Regex, source: &str) -> MatchResult {
                 end_column,
                 snippet: get_source_line(source, matched.start()),
                 bindings: HashMap::new(),
+                binding_ranges: HashMap::new(),
             }
         })
         .collect()
@@ -912,7 +972,15 @@ fn walk_and_match(
 ) {
     if selector_allows_node(pattern.selector_kind.as_deref(), node) {
         let mut bindings = HashMap::new();
-        if match_node(node, source, pat_node, &pattern.source, &mut bindings) {
+        let mut binding_ranges: HashMap<String, MetavarRange> = HashMap::new();
+        if match_node(
+            node,
+            source,
+            pat_node,
+            &pattern.source,
+            &mut bindings,
+            &mut binding_ranges,
+        ) {
             let start = node.start_position();
             let end = node.end_position();
             results.push(MatchRange {
@@ -924,6 +992,7 @@ fn walk_and_match(
                 end_column: end.column + 1,
                 snippet: get_source_line(source, node.start_byte()),
                 bindings,
+                binding_ranges,
             });
             // Don't recurse into children of a matched node to avoid duplicates
             return;
@@ -938,13 +1007,14 @@ fn walk_and_match(
 }
 
 /// Try to match a pattern AST node against a target AST node.
-/// Returns true if they match, populating metavariable bindings.
+/// Returns true if they match, populating metavariable bindings and their source ranges.
 fn match_node(
     target: tree_sitter::Node,
     target_src: &str,
     pattern: tree_sitter::Node,
     pat_src: &str,
     bindings: &mut HashMap<String, String>,
+    binding_ranges: &mut HashMap<String, MetavarRange>,
 ) -> bool {
     let pat_text = &pat_src[pattern.byte_range()];
 
@@ -954,7 +1024,13 @@ fn match_node(
         if let Some(existing) = bindings.get(&metavar) {
             return existing == target_text;
         }
-        bindings.insert(metavar, target_text.to_string());
+        let start = target.start_position();
+        let end = target.end_position();
+        bindings.insert(metavar.clone(), target_text.to_string());
+        binding_ranges.insert(
+            metavar,
+            (start.row + 1, start.column + 1, end.row + 1, end.column + 1),
+        );
         return true;
     }
 
@@ -980,12 +1056,12 @@ fn match_node(
         // Allow some flexibility for expression wrappers
         if pattern.child_count() == 1 {
             if let Some(pc) = pattern.child(0) {
-                return match_node(target, target_src, pc, pat_src, bindings);
+                return match_node(target, target_src, pc, pat_src, bindings, binding_ranges);
             }
         }
         if target.child_count() == 1 {
             if let Some(tc) = target.child(0) {
-                return match_node(tc, target_src, pattern, pat_src, bindings);
+                return match_node(tc, target_src, pattern, pat_src, bindings, binding_ranges);
             }
         }
         return false;
@@ -1008,6 +1084,7 @@ fn match_node(
         &pat_children,
         pat_src,
         bindings,
+        binding_ranges,
     )
 }
 
@@ -1074,6 +1151,7 @@ fn match_children_with_ellipsis(
     pat_children: &[tree_sitter::Node],
     pat_src: &str,
     bindings: &mut HashMap<String, String>,
+    binding_ranges: &mut HashMap<String, MetavarRange>,
 ) -> bool {
     if pat_children.is_empty() {
         return true;
@@ -1097,15 +1175,18 @@ fn match_children_with_ellipsis(
             let next_pat = pat_children[pi];
             while ti < target_children.len() {
                 let mut sub_bindings = bindings.clone();
+                let mut sub_ranges = binding_ranges.clone();
                 if match_node(
                     target_children[ti],
                     target_src,
                     next_pat,
                     pat_src,
                     &mut sub_bindings,
+                    &mut sub_ranges,
                 ) {
                     // Continue matching from here
                     *bindings = sub_bindings;
+                    *binding_ranges = sub_ranges;
                     pi += 1;
                     ti += 1;
                     break;
@@ -1120,13 +1201,20 @@ fn match_children_with_ellipsis(
             if ti >= target_children.len() {
                 return false;
             }
-            let target_text = &target_src[target_children[ti].byte_range()];
+            let target_node = target_children[ti];
+            let target_text = &target_src[target_node.byte_range()];
             if let Some(existing) = bindings.get(&metavar) {
                 if existing != target_text {
                     return false;
                 }
             } else {
+                let start = target_node.start_position();
+                let end = target_node.end_position();
                 bindings.insert(metavar.clone(), target_text.to_string());
+                binding_ranges.insert(
+                    metavar.clone(),
+                    (start.row + 1, start.column + 1, end.row + 1, end.column + 1),
+                );
             }
             ti += 1;
             // Skip both the ERROR and identifier pattern children
@@ -1144,6 +1232,7 @@ fn match_children_with_ellipsis(
                 pat_child,
                 pat_src,
                 bindings,
+                binding_ranges,
             ) {
                 return false;
             }
@@ -1209,6 +1298,15 @@ fn byte_offset_to_position(source: &str, byte_offset: usize) -> (usize, usize) {
     (line, column)
 }
 
+/// Return the source text for a given 1-based line number, trimming the trailing newline.
+/// Returns `None` if the line number is out of range.
+fn find_source_line_by_line(source: &str, line: usize) -> Option<String> {
+    source
+        .lines()
+        .nth(line.saturating_sub(1))
+        .map(|s| s.to_string())
+}
+
 fn ranges_overlap(left: &MatchRange, right: &MatchRange) -> bool {
     left.start_byte < right.end_byte && right.start_byte < left.end_byte
 }
@@ -1232,6 +1330,17 @@ fn merge_bindings(
     Some(merged)
 }
 
+fn merge_binding_ranges(
+    left: &HashMap<String, MetavarRange>,
+    right: &HashMap<String, MetavarRange>,
+) -> HashMap<String, MetavarRange> {
+    let mut merged = left.clone();
+    for (key, value) in right {
+        merged.entry(key.clone()).or_insert(*value);
+    }
+    merged
+}
+
 fn intersect_match_sets(left: Vec<MatchRange>, right: Vec<MatchRange>) -> Vec<MatchRange> {
     let mut merged = Vec::new();
 
@@ -1245,8 +1354,12 @@ fn intersect_match_sets(left: Vec<MatchRange>, right: Vec<MatchRange>) -> Vec<Ma
                 continue;
             };
 
+            let binding_ranges =
+                merge_binding_ranges(&left_match.binding_ranges, &right_match.binding_ranges);
+
             let mut combined = left_match.clone();
             combined.bindings = bindings;
+            combined.binding_ranges = binding_ranges;
             merged.push(combined);
         }
     }
@@ -1304,6 +1417,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
         let mut metavariable_regexes = Vec::new();
         let mut metavariable_comparisons = Vec::new();
         let mut metavariable_patterns = Vec::new();
+        let mut focus_metavariables: Vec<String> = Vec::new();
 
         for clause in clauses {
             if let Some(ref p) = clause.pattern {
@@ -1350,6 +1464,9 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                 // If from_yaml returns None it already printed a warning; we
                 // continue loading the rest of the rule's clauses.
             }
+            if let Some(ref fmv) = clause.focus_metavariable {
+                focus_metavariables.extend(fmv.clone().into_vec());
+            }
         }
 
         return Ok(PatternMatcher::Combined {
@@ -1360,6 +1477,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
             metavariable_regexes,
             metavariable_comparisons,
             metavariable_patterns,
+            focus_metavariables,
         });
     }
 
@@ -1411,6 +1529,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
             metavariable_regexes: Vec::new(),
             metavariable_comparisons: Vec::new(),
             metavariable_patterns: Vec::new(),
+            focus_metavariables: Vec::new(),
         });
     }
 
@@ -2294,5 +2413,139 @@ rules:
         let findings = rules[0].check(source, &tree);
         // Without the constraint, the positive `eval(...)` still matches.
         assert!(!findings.is_empty(), "positive pattern should still fire");
+    }
+
+    // ─── focus-metavariable tests ────────────────────────────────────────────
+
+    /// focus-metavariable: the reported finding range must point at $VAR (the
+    /// argument), NOT at the outer call expression.
+    ///
+    /// Source: `foo(bar)\n`
+    ///   - full match `foo(bar)` is at line 1, col 1..8
+    ///   - argument `bar` is at line 1, col 5..7 (1-based)
+    ///
+    /// With focus-metavariable: $ARG, the finding should have line=1, col=5.
+    #[test]
+    fn test_focus_metavariable_range_override() {
+        let yaml = r#"
+rules:
+  - id: focus-test
+    patterns:
+      - pattern: foo($ARG)
+      - focus-metavariable: $ARG
+    message: focus on arg
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        // "foo(bar)\n" — `bar` starts at byte 4 (0-based), which is col 5 (1-based)
+        let source = "foo(bar)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+
+        assert_eq!(findings.len(), 1, "expected one finding");
+
+        // The full match `foo(bar)` is at line 1, column 1.
+        // With focus-metavariable, it should instead point at `bar` (col 5).
+        assert_eq!(findings[0].line, 1, "finding should be on line 1");
+        assert_ne!(
+            findings[0].column, 1,
+            "column should NOT be 1 (that's the full match start); focus-metavariable must override it"
+        );
+        // `bar` is the 5th character on line 1 (1-based).
+        assert_eq!(
+            findings[0].column, 5,
+            "focused metavariable $ARG should start at column 5"
+        );
+    }
+
+    /// focus-metavariable with a list: accept `focus-metavariable: [$ARG]`.
+    #[test]
+    fn test_focus_metavariable_list_syntax() {
+        let yaml = r#"
+rules:
+  - id: focus-list-test
+    patterns:
+      - pattern: foo($ARG)
+      - focus-metavariable: [$ARG]
+    message: focus on arg
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "foo(bar)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+
+        assert_eq!(findings.len(), 1, "expected one finding");
+        assert_eq!(findings[0].column, 5, "$ARG should start at column 5");
+    }
+
+    /// focus-metavariable fallback: when the named metavar is not bound in a
+    /// match (won't happen in a well-formed rule, but verify no crash/drop).
+    #[test]
+    fn test_focus_metavariable_unbound_fallback() {
+        // This rule focuses on $MISSING which is never bound by the pattern.
+        // The finding must still be emitted at the full match range.
+        let yaml = r#"
+rules:
+  - id: focus-fallback
+    patterns:
+      - pattern: eval(...)
+      - focus-metavariable: $MISSING
+    message: fallback test
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "eval(user_input)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+
+        // Finding must still be emitted (no drop on missing metavar).
+        assert_eq!(findings.len(), 1, "finding must not be dropped");
+        // Falls back to full match at line 1, column 1
+        assert_eq!(findings[0].line, 1);
+        assert_eq!(
+            findings[0].column, 1,
+            "should fall back to full match column"
+        );
+    }
+
+    /// focus-metavariable: two-line source — confirm the focused metavar is on
+    /// line 2 when the match is on line 2.
+    #[test]
+    fn test_focus_metavariable_multiline_source() {
+        let yaml = r#"
+rules:
+  - id: focus-multiline
+    patterns:
+      - pattern: sink($X)
+      - focus-metavariable: $X
+    message: focus on X
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        // Only line 2 has a match.
+        let source = "safe(a)\nsink(b)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+
+        assert_eq!(findings.len(), 1, "expected one finding on line 2");
+        assert_eq!(
+            findings[0].line, 2,
+            "focused metavar $X should be on line 2"
+        );
+        // `b` is the 6th character on line 2 in "sink(b)"
+        assert_eq!(findings[0].column, 6, "$X (`b`) should be at column 6");
     }
 }
