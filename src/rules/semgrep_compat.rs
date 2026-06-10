@@ -48,6 +48,11 @@ pub struct SemgrepRuleYaml {
     pub metadata: Option<SemgrepMetadata>,
     #[serde(default)]
     pub paths: Option<SemgrepPaths>,
+    /// Optional autofix template (Semgrep `fix:` key).  Metavariables in the
+    /// template (e.g. `$X`) are substituted with bound values when a finding is
+    /// built.  `fix-regex:` is not supported and is ignored.
+    #[serde(default)]
+    pub fix: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -181,6 +186,10 @@ pub struct SemgrepRule {
     pub cwe: Option<String>,
     pub matcher: PatternMatcher,
     pub path_filter: Option<PathFilter>,
+    /// Optional autofix template derived from the rule's `fix:` key.
+    /// Metavariables (`$NAME`) are substituted with bound text when a finding
+    /// is emitted; unbound tokens are left as-is.
+    pub fix_template: Option<String>,
 }
 
 /// Represents the matching strategy for a rule.
@@ -399,6 +408,10 @@ impl Rule for SemgrepRule {
         let matches = match_pattern_in_tree(&self.matcher, root, source);
 
         for matched_node_range in matches {
+            let fix_suggestion = self
+                .fix_template
+                .as_deref()
+                .map(|tmpl| apply_fix_template(tmpl, &matched_node_range.bindings));
             findings.push(Finding {
                 rule_id: self.id.clone(),
                 severity: self.severity,
@@ -414,7 +427,7 @@ impl Rule for SemgrepRule {
                 source_description: None,
                 sink_line: None,
                 sink_description: None,
-                fix_suggestion: None,
+                fix_suggestion,
                 sink_start_byte: None,
                 sink_end_byte: None,
                 // External Semgrep rules are inherently fuzzier than
@@ -1250,6 +1263,27 @@ fn is_metavar(text: &str) -> bool {
     metavariable_key(text).is_some()
 }
 
+/// Substitute bound metavariable values into a Semgrep `fix:` template.
+///
+/// Tokens of the form `$NAME` (where `NAME` is one or more ASCII alphanumeric
+/// or underscore characters) are replaced with the text bound to that
+/// metavariable.  Unbound tokens are left literal.  The replacement is applied
+/// longest-match-first so that e.g. `$FOOBAR` is not split into `$FOO` + `BAR`.
+fn apply_fix_template(template: &str, bindings: &HashMap<String, String>) -> String {
+    static METAVAR_RE: OnceLock<Regex> = OnceLock::new();
+    let re = METAVAR_RE.get_or_init(|| {
+        Regex::new(r"\$[A-Za-z0-9_]+").expect("valid metavariable regex for fix template")
+    });
+    re.replace_all(template, |caps: &regex::Captures<'_>| -> String {
+        let token = caps.get(0).map_or("", |m| m.as_str());
+        bindings
+            .get(token)
+            .cloned()
+            .unwrap_or_else(|| token.to_string())
+    })
+    .into_owned()
+}
+
 fn metavariable_key(text: &str) -> Option<String> {
     let t = text.trim();
     if t.starts_with('$')
@@ -1709,6 +1743,7 @@ pub fn parse_semgrep_str(content: &str, source_label: &str) -> Result<Vec<Box<dy
                 cwe: cwe.clone(),
                 matcher,
                 path_filter: path_filter.clone(),
+                fix_template: yaml_rule.fix.clone(),
             }));
         }
     }
@@ -2515,6 +2550,117 @@ rules:
         assert_eq!(
             findings[0].column, 1,
             "should fall back to full match column"
+        );
+    }
+
+    // ─── fix: autofix template tests ────────────────────────────────────────
+
+    /// (a) A rule with `fix:` referencing a metavar produces a finding whose
+    /// `fix_suggestion` has the metavar substituted with the bound value.
+    #[test]
+    fn test_fix_template_substitutes_bound_metavar() {
+        let yaml = r#"
+rules:
+  - id: use-safe-func
+    pattern: unsafe_call($X)
+    fix: safe_call($X)
+    message: Use safe_call instead
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "unsafe_call(user_data)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].fix_suggestion.as_deref(),
+            Some("safe_call(user_data)"),
+            "metavar $X should be substituted with the bound text 'user_data'"
+        );
+    }
+
+    /// (b) A rule without `fix:` yields `fix_suggestion: None`.
+    #[test]
+    fn test_no_fix_key_yields_no_fix_suggestion() {
+        let yaml = r#"
+rules:
+  - id: test-eval-no-fix
+    pattern: eval(...)
+    message: Do not use eval
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "eval(user_input)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0].fix_suggestion.is_none(),
+            "fix_suggestion should be None when no fix: key is present"
+        );
+    }
+
+    /// (c) An unbound metavar token in the template is left literal — no panic.
+    #[test]
+    fn test_fix_template_unbound_metavar_left_literal() {
+        let yaml = r#"
+rules:
+  - id: fix-unbound
+    pattern: eval(...)
+    fix: safe_eval($UNBOUND)
+    message: Use safe_eval
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "eval(x)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+
+        assert_eq!(findings.len(), 1);
+        // $UNBOUND is not bound by the pattern (which uses ..., no named metavar)
+        // so the token should remain as-is in the suggestion.
+        assert_eq!(
+            findings[0].fix_suggestion.as_deref(),
+            Some("safe_eval($UNBOUND)"),
+            "unbound metavar token should be left literal, not panic"
+        );
+    }
+
+    /// (a2) fix: with multiple metavars — each is substituted independently.
+    #[test]
+    fn test_fix_template_multiple_metavars() {
+        let yaml = r#"
+rules:
+  - id: fix-multi
+    pattern: old($A, $B)
+    fix: new($B, $A)
+    message: swap args
+    severity: INFO
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "old(foo, bar)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].fix_suggestion.as_deref(),
+            Some("new(bar, foo)"),
+            "both metavars should be substituted correctly"
         );
     }
 

@@ -48,6 +48,12 @@ Top-level structure:
 - `severity`
 - `languages`
 - `metadata.cwe`
+- `fix` — autofix suggestion template.  When present, foxguard performs simple
+  token substitution of metavariable names (e.g. `$X`) with the text bound by
+  the matching pattern and emits the result as `fix_suggestion` on the finding.
+  Unbound metavariable tokens are left as-is.  The suggestion is informational
+  only — foxguard does not auto-apply it to the source file.
+  `fix-regex:` is not supported and is silently ignored.
 
 Pattern operators:
 
