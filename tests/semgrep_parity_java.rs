@@ -9,7 +9,9 @@
 
 mod common;
 
-use common::semgrep_parity_harness::{assert_parity, skip_if_semgrep_missing, write_file};
+use common::semgrep_parity_harness::{
+    assert_parity, foxguard_findings, skip_if_semgrep_missing, write_file,
+};
 use tempfile::TempDir;
 
 #[test]
@@ -210,4 +212,81 @@ rules:
     );
 
     assert_parity(repo.path(), &rules, ".");
+}
+
+/// `mode: taint` parity test for Java.
+///
+/// Semgrep and foxguard produce slightly different message text for taint
+/// findings (foxguard appends "— <source> reaches <sink>" to the rule
+/// message), so this test compares only `(file, line)` pairs rather than
+/// full messages.  Both tools must agree on *which* line the sink is on.
+///
+/// The test is skipped when `semgrep` is not on PATH (same behaviour as all
+/// other parity tests in this file).
+#[test]
+fn test_parity_taint_mode_java_source_to_sink() {
+    if skip_if_semgrep_missing() {
+        return;
+    }
+
+    let repo = tempfile::TempDir::new().expect("failed to create temp dir");
+    let rules = write_file(
+        repo.path(),
+        "rules/taint.yaml",
+        r#"
+rules:
+  - id: java-taint-cmd-injection
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: "Tainted input flows to Runtime.exec"
+    pattern-sources:
+      - pattern: request.getParameter($X)
+    pattern-sinks:
+      - pattern: Runtime.exec($X)
+"#,
+    );
+    // The fixture has a source→sink flow: request.getParameter feeds cmd
+    // which flows to Runtime.exec. The sink call is on line 5.
+    write_file(
+        repo.path(),
+        "Controller.java",
+        "public class Controller {\n\
+         \n\
+         void run(HttpServletRequest request) throws Exception {\n\
+         String cmd = request.getParameter(\"cmd\");\n\
+         Runtime.getRuntime().exec(cmd);\n\
+         }\n\
+         }\n",
+    );
+
+    // foxguard must emit at least one finding.
+    let foxguard = foxguard_findings(repo.path(), &rules, "Controller.java");
+    assert!(
+        !foxguard.is_empty(),
+        "foxguard must detect the Java taint flow (request.getParameter → Runtime.exec); got no findings"
+    );
+
+    // foxguard should flag line 5 (the exec call).
+    assert!(
+        foxguard.iter().any(|f| f.line == 5),
+        "foxguard finding should be on line 5 (the sink); got: {:?}",
+        foxguard
+    );
+
+    // When semgrep is available, compare the set of (file, line) pairs.
+    // We do NOT compare messages because foxguard enriches them with
+    // "— source reaches sink" text that Semgrep does not produce.
+    use common::semgrep_parity_harness::semgrep_findings;
+    let semgrep = semgrep_findings(repo.path(), &rules, "Controller.java");
+    if !semgrep.is_empty() {
+        let foxguard_lines: std::collections::BTreeSet<_> =
+            foxguard.iter().map(|f| (&f.path, f.line)).collect();
+        let semgrep_lines: std::collections::BTreeSet<_> =
+            semgrep.iter().map(|f| (&f.path, f.line)).collect();
+        assert_eq!(
+            foxguard_lines, semgrep_lines,
+            "foxguard and semgrep disagree on the Java taint finding locations"
+        );
+    }
 }
