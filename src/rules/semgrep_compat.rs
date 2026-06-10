@@ -985,6 +985,7 @@ fn map_language(lang_str: &str) -> Option<Language> {
         "swift" => Some(Language::Swift),
         "kotlin" | "kt" => Some(Language::Kotlin),
         "c" => Some(Language::C),
+        "hcl" | "terraform" | "tf" => Some(Language::Hcl),
         _ => None,
     }
 }

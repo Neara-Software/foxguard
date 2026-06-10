@@ -85,6 +85,9 @@ Language mapping:
 - JavaScript / TypeScript (`.ts` and `.tsx` use dedicated TypeScript/TSX parsers, then map onto the JavaScript-compatible rule surface)
 - Python
 - Go
+- HCL / Terraform (`.tf`, `.hcl`, `.tfvars`; the `hcl` and `terraform` language selectors both map to the HCL parser. This unlocks the Semgrep registry's `terraform/` rule pack — predominantly `pattern-regex` and `pattern` + `metavariable-regex` rules.)
+
+Other languages mapped by the `languages:` selector: Ruby, Java, PHP, Rust, C#, Swift, Kotlin, C.
 
 Rule loading:
 

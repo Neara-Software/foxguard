@@ -9972,6 +9972,498 @@
       "rule_id": "js/no-command-injection",
       "file": "vscode-extension/src/extension.ts",
       "line": 387
+    },
+    {
+      "fingerprint": "4960af2497ed287c0e677e45cfb3bc7807578995ccd0fced343f9db7edcf0ebc",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "Cargo.lock",
+      "line": 1148
+    },
+    {
+      "fingerprint": "302e1d431f97464ecf16332d965560a062bf741450276c47d717c21dfe010906",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "Cargo.lock",
+      "line": 1478
+    },
+    {
+      "fingerprint": "9a56ca4ada4977a74ea1721061c44997a44e998c4ec377aa34d84e175e005682",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "Cargo.lock",
+      "line": 2069
+    },
+    {
+      "fingerprint": "f5e89fd6a7ec32785e4b350f0aeb25e0cc491b9c0828ec07c9f4194eec45618b",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "Cargo.lock",
+      "line": 2089
+    },
+    {
+      "fingerprint": "7c268769cc1e01004b669e0da7035f25efd96f7bd39803933facc0871a638967",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "Cargo.lock",
+      "line": 2348
+    },
+    {
+      "fingerprint": "023383055cf29d8a551131e7623f7bc0219c8ff8dcbf8688475c753d2b47e334",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "Cargo.lock",
+      "line": 2459
+    },
+    {
+      "fingerprint": "15150ab8f4d1c3a4a26a885d5bc259486bf4201df7c5f9e529f8486cc9e61c58",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "Cargo.lock",
+      "line": 2495
+    },
+    {
+      "fingerprint": "e29418d23e6ebc0c1c5e458fa5a598b9ff2cbf2e188747e0c9ceb41789353937",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "Cargo.lock",
+      "line": 2522
+    },
+    {
+      "fingerprint": "09cf5ae7d375ca43adefd940ed59008aba70adad47e2b19fcea9ad3d1f738cd8",
+      "rule_id": "manifest/cargo-pq-vulnerable-dep",
+      "file": "Cargo.lock",
+      "line": 3138
+    },
+    {
+      "fingerprint": "d363bab36df40e5f9fcecf677299d874ec02fb49bb67f26f7e98ca3ea6d08d58",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/parser.rs",
+      "line": 63
+    },
+    {
+      "fingerprint": "d9f176754b2f18506eb5f390815cdcd37eb693e279e4f476118b979e6deb0c48",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/parser.rs",
+      "line": 72
+    },
+    {
+      "fingerprint": "48fcdbb191ce8a6683c34679df9b7e2c8d2521ccb1b17bc47fa5b45d4f73f22b",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/parser.rs",
+      "line": 81
+    },
+    {
+      "fingerprint": "ab71ab9d07c190e3b1e0349366bfd6101ef0dfe224b5a5f2608b8a962ac241d9",
+      "rule_id": "rs/no-path-traversal",
+      "file": "src/engine/scanner.rs",
+      "line": 373
+    },
+    {
+      "fingerprint": "335761ed8bb81a73707a02c7177409cdb5f2273f5d4e9020d96544db8e04d050",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 555
+    },
+    {
+      "fingerprint": "056bd4a599d269eb49dea8ccbd5cbd681850fcfdc388a248c28f7e5ead15be1a",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 563
+    },
+    {
+      "fingerprint": "b513289866bc6c492f8698ba10d1db3edd50019723e4c2087467533a457d907b",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 570
+    },
+    {
+      "fingerprint": "4096ac01b122308cbe163062f1d91f0b29eccee72c428b3c7c671f782b33915a",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1006
+    },
+    {
+      "fingerprint": "0534c169469b01ec7456280ec0118054385a8aec88255ce3aa3b33b43548980a",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1014
+    },
+    {
+      "fingerprint": "29dbc18863f4a1b88d132707e15b4d0d6356d3864671d43669ffd9f60d64ae39",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1031
+    },
+    {
+      "fingerprint": "c7c01b6360b625c558d04639daeab8df89aacd71a90f624e5cb1558fe492f58f",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1038
+    },
+    {
+      "fingerprint": "6777b11e66ff133335cb35d83b03aeeb1c8db67ae6bb27d4ddef36e6e111fb3e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1060
+    },
+    {
+      "fingerprint": "48c1ffd5cc1e1cda37d0e217b13caabb2f8a1ba2038ed8a22bd006c6b63c38c2",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1069
+    },
+    {
+      "fingerprint": "d99597d68af859204bb17907ac6ac856d80eefae6279c9e60033ab93a110b8dc",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1078
+    },
+    {
+      "fingerprint": "af60b76d2d73129708577508fa9efe33cfebbe27deabc96e46211e79b0e3472e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1480
+    },
+    {
+      "fingerprint": "7b374900902713cf91d7bf8dfc78b228ebe2f0d1350b81273e366601e55cdb22",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1514
+    },
+    {
+      "fingerprint": "b9cb4744f17d40d561ce68497e4fa4d0853ae1116ae4fddf8895c477f442b69f",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1522
+    },
+    {
+      "fingerprint": "68d802cbb770aa11b193cf200c7f401f013255c97441e5ad68c20bc675533b5e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1531
+    },
+    {
+      "fingerprint": "7df3d9bde19b033d2bee668966dbec43681ebc7a1db9316a0ef6351f3446d3cc",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1557
+    },
+    {
+      "fingerprint": "02389f77396ad194b82206021ccb36e15db3efba3479a6f5633ae84143306840",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1568
+    },
+    {
+      "fingerprint": "f3de38e397a8d890ad9417fa0a319b2f675c68d161be09c549f205545642a3ce",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1570
+    },
+    {
+      "fingerprint": "d6b5b301a66a8378c8c85e38ba0b5eb844120592b8f35ab4bb56c4c4b6ed945b",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1594
+    },
+    {
+      "fingerprint": "a60040fccc01a11b10b5468e55a37266df9aa9b579511303d9f15a85b010092e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1615
+    },
+    {
+      "fingerprint": "7ef7fd675b2ca232f6b436bda05edffdb92bea0a1dda0f5a68b8a04f320da067",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1635
+    },
+    {
+      "fingerprint": "41753935fedadd6767f3bd445d3ff8ba422dec8c7835f9efb112f19335ae3a5e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1636
+    },
+    {
+      "fingerprint": "2df58f66ed850f7c9c1e487abb636a60457442f7b01c7a9875d179f28b3bc885",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1638
+    },
+    {
+      "fingerprint": "ceba286241f418f6d70d16cc0e16bc2f8c9120cf887efd32f0bfe7f21fc1d3bf",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1640
+    },
+    {
+      "fingerprint": "2a430aa559eab027318ba19ca53cedafe2723fec5544f20ab3d249d0d48758f5",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1644
+    },
+    {
+      "fingerprint": "a7e4ae7a038453476d7010804ae1fb70de31c64aa3d4d388d6fc01d4c8010225",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1646
+    },
+    {
+      "fingerprint": "0cef1a6a80d8aedcb51be4c17fc03d5d55925021e9e4addb5223863db1336091",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1663
+    },
+    {
+      "fingerprint": "3039a951e88a11933ab3ff1a137ceff8345ed605961be8a6c88be2ed36678e42",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1664
+    },
+    {
+      "fingerprint": "de6bd733b1791f6c4de5a52265193b23a91f76020d0f344f026bbf6163249f61",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1666
+    },
+    {
+      "fingerprint": "bda8e8a34e59dc72074e4dc40b55bbf13d220400c7547fd2a25d1283987ec526",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/engine/scanner.rs",
+      "line": 1670
+    },
+    {
+      "fingerprint": "fee4af7e2caff5f0e303342d1892e514cf5b24968a0d06b77c7232e0ceb433fd",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 358
+    },
+    {
+      "fingerprint": "c5aaac546b3d5547fabd5481f516ee3cd9a6c495d6201eabb75ecaaa30fb61d7",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 366
+    },
+    {
+      "fingerprint": "8f59f42737f8f5a566d70f8f30e8a0b29488f07611feec5631e25662fa91e821",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1075
+    },
+    {
+      "fingerprint": "2060f67f6ca71724c904df850ee1b0e6e61af6c09743c33ec464f95f9f62d5d7",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1363
+    },
+    {
+      "fingerprint": "87b9513219fe4110f034c3dd1f4066273e08540b457cb928baade0e27baa3e59",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1364
+    },
+    {
+      "fingerprint": "6cfc35c0c00d29575717c489c1eb778ed4ab9e7a0f18439806ce1caa42973840",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1379
+    },
+    {
+      "fingerprint": "9f12f8563308e5119a9b12af8cf68d849d634b2ed3a146091bc1dd96108102f5",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1423
+    },
+    {
+      "fingerprint": "ef5e880c29dbb8d47bfb2f389f6b8cc7eb2ae235d578c791302d021226bd11c3",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1424
+    },
+    {
+      "fingerprint": "901e5ff83e36c0b6eac69001ba4fa91472bff063fe4bdb4cd08af8a3a4b634ea",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1448
+    },
+    {
+      "fingerprint": "81196e310e660db752fbf60764cf73676eb36903d7b47339fa1c123755cdf0a2",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1463
+    },
+    {
+      "fingerprint": "483991c2ee90866fef7d63fdde56573b09825445c764028795660d0899334e3a",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1489
+    },
+    {
+      "fingerprint": "a2d6901872633ee5cff37fa39d6a80fcc0a9a395a2334339e13cb31e36dedcf0",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1492
+    },
+    {
+      "fingerprint": "99ad52806e11286031a8227b4dea1cdf4940d20af199e2a1363325336c94027b",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1512
+    },
+    {
+      "fingerprint": "254626f21d54c4db582140f718435040d71f8666e2f96ada9474461473ee1e15",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1515
+    },
+    {
+      "fingerprint": "a00c7fabaa426d7c009e01ce34ae3fbb865af7bb9bb89dc93e69ccdca89ddf3e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1532
+    },
+    {
+      "fingerprint": "f8bc69d4e246f28d0d22808cd52af6f425e682560ce2a1c1df66937b05cf7ab3",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1535
+    },
+    {
+      "fingerprint": "df274d1608174a19666876bb52c4a5ae1e8d75c3a329601e75465db199c284e5",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1552
+    },
+    {
+      "fingerprint": "9740cc7350e745b2f02eaa882d2205e4930c1a7a528c476aef604b547b7e01d8",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1555
+    },
+    {
+      "fingerprint": "2eb12e05c3ca609063f09e10478289f56aeb7a71cfe476230d0ab922d881841e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1572
+    },
+    {
+      "fingerprint": "eace0911748cc19c56bc102c2eaa423edb331e548b0ad7c383c06a5d21205db4",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1575
+    },
+    {
+      "fingerprint": "78ed5dfe7630f2bf8d1de433a5da5821e6d2311e27f035c5e26a350852b7ce52",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1594
+    },
+    {
+      "fingerprint": "d8a9c359f131c51f40a55eb8f9ab7049d3157036331c255d6803f1765b4d6f27",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1597
+    },
+    {
+      "fingerprint": "12977677eebec783e40432ffcac566b54411963caae1978d5f47c8faf4ef81a2",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1618
+    },
+    {
+      "fingerprint": "f798fb10f4ca89f2cb8d018f9292d27ca638466b6e264ce18f859fe4f13ba6ad",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1621
+    },
+    {
+      "fingerprint": "b91b9004b50485243deb2b2b105b8dd8d13b056d92932f115456c2ff3fdfa369",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1642
+    },
+    {
+      "fingerprint": "f252f82841dfb50667a6f9815df36c1e4c655a0b17007afd922e4442c72a5606",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "src/rules/semgrep_compat.rs",
+      "line": 1645
+    },
+    {
+      "fingerprint": "592b08ea0302dea966b8c6f009ad4e175154a26f319620f0ef6550795cea6009",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 227
+    },
+    {
+      "fingerprint": "cd275d8b794a13ddec12d0abd9ced9f752692d3a508ff87404ffa724d51359e4",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 228
+    },
+    {
+      "fingerprint": "c147f7887569b473dee320c92d9d9de3d2a8738ff403bfa6543f1a66cee6c9e0",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 240
+    },
+    {
+      "fingerprint": "50dd36afbe985739cb60f6116ac8ae16894adfd11f29f66b7d0e5343c0d90e8e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 252
+    },
+    {
+      "fingerprint": "4d281795c965c1cb47a4adf46ec49381914f0e11831a3e41ee67c0de4ddaad60",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 268
+    },
+    {
+      "fingerprint": "18aa1ee067c65ffbfab4e82cd5ce2ddbf6e07cc6ae2a8d20cbc0f9674a7fafdd",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 269
+    },
+    {
+      "fingerprint": "080b49eda25399ae867002e23b07ad2b2f2cac0aef3f3ad880fd9fc75c0d2d9f",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 285
+    },
+    {
+      "fingerprint": "bfd49f90008a61684c16a14bc10456ac55a272cd99181a56337c641b4f394052",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 290
+    },
+    {
+      "fingerprint": "07aeb70d13ac189dcd547b13e40f47f79538411e3fcf38c93db2745168f9062c",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 303
+    },
+    {
+      "fingerprint": "0456be2caeda87facf1847828ebaaee3c3bbd35d4c17f9d25fe6b88f6bd3844e",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 304
+    },
+    {
+      "fingerprint": "4592cf4f3cdf84a67475a96de796689ff66b8c8a1612210c5436155290179ef8",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 321
+    },
+    {
+      "fingerprint": "45d4aa5dfc9b633a7d7c270ae447d61cb1b36a1580c50c36ce6c5caf033b2448",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_integration.rs",
+      "line": 322
+    },
+    {
+      "fingerprint": "e4896abbadf39f3a4aae0e0e89dea9e2a9a3e03ad24cb70dd7f574f42eff64c6",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_parity_hcl.rs",
+      "line": 35
+    },
+    {
+      "fingerprint": "11bf3781e53ab11e624abd230e8936ffa5752de4d2be8973d1f24b673e01bb0a",
+      "rule_id": "rs/no-unwrap-in-lib",
+      "file": "tests/semgrep_parity_hcl.rs",
+      "line": 59
     }
   ]
 }
