@@ -73,3 +73,50 @@ skip = true
 # scaffolding target but skipped by default until both sides have enough rules
 # to make the diff meaningful.
 notes = "Rust unsafe-block target. Skipped by default — see notes inline."
+
+[[repos]]
+name = "webgoat"
+url = "https://github.com/WebGoat/WebGoat.git"
+ref = "5357a65e054976cd7d79b81ef3906ded050ed921"  # v2023.8
+language = "java"
+semgrep_ruleset = "p/java"
+scan_subdir = "src/main/java"
+# Intentionally-vulnerable Java/Spring Boot app from OWASP. Mirrors juice-shop's
+# philosophy for the JVM ecosystem. src/main/java keeps runtime sane while covering
+# every intentional vulnerability class (SQLi, XXE, deserialization, SSRF, …).
+notes = "OWASP WebGoat, intentionally vulnerable Java/Spring Boot. High-signal for java/* rule families."
+
+[[repos]]
+name = "redis"
+url = "https://github.com/redis/redis.git"
+ref = "a0a6f23d997b024689ba157916837f493a593a34"  # 7.4.2
+language = "c"
+semgrep_ruleset = "p/c"
+scan_subdir = "src"
+# Redis src/ is idiomatic C: pointer arithmetic, custom allocators, manual string
+# handling — exercises c/no-buffer-overflow, c/no-format-string, c/no-use-after-free
+# and similar rule families without drowning in auto-generated code.
+notes = "Redis 7.4.2 source tree. Scanning src/ only; avoids deps/, tests/, and generated files."
+
+[[repos]]
+name = "railsgoat"
+url = "https://github.com/OWASP/railsgoat.git"
+ref = "0222f7da3406ba3ab637bc6d24ae9366b5f0a680"  # main as of 2026-06-10; no stable release tag
+language = "ruby"
+semgrep_ruleset = "p/ruby"
+scan_subdir = "app"
+# Intentionally-vulnerable Rails app from OWASP. app/ contains controllers, models,
+# and views — the highest concentration of real findings without the test tree.
+notes = "OWASP RailsGoat, intentionally vulnerable Ruby on Rails. app/ covers controllers/models/views."
+
+[[repos]]
+name = "wordpress"
+url = "https://github.com/WordPress/WordPress.git"
+ref = "6abb46bec8b58abba32602738a785ba1c83f2a1c"  # 6.7.2
+language = "php"
+semgrep_ruleset = "p/php"
+scan_subdir = "wp-includes"
+# WordPress core PHP. wp-includes/ is the canonical entry point for p/php rules:
+# it covers dynamic SQL, output escaping, deserialization, and file-inclusion patterns
+# without pulling in the plugin ecosystem or generated stubs.
+notes = "WordPress 6.7.2 core. wp-includes/ is the highest-signal PHP subdir for p/php rule coverage."
