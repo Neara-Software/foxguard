@@ -307,6 +307,8 @@ pub struct FileContext<'a> {
     /// share the same package and can call each other's functions.
     /// Excludes the current file itself.
     pub go_same_package_paths: Option<Vec<std::path::PathBuf>>,
+    /// Per-scan hardcoded-secret thresholds captured from the registry.
+    pub secret_thresholds: common::SecretScanThresholds,
 }
 
 /// A security rule that checks parsed source code for vulnerabilities.
@@ -363,6 +365,7 @@ pub struct RuleRegistry {
     rules: Vec<Box<dyn Rule>>,
     /// Rule IDs that are opt-in only (not active unless explicitly enabled).
     opt_in_ids: std::collections::HashSet<String>,
+    secret_thresholds: common::SecretScanThresholds,
 }
 
 impl Default for RuleRegistry {
@@ -376,6 +379,7 @@ impl RuleRegistry {
         Self {
             rules: Vec::new(),
             opt_in_ids: std::collections::HashSet::new(),
+            secret_thresholds: common::SecretScanThresholds::default(),
         }
     }
 
@@ -675,6 +679,14 @@ impl RuleRegistry {
 
     pub fn register(&mut self, rule: Box<dyn Rule>) {
         self.rules.push(rule);
+    }
+
+    pub fn set_secret_thresholds(&mut self, thresholds: common::SecretScanThresholds) {
+        self.secret_thresholds = thresholds;
+    }
+
+    pub fn secret_thresholds(&self) -> common::SecretScanThresholds {
+        self.secret_thresholds
     }
 
     /// Register a rule that is opt-in only (not active by default).

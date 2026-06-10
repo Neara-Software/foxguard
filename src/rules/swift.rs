@@ -230,7 +230,7 @@ impl_rule! {
     cwe = Some("CWE-798"),
     description = "Hardcoded secret or credential detected",
     language = Language::Swift,
-    fn check(_self, source, tree) {
+    fn check_with_context(_self, source, tree, ctx) {
 
         let mut findings = Vec::new();
         let mut reported_lines = std::collections::HashSet::new();
@@ -259,7 +259,9 @@ impl_rule! {
                         if has_string_value {
                             let inner = string_val.trim_matches('"');
                             let line = node.start_position().row;
-                            if is_secret_value_long_enough(inner) && reported_lines.insert(line) {
+                            if is_secret_value_long_enough(inner, ctx.secret_thresholds)
+                                && reported_lines.insert(line)
+                            {
                                 findings.push(make_finding(
                                     _self.id(),
                                     _self.severity(),
@@ -294,7 +296,9 @@ impl_rule! {
                             {
                                 let val = &src[child.byte_range()];
                                 let inner = val.trim_matches('"');
-                                if is_secret_value_long_enough(inner) && reported_lines.insert(line) {
+                                if is_secret_value_long_enough(inner, ctx.secret_thresholds)
+                                    && reported_lines.insert(line)
+                                {
                                     findings.push(make_finding(
                                         _self.id(),
                                         _self.severity(),

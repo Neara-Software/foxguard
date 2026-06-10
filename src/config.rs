@@ -1,7 +1,5 @@
 use crate::cli::{ScanArgs, SecretsArgs, SeverityFilter};
-use crate::rules::common::{
-    set_hardcoded_secret_min_entropy_override, set_hardcoded_secret_min_length_override,
-};
+use crate::rules::common::SecretScanThresholds;
 use crate::{Finding, Severity};
 use regex::Regex;
 use serde::Deserialize;
@@ -553,16 +551,11 @@ pub fn suppress_with_patterns(
         .collect()
 }
 
-/// Install any [`ScanThresholds`] overrides from the loaded config into the
-/// scanner's process-wide state. Idempotent: calling with a fresh config
-/// overwrites any previous override, so repeated scans in the same
-/// process (e.g. the TUI) cannot leak a stale value.
-pub fn apply_scan_thresholds(config: Option<&FoxguardConfig>) {
-    let min_length = config.and_then(|cfg| cfg.scan.thresholds.secrets.min_length);
-    set_hardcoded_secret_min_length_override(min_length);
-
-    let min_entropy = config.and_then(|cfg| cfg.scan.thresholds.secrets.min_entropy);
-    set_hardcoded_secret_min_entropy_override(min_entropy);
+pub fn secret_scan_thresholds(config: Option<&FoxguardConfig>) -> SecretScanThresholds {
+    SecretScanThresholds::new(
+        config.and_then(|cfg| cfg.scan.thresholds.secrets.min_length),
+        config.and_then(|cfg| cfg.scan.thresholds.secrets.min_entropy),
+    )
 }
 
 pub fn editable_config_path(
@@ -1678,12 +1671,10 @@ mod tests {
     }
 
     #[test]
-    fn apply_scan_thresholds_installs_and_resets_min_length_override() {
-        use crate::rules::common::hardcoded_secret_min_length;
-
-        // Baseline: default value when no config present.
-        apply_scan_thresholds(None);
-        assert_eq!(hardcoded_secret_min_length(), 4);
+    fn secret_scan_thresholds_use_defaults_and_overrides() {
+        let defaults = secret_scan_thresholds(None);
+        assert_eq!(defaults.min_length, 4);
+        assert_eq!(defaults.min_entropy, None);
 
         // Override via loaded config.
         let repo = TempDir::new().expect("failed to create temp dir");
@@ -1695,8 +1686,9 @@ mod tests {
         let loaded = load_for_scan(repo.path(), None)
             .expect("failed to load config")
             .expect("expected config");
-        apply_scan_thresholds(Some(&loaded));
-        assert_eq!(hardcoded_secret_min_length(), 9);
+        let configured = secret_scan_thresholds(Some(&loaded));
+        assert_eq!(configured.min_length, 9);
+        assert_eq!(configured.min_entropy, None);
 
         // Re-applying a config without the override resets to the default,
         // so repeated scans in the same process (TUI) cannot leak state.
@@ -1709,8 +1701,9 @@ mod tests {
         let fresh = load_for_scan(repo2.path(), None)
             .expect("failed to load config")
             .expect("expected config");
-        apply_scan_thresholds(Some(&fresh));
-        assert_eq!(hardcoded_secret_min_length(), 4);
+        let reset = secret_scan_thresholds(Some(&fresh));
+        assert_eq!(reset.min_length, 4);
+        assert_eq!(reset.min_entropy, None);
     }
 
     // ── TUI triage helpers: severity override + disable rule writers ──────

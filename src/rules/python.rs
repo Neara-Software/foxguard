@@ -235,7 +235,7 @@ impl_rule! {
     cwe = Some("CWE-798"),
     description = "Hardcoded secret or credential detected",
     language = Language::Python,
-    fn check(_self, source, tree) {
+    fn check_with_context(_self, source, tree, ctx) {
 
         let mut findings = Vec::new();
         let secret_pattern = hardcoded_secret_re();
@@ -255,7 +255,7 @@ impl_rule! {
                             .trim_start_matches("f\"")
                             .trim_start_matches("f'")
                             .trim_matches(|c| c == '"' || c == '\'');
-                        if is_secret_value_long_enough(inner)
+                        if is_secret_value_long_enough(inner, ctx.secret_thresholds)
                             && (looks_like_secret_value(inner)
                                 || is_high_signal_secret_name(left_text))
                         {
@@ -1036,7 +1036,7 @@ impl_rule! {
     cwe = Some("CWE-798"),
     description = "Django SECRET_KEY hardcoded in source code",
     language = Language::Python,
-    fn check(_self, source, tree) {
+    fn check_with_context(_self, source, tree, ctx) {
 
         let mut findings = Vec::new();
 
@@ -1051,7 +1051,7 @@ impl_rule! {
                     if left_text == "SECRET_KEY" && right.kind() == "string" {
                         let val = &src[right.byte_range()];
                         let inner = val.trim_matches(|c| c == '"' || c == '\'');
-                        if is_secret_value_long_enough(inner) {
+                        if is_secret_value_long_enough(inner, ctx.secret_thresholds) {
                             findings.push(make_finding(
                                 _self.id(),
                                 _self.severity(),
@@ -1252,7 +1252,7 @@ impl_rule! {
     cwe = Some("CWE-798"),
     description = "Flask SECRET_KEY hardcoded in source code",
     language = Language::Python,
-    fn check(_self, source, tree) {
+    fn check_with_context(_self, source, tree, ctx) {
 
         let mut findings = Vec::new();
 
@@ -1281,7 +1281,7 @@ impl_rule! {
 
             let val = &src[right.byte_range()];
             let inner = val.trim_matches(|c| c == '"' || c == '\'');
-            if !is_secret_value_long_enough(inner) {
+            if !is_secret_value_long_enough(inner, ctx.secret_thresholds) {
                 return;
             }
 
@@ -1924,7 +1924,7 @@ impl_rule! {
             if secret_arg.kind() == "string" || secret_arg.kind() == "concatenated_string" {
                 let secret_text = &src[secret_arg.byte_range()];
                 let inner = secret_text.trim_matches(|c| c == '"' || c == '\'');
-                if is_secret_value_long_enough(inner) {
+                if is_secret_value_long_enough(inner, ctx.secret_thresholds) {
                     findings.push(make_finding(
                         _self.id(),
                         _self.severity(),

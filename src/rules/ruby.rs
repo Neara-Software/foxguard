@@ -591,7 +591,7 @@ impl_rule! {
     cwe = Some("CWE-798"),
     description = "Hardcoded secret or credential detected",
     language = Language::Ruby,
-    fn check(_self, source, tree) {
+    fn check_with_context(_self, source, tree, ctx) {
 
         let mut findings = Vec::new();
         let secret_pattern = hardcoded_secret_re();
@@ -610,7 +610,9 @@ impl_rule! {
                         let inner = val
                             .trim_start_matches(['"', '\''])
                             .trim_end_matches(['"', '\'']);
-                        if is_secret_value_long_enough(inner) && looks_like_secret_value(inner) {
+                        if is_secret_value_long_enough(inner, ctx.secret_thresholds)
+                            && looks_like_secret_value(inner)
+                        {
                             findings.push(make_finding(
                                 _self.id(),
                                 _self.severity(),

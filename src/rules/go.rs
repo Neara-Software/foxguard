@@ -290,7 +290,7 @@ impl_rule! {
     cwe = Some("CWE-798"),
     description = "Hardcoded secret or credential detected",
     language = Language::Go,
-    fn check(_self, source, tree) {
+    fn check_with_context(_self, source, tree, ctx) {
 
         let mut findings = Vec::new();
         let secret_pattern = hardcoded_secret_re();
@@ -312,7 +312,7 @@ impl_rule! {
                         {
                             let val = &src[value_node.byte_range()];
                             let inner = val.trim_matches(|c| c == '"' || c == '`');
-                            if is_secret_value_long_enough(inner) {
+                            if is_secret_value_long_enough(inner, ctx.secret_thresholds) {
                                 findings.push(make_finding(
                                     _self.id(),
                                     _self.severity(),
@@ -342,7 +342,7 @@ impl_rule! {
                             {
                                 let val = &src[value_node.byte_range()];
                                 let inner = val.trim_matches(|c| c == '"' || c == '`');
-                                if is_secret_value_long_enough(inner) {
+                                if is_secret_value_long_enough(inner, ctx.secret_thresholds) {
                                     findings.push(make_finding(
                                         _self.id(),
                                         _self.severity(),
@@ -373,7 +373,7 @@ impl_rule! {
                             {
                                 let val = &src[value_node.byte_range()];
                                 let inner = val.trim_matches(|c| c == '"' || c == '`');
-                                if is_secret_value_long_enough(inner) {
+                                if is_secret_value_long_enough(inner, ctx.secret_thresholds) {
                                     findings.push(make_finding(
                                         _self.id(),
                                         _self.severity(),
