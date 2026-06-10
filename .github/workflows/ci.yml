@@ -113,6 +113,12 @@ jobs:
         run: cargo test --test semgrep_parity_go
       - name: Run Semgrep parity suite (Java)
         run: cargo test --test semgrep_parity_java
+      - name: Run Semgrep parity suite (C)
+        run: cargo test --test semgrep_parity_c
+      - name: Run Semgrep parity suite (Kotlin)
+        run: cargo test --test semgrep_parity_kotlin
+      - name: Run Semgrep parity suite (inverse / unsupported-skip)
+        run: cargo test --test semgrep_parity_inverse
 
   website:
     name: Website Build
