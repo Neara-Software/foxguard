@@ -38,6 +38,13 @@
 //!     `$OBJ.innerHTML($X)`) — compiled to `MethodName { method }`, which
 //!     matches any invocation of that method name regardless of receiver.
 //!     Only valid as a sink or sanitizer shape; rejected as a source.
+//!   - metavariable-receiver assignment (`$EL.innerHTML = $X`,
+//!     `$EL.outerHTML = $X`) — compiled to `MemberAssign { field }`, which
+//!     matches any property-assignment sink whose property name equals
+//!     `field`. Only meaningful for JavaScript/TypeScript rules (the JS
+//!     engine recognises this as a DOM-XSS sink pattern); other language
+//!     engines include the matcher in the compiled spec but silently ignore
+//!     it. Only valid as a sink or sanitizer shape; rejected as a source.
 //!
 //! Unsupported patterns inside an otherwise-loadable rule cause the *whole
 //! rule* to be skipped (with an explanatory warning) so the user sees a
@@ -87,6 +94,19 @@ enum GenericMatcher {
     /// only matches bare `Call` patterns, so `MethodName` entries are silently
     /// skipped (no C OOP method calls exist).
     MethodName { method: String, description: String },
+
+    /// Matches a property-assignment sink of the form `$EL.field = $X`.
+    /// Compiled from Semgrep patterns like `$EL.innerHTML = $X` where the
+    /// receiver is any Semgrep metavariable and `field` is a plain identifier.
+    ///
+    /// Only meaningful as a sink shape for JavaScript/TypeScript rules — the
+    /// JS engine recognises `NodeMatcher::MemberAssign` for DOM-XSS patterns
+    /// (`element.innerHTML = tainted`, `element.outerHTML = tainted`, etc.).
+    /// For all other language engines the matcher is included in the compiled
+    /// spec but silently ignored (those engines have no concept of
+    /// property-assignment sinks). Only valid as a sink or sanitizer shape;
+    /// rejected as a source.
+    MemberAssign { field: String, description: String },
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +154,14 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        // MemberAssign is JS-specific; included in the spec for completeness but
+        // the Python engine ignores it (no property-assignment sinks in Python).
+        GenericMatcher::MemberAssign { field, description } => {
+            python_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -177,6 +205,12 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MemberAssign { field, description } => {
+            javascript_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -218,6 +252,14 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        // MemberAssign is JS-specific; included in the spec for completeness but
+        // the Go engine ignores it.
+        GenericMatcher::MemberAssign { field, description } => {
+            go_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -259,6 +301,14 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        // MemberAssign is JS-specific; included in the spec for completeness but
+        // the Java engine ignores it.
+        GenericMatcher::MemberAssign { field, description } => {
+            java_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -302,6 +352,12 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        // MemberAssign is JS-specific; included in the spec for completeness but
+        // the C engine ignores it.
+        GenericMatcher::MemberAssign { field, description } => c_taint::NodeMatcher::MemberAssign {
+            field: field.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -343,6 +399,14 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        // MemberAssign is JS-specific; included in the spec for completeness but
+        // the Kotlin engine ignores it.
+        GenericMatcher::MemberAssign { field, description } => {
+            kotlin_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -861,6 +925,28 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
         return None;
     }
 
+    // ── MemberAssign form: `$METAVAR.field = $X` ────────────────────────
+    //
+    // Semgrep taint rules for DOM-XSS commonly express property-assignment
+    // sinks as `$EL.innerHTML = $X`, `$EL.outerHTML = $X`, etc.  The bridge
+    // compiles these to `MemberAssign { field }`, which the JavaScript engine
+    // matches against any assignment whose LHS property name equals `field`.
+    //
+    // Detection: the pattern contains ` = ` (single `=`, not `==`), and the
+    // LHS parses as `$METAVAR.plain_field` with no call parens.
+    //
+    // Only valid as a sink or sanitizer shape — not a source, since a
+    // property assignment is a data-flow destination, not an origin.
+    if let Some(field) = parse_member_assign_pattern(pat) {
+        return match role {
+            MatcherRole::Sink | MatcherRole::Sanitizer => Some(GenericMatcher::MemberAssign {
+                field: field.to_string(),
+                description: describe(field, role),
+            }),
+            MatcherRole::Source => None,
+        };
+    }
+
     // ── Call form: `root.method(...)` or `func($X)` ─────────────────────
     if let Some(open_paren) = pat.find('(') {
         if !pat.ends_with(')') {
@@ -937,6 +1023,53 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
         }),
         MatcherRole::Sink | MatcherRole::Sanitizer => None,
     }
+}
+
+/// If `pat` has the assignment shape `$METAVAR.field = $RHS` — a metavariable
+/// receiver, a plain identifier property name, a single `=` operator, and any
+/// RHS expression — return the property field name.  Returns `None` for all
+/// other shapes (including `==`, `!=`, `<=`, `>=` operators).
+///
+/// Examples:
+/// - `$EL.innerHTML = $X`  → `Some("innerHTML")`
+/// - `$EL.outerHTML = $X`  → `Some("outerHTML")`
+/// - `$FORM.action = $X`   → `Some("action")`
+/// - `pickle.loads($X)`    → `None` (call form, no `=`)
+/// - `$EL.innerHTML == $X` → `None` (equality comparison, not assignment)
+/// - `$EL.a.b = $X`        → `None` (multi-segment LHS, ambiguous)
+fn parse_member_assign_pattern(pat: &str) -> Option<&str> {
+    // Find ` = ` with single `=` — must not be preceded or followed by
+    // `=`, `!`, `<`, `>` to avoid confusing `==`, `!=`, `<=`, `>=`.
+    let eq_pos = find_single_assignment(pat)?;
+    let lhs = pat[..eq_pos].trim();
+    // No call parens allowed in the LHS.
+    if lhs.contains('(') || lhs.contains(')') {
+        return None;
+    }
+    // LHS must have exactly the shape `$METAVAR.field`.
+    parse_metavar_dot_method(lhs)
+}
+
+/// Find the byte offset of a standalone `=` in `s`, i.e. `=` that is not
+/// part of `==`, `!=`, `<=`, or `>=`.  Returns the position of the `=`
+/// character, or `None` if no such operator is present.
+fn find_single_assignment(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'=' {
+            continue;
+        }
+        // Reject `==`.
+        if bytes.get(i + 1) == Some(&b'=') {
+            continue;
+        }
+        // Reject `!=`, `<=`, `>=`.
+        if i > 0 && matches!(bytes[i - 1], b'!' | b'<' | b'>') {
+            continue;
+        }
+        return Some(i);
+    }
+    None
 }
 
 /// If `callee` has the shape `$METAVAR.plain_method` — exactly one
@@ -1963,6 +2096,162 @@ class Dao {
         assert!(
             findings.is_empty(),
             "executeUpdate should NOT trigger the executeQuery rule, got {:?}",
+            findings
+        );
+    }
+
+    // ── MemberAssign shape tests ──────────────────────────────────────────
+
+    #[test]
+    fn compile_member_assign_sink_produces_member_assign() {
+        // The canonical Semgrep DOM-XSS pattern is `$EL.innerHTML = $X`.
+        // The bridge must compile this to `MemberAssign { field: "innerHTML" }`.
+        let m = compile("$EL.innerHTML = $X", MatcherRole::Sink).expect("MemberAssign");
+        match m {
+            GenericMatcher::MemberAssign { field, .. } => assert_eq!(field, "innerHTML"),
+            _ => panic!("expected MemberAssign"),
+        }
+    }
+
+    #[test]
+    fn compile_member_assign_sanitizer_produces_member_assign() {
+        let m =
+            compile("$EL.outerHTML = $X", MatcherRole::Sanitizer).expect("MemberAssign sanitizer");
+        match m {
+            GenericMatcher::MemberAssign { field, .. } => assert_eq!(field, "outerHTML"),
+            _ => panic!("expected MemberAssign"),
+        }
+    }
+
+    #[test]
+    fn compile_member_assign_source_is_rejected() {
+        // A `$EL.field = $X` source does not make semantic sense —
+        // property assignment is a sink, not an origin.
+        assert!(compile("$EL.innerHTML = $X", MatcherRole::Source).is_none());
+    }
+
+    #[test]
+    fn member_assign_equality_operator_is_rejected() {
+        // `==` is a comparison, not an assignment — must not compile.
+        assert!(compile("$EL.innerHTML == $X", MatcherRole::Sink).is_none());
+    }
+
+    #[test]
+    fn member_assign_plain_receiver_not_compiled_as_member_assign() {
+        // `el.innerHTML = $X` with a plain identifier receiver is NOT a
+        // MemberAssign pattern (the receiver must be a metavariable).
+        // It has `=` but will fail `parse_member_assign_pattern` and then
+        // also fail the call/identifier checks, so it returns None.
+        assert!(compile("el.innerHTML = $X", MatcherRole::Sink).is_none());
+    }
+
+    #[test]
+    fn member_assign_multi_segment_lhs_is_rejected() {
+        // `$EL.a.b = $X` is ambiguous — only single-segment property names
+        // are supported for the MemberAssign shape.
+        assert!(compile("$EL.a.b = $X", MatcherRole::Sink).is_none());
+    }
+
+    #[test]
+    fn taint_rule_with_member_assign_sink_compiles() {
+        let r = compiled(
+            r#"
+id: js-dom-xss-innerhtml
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "Tainted input reaches innerHTML"
+metadata:
+  cwe: "CWE-79"
+pattern-sources:
+  - pattern: req.query
+pattern-sinks:
+  - pattern: $EL.innerHTML = $X
+"#,
+        );
+        assert_eq!(r.spec.sinks.len(), 1);
+        match &r.spec.sinks[0] {
+            GenericMatcher::MemberAssign { field, .. } => assert_eq!(field, "innerHTML"),
+            other => panic!("expected MemberAssign sink, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn js_taint_member_assign_sink_produces_finding() {
+        use crate::engine::parser::parse_file;
+
+        // Rule uses `$EL.innerHTML = $X` — bridge compiles to MemberAssign.
+        // The JavaScript engine's assignment handler checks MemberAssign sinks
+        // via `match_member_assign_sink` (taint_engine.rs line 629).
+        let rule = compiled(
+            r#"
+id: js-dom-xss-innerhtml-e2e
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "DOM XSS via innerHTML"
+metadata:
+  cwe: "CWE-79"
+pattern-sources:
+  - pattern: req.query
+pattern-sinks:
+  - pattern: $EL.innerHTML = $X
+"#,
+        );
+
+        let src = r#"
+function handler(req) {
+    var data = req.query.name;
+    document.getElementById("target").innerHTML = data;
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("JS fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "expected a finding for req.query -> innerHTML flow, got none"
+        );
+        assert!(
+            findings[0]
+                .sink_description
+                .as_deref()
+                .is_some_and(|d| d.contains("innerHTML")),
+            "sink description should mention innerHTML: {:?}",
+            findings[0]
+        );
+    }
+
+    #[test]
+    fn js_taint_member_assign_non_matching_field_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        // Rule matches `innerHTML` only — assignment to `textContent` (which
+        // is NOT an XSS sink) must NOT fire.
+        let rule = compiled(
+            r#"
+id: js-dom-xss-innerhtml-neg
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "DOM XSS via innerHTML"
+pattern-sources:
+  - pattern: req.query
+pattern-sinks:
+  - pattern: $EL.innerHTML = $X
+"#,
+        );
+
+        let src = r#"
+function handler(req) {
+    var data = req.query.name;
+    document.getElementById("target").textContent = data;
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("JS fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "textContent assignment should NOT trigger the innerHTML rule, got {:?}",
             findings
         );
     }
