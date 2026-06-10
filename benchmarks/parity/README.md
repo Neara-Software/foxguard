@@ -52,6 +52,10 @@ The default corpus (as of this PR) is:
 | echo | go | `p/golang` | `.` | Small Go HTTP framework, avoids Gin's test-heavy tree |
 | juice-shop | javascript | `p/owasp-top-ten` | `routes` | Intentionally-vulnerable app, high-signal route handlers |
 | libssh-rs | rust | `p/rust` | `.` | Rust unsafe-block target, currently `skip = true` |
+| webgoat | java | `p/java` | `src/main/java` | Intentionally-vulnerable Java/Spring Boot app (OWASP), mirrors juice-shop for the JVM |
+| redis | c | `p/c` | `src` | Idiomatic C: pointer arithmetic, custom allocators, manual string handling |
+| railsgoat | ruby | `p/ruby` | `app` | Intentionally-vulnerable Rails app (OWASP), controllers/models/views |
+| wordpress | php | `p/php` | `wp-includes` | WordPress core PHP; wide surface for injection, escaping, deserialization rules |
 
 To add a repo: append a `[[repos]]` block to `repos.toml`. Pin to a SHA, not a
 branch, so the diff is stable. The script falls back to a default-branch fetch

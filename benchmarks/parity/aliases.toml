@@ -587,6 +587,184 @@ notes = """Kotlin → JVM SSRF.
 Registry: https://semgrep.dev/r/java.lang.security.audit.ssrf.tainted-url-host.tainted-url-host"""
 
 # ---------------------------------------------------------------------------
+# Ruby
+
+[[alias]]
+foxguard = "rb/no-sql-injection"
+semgrep = [
+  "ruby.rails.security.audit.ruby-rails-sqlinjection.ruby-rails-sqlinjection",
+  "ruby.lang.security.audit.formatted-sql-query.formatted-sql-query",
+]
+notes = """ActiveRecord where()/find_by_sql with string interpolation. CWE-89.
+Registry: https://semgrep.dev/r/ruby.rails.security.audit.ruby-rails-sqlinjection.ruby-rails-sqlinjection"""
+
+[[alias]]
+foxguard = "rb/taint-sql-injection"
+semgrep = [
+  "ruby.rails.security.audit.ruby-rails-sqlinjection.ruby-rails-sqlinjection",
+  "ruby.lang.security.audit.formatted-sql-query.formatted-sql-query",
+]
+notes = """Taint-flow variant of rb/no-sql-injection.
+Registry: https://semgrep.dev/r/ruby.rails.security.audit.ruby-rails-sqlinjection.ruby-rails-sqlinjection"""
+
+[[alias]]
+foxguard = "rb/no-command-injection"
+semgrep = [
+  "ruby.lang.security.audit.dangerous-exec-args.dangerous-exec-args",
+  "ruby.lang.security.audit.system-injection.system-injection",
+]
+notes = """system()/exec()/`...` with interpolated user input. CWE-78.
+Registry: https://semgrep.dev/r/ruby.lang.security.audit.dangerous-exec-args.dangerous-exec-args"""
+
+[[alias]]
+foxguard = "rb/taint-command-injection"
+semgrep = [
+  "ruby.lang.security.audit.dangerous-exec-args.dangerous-exec-args",
+  "ruby.lang.security.audit.system-injection.system-injection",
+]
+notes = """Taint-flow variant of rb/no-command-injection.
+Registry: https://semgrep.dev/r/ruby.lang.security.audit.dangerous-exec-args.dangerous-exec-args"""
+
+[[alias]]
+foxguard = "rb/no-eval"
+semgrep = [
+  "ruby.lang.security.audit.eval-detected.eval-detected",
+]
+notes = """eval() with dynamic/user-controlled input. CWE-94.
+Registry: https://semgrep.dev/r/ruby.lang.security.audit.eval-detected.eval-detected"""
+
+[[alias]]
+foxguard = "rb/no-hardcoded-secret"
+semgrep = [
+  "generic.secrets.security.detected-generic-secret.detected-generic-secret",
+  "ruby.rails.security.audit.ruby-rails-hardcoded-secret.ruby-rails-hardcoded-secret",
+]
+notes = """Hardcoded credential / Rails secret_key_base. CWE-798.
+Registry: https://semgrep.dev/r/ruby.rails.security.audit.ruby-rails-hardcoded-secret.ruby-rails-hardcoded-secret"""
+
+[[alias]]
+foxguard = "rb/no-path-traversal"
+semgrep = [
+  "ruby.lang.security.audit.absolute-path.absolute-path",
+  "ruby.rails.security.audit.path-traversal.path-traversal",
+]
+notes = """File.open / send_file with attacker-controlled path. CWE-22.
+Registry: https://semgrep.dev/r/ruby.rails.security.audit.path-traversal.path-traversal"""
+
+[[alias]]
+foxguard = "rb/no-weak-crypto"
+semgrep = [
+  "ruby.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-md5",
+  "ruby.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1",
+]
+notes = """Digest::MD5 / Digest::SHA1 used for password hashing or HMAC. CWE-327.
+Registry: https://semgrep.dev/r/ruby.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-md5"""
+
+# ---------------------------------------------------------------------------
+# PHP
+
+[[alias]]
+foxguard = "php/no-sql-injection"
+semgrep = [
+  "php.lang.security.injection.tainted-sql-string.tainted-sql-string",
+  "php.laravel.security.laravel-sqli.laravel-sqli",
+]
+notes = """mysqli_query() / PDO::query() with string-concatenated SQL. CWE-89.
+Registry: https://semgrep.dev/r/php.lang.security.injection.tainted-sql-string.tainted-sql-string"""
+
+[[alias]]
+foxguard = "php/taint-sql-injection"
+semgrep = [
+  "php.lang.security.injection.tainted-sql-string.tainted-sql-string",
+  "php.laravel.security.laravel-sqli.laravel-sqli",
+]
+notes = """Taint-flow variant of php/no-sql-injection.
+Registry: https://semgrep.dev/r/php.lang.security.injection.tainted-sql-string.tainted-sql-string"""
+
+[[alias]]
+foxguard = "php/no-command-injection"
+semgrep = [
+  "php.lang.security.injection.tainted-system-call.tainted-system-call",
+  "php.lang.security.audit.exec-use.exec-use",
+]
+notes = """exec() / system() / shell_exec() with user-controlled input. CWE-78.
+Registry: https://semgrep.dev/r/php.lang.security.injection.tainted-system-call.tainted-system-call"""
+
+[[alias]]
+foxguard = "php/no-path-traversal"
+semgrep = [
+  "php.lang.security.audit.path-traversal.path-traversal",
+  "php.lang.security.injection.tainted-filename.tainted-filename",
+]
+notes = """include() / file_get_contents() with dynamic path. CWE-22.
+Registry: https://semgrep.dev/r/php.lang.security.audit.path-traversal.path-traversal"""
+
+[[alias]]
+foxguard = "php/no-xss"
+semgrep = [
+  "php.lang.security.audit.echo-html-entity-decode.echo-html-entity-decode",
+  "php.lang.security.audit.tainted-echo.tainted-echo",
+]
+notes = """echo/print with unescaped user input. CWE-79.
+Registry: https://semgrep.dev/r/php.lang.security.audit.tainted-echo.tainted-echo"""
+
+[[alias]]
+foxguard = "php/no-eval"
+semgrep = [
+  "php.lang.security.audit.eval-use.eval-use",
+]
+notes = """eval() with dynamic/user-controlled input. CWE-94.
+Registry: https://semgrep.dev/r/php.lang.security.audit.eval-use.eval-use"""
+
+[[alias]]
+foxguard = "php/no-hardcoded-secret"
+semgrep = [
+  "generic.secrets.security.detected-generic-secret.detected-generic-secret",
+  "php.lang.security.audit.hardcoded-credentials.hardcoded-credentials",
+]
+notes = """Hardcoded DB password / API key in PHP source. CWE-798.
+Registry: https://semgrep.dev/r/generic.secrets.security.detected-generic-secret.detected-generic-secret"""
+
+# ---------------------------------------------------------------------------
+# C
+
+[[alias]]
+foxguard = "c/no-buffer-overflow"
+semgrep = [
+  "c.lang.security.insecure-use-strcat-fn.insecure-use-strcat-fn",
+  "c.lang.security.insecure-use-strcpy-fn.insecure-use-strcpy-fn",
+  "c.lang.security.insecure-use-gets-fn.insecure-use-gets-fn",
+]
+notes = """strcpy/strcat/gets without bounds checking → stack/heap overflow. CWE-120/122.
+Registry: https://semgrep.dev/r/c.lang.security.insecure-use-strcat-fn.insecure-use-strcat-fn
+Registry: https://semgrep.dev/r/c.lang.security.insecure-use-strcpy-fn.insecure-use-strcpy-fn"""
+
+[[alias]]
+foxguard = "c/no-format-string"
+semgrep = [
+  "c.lang.security.insecure-use-printf-fn.insecure-use-printf-fn",
+  "c.lang.security.insecure-use-sprintf-fn.insecure-use-sprintf-fn",
+]
+notes = """printf(user_input) / sprintf without format string → format-string attack. CWE-134.
+Registry: https://semgrep.dev/r/c.lang.security.insecure-use-printf-fn.insecure-use-printf-fn"""
+
+[[alias]]
+foxguard = "c/no-use-after-free"
+semgrep = [
+  "c.lang.security.use-after-free.use-after-free",
+]
+notes = """free() followed by a use of the same pointer in the same scope. CWE-416.
+Registry: https://semgrep.dev/r/c.lang.security.use-after-free.use-after-free"""
+
+[[alias]]
+foxguard = "c/no-integer-overflow"
+semgrep = [
+  "c.lang.security.integer-overflow.integer-overflow",
+]
+notes = """Arithmetic on tainted integers before use as size or index. CWE-190.
+Registry: https://semgrep.dev/r/c.lang.security.integer-overflow.integer-overflow"""
+
+# ---------------------------------------------------------------------------
 # Secrets (cross-language). Semgrep ships a single generic secret rule plus
 # provider-specific rules; we map each foxguard secret-* rule to the generic
 # one (highest-confidence overlap) plus the matching provider rule where one
