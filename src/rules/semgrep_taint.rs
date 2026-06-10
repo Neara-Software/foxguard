@@ -1109,7 +1109,12 @@ fn is_metavariable(s: &str) -> bool {
         _ => return false,
     }
     let rest: String = chars.collect();
-    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+    // Semgrep metavariables are `$` + `[A-Z_][A-Z0-9_]*` — allow trailing digits
+    // (e.g. `$ARG1`) while still rejecting lowercase (`$obj`).
+    !rest.is_empty()
+        && rest
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 fn describe(canonical: &str, role: MatcherRole) -> String {
@@ -1992,6 +1997,17 @@ pattern-sinks:
         // is not a metavariable; reject it so we don't accidentally match
         // oddly-named dotted callees.
         assert!(compile("$obj.method($X)", MatcherRole::Sink).is_none());
+    }
+
+    #[test]
+    fn metavar_with_trailing_digits_is_accepted() {
+        // Semgrep metavars are `[A-Z_][A-Z0-9_]*`, so `$ARG1` is valid — it must
+        // compile as a metavar-receiver sink (previously rejected on the digit).
+        assert!(is_metavariable("$ARG1"));
+        assert!(is_metavariable("$CONN_2"));
+        assert!(!is_metavariable("$obj"));
+        assert!(!is_metavariable("$"));
+        assert!(compile("$X1.executeQuery($P)", MatcherRole::Sink).is_some());
     }
 
     #[test]

@@ -351,8 +351,13 @@ fn parse_comparison(comparison: &str) -> Result<(String, CmpOp, f64, bool), Stri
 /// from an integer-literal string (case-insensitive), so `10L` parses as `10`.
 fn strip_numeric_suffixes(s: &str) -> String {
     let upper = s.to_uppercase();
-    let stripped = upper.trim_end_matches(['L', 'U']);
-    stripped.to_string()
+    // Hex/binary literals end in digits that can look like suffixes (e.g. the
+    // trailing `F` in `0xFF`), so never strip from them.
+    if upper.starts_with("0X") || upper.starts_with("0B") {
+        return upper;
+    }
+    // Strip C-style integer/float suffixes: L/U (int) and F (float, e.g. `3.14f`).
+    upper.trim_end_matches(['L', 'U', 'F']).to_string()
 }
 
 /// Parse a numeric string (decimal int, hex `0x…`, binary `0b…`, or float)
@@ -554,8 +559,11 @@ impl MetavariableComparisonConstraint {
             CmpOp::Le => lhs <= rhs,
             CmpOp::Gt => lhs > rhs,
             CmpOp::Ge => lhs >= rhs,
-            CmpOp::Eq => (lhs - rhs).abs() < f64::EPSILON,
-            CmpOp::Ne => (lhs - rhs).abs() >= f64::EPSILON,
+            // Exact equality: both operands come from parsing the same kind of
+            // numeral, so matching Semgrep's Python exact-`==` semantics (not an
+            // epsilon band) is both simpler and more correct.
+            CmpOp::Eq => lhs == rhs,
+            CmpOp::Ne => lhs != rhs,
         }
     }
 }
@@ -2263,6 +2271,52 @@ rules:
         let mut bindings2 = HashMap::new();
         bindings2.insert("$X".to_string(), "2.0".to_string());
         assert!(!constraint.matches(&bindings2));
+    }
+
+    #[test]
+    fn test_numeric_suffix_strips_c_float_f_and_preserves_hex() {
+        // C float suffix `f`/`F` must be stripped so `2.5f` parses.
+        assert_eq!(parse_numeric(&strip_numeric_suffixes("2.5f")), Some(2.5));
+        assert_eq!(parse_numeric(&strip_numeric_suffixes("2.5F")), Some(2.5));
+        // Integer suffixes still stripped.
+        assert_eq!(parse_numeric(&strip_numeric_suffixes("10UL")), Some(10.0));
+        // Hex/binary literals must NOT lose their trailing digits to suffix stripping.
+        assert_eq!(parse_numeric(&strip_numeric_suffixes("0xFF")), Some(255.0));
+        assert_eq!(parse_numeric(&strip_numeric_suffixes("0xff")), Some(255.0));
+        assert_eq!(parse_numeric(&strip_numeric_suffixes("0b101")), Some(5.0));
+    }
+
+    #[test]
+    fn test_constraint_eq_is_exact() {
+        let clause = SemgrepMetavariableComparisonClause {
+            metavariable: "$X".to_string(),
+            comparison: "$X == 5".to_string(),
+            base: None,
+            strip: None,
+        };
+        let constraint = MetavariableComparisonConstraint::from_yaml(&clause).unwrap();
+        let mut hit = HashMap::new();
+        hit.insert("$X".to_string(), "5".to_string());
+        assert!(constraint.matches(&hit));
+        let mut miss = HashMap::new();
+        miss.insert("$X".to_string(), "6".to_string());
+        assert!(!constraint.matches(&miss));
+    }
+
+    #[test]
+    fn test_constraint_eq_c_float_suffix_binding() {
+        // Regression for the `f` suffix bug: a bound C float literal `1.5f`
+        // must compare equal to the literal `1.5` rather than being dropped.
+        let clause = SemgrepMetavariableComparisonClause {
+            metavariable: "$X".to_string(),
+            comparison: "$X == 1.5".to_string(),
+            base: None,
+            strip: None,
+        };
+        let constraint = MetavariableComparisonConstraint::from_yaml(&clause).unwrap();
+        let mut bindings = HashMap::new();
+        bindings.insert("$X".to_string(), "1.5f".to_string());
+        assert!(constraint.matches(&bindings));
     }
 
     #[test]
