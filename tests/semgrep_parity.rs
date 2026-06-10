@@ -219,3 +219,35 @@ rules:
 
     assert_parity(repo.path(), &rules, "app.py");
 }
+
+#[test]
+fn test_parity_metavariable_pattern() {
+    if skip_if_semgrep_missing() {
+        return;
+    }
+
+    let repo = TempDir::new().expect("failed to create temp dir");
+    let rules = write_file(
+        repo.path(),
+        "rules/mvp.yaml",
+        r#"
+rules:
+  - id: dangerous-arg-in-eval
+    patterns:
+      - pattern: eval($FUNC)
+      - metavariable-pattern:
+          metavariable: $FUNC
+          pattern: dangerous(...)
+    message: dangerous argument passed to eval
+    severity: ERROR
+    languages: [python]
+"#,
+    );
+    write_file(
+        repo.path(),
+        "app.py",
+        "eval(dangerous(x))\neval(safe(x))\nprint(dangerous(y))\n",
+    );
+
+    assert_parity(repo.path(), &rules, "app.py");
+}

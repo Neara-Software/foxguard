@@ -50,7 +50,7 @@ pub struct SemgrepRuleYaml {
     pub paths: Option<SemgrepPaths>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct PatternEntry {
     #[serde(default)]
     pub pattern: Option<String>,
@@ -78,6 +78,8 @@ pub struct PatternClause {
     pub metavariable_regex: Option<SemgrepMetavariableRegexClause>,
     #[serde(default, rename = "metavariable-comparison")]
     pub metavariable_comparison: Option<SemgrepMetavariableComparisonClause>,
+    #[serde(default, rename = "metavariable-pattern")]
+    pub metavariable_pattern: Option<SemgrepMetavariablePatternClause>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,6 +124,22 @@ pub struct SemgrepMetavariableComparisonClause {
     pub strip: Option<bool>,
 }
 
+/// Nested pattern forms supported inside `metavariable-pattern:`.
+///
+/// Supported: `pattern:`, `pattern-regex:`, and `pattern-either:` (of those
+/// same forms). Anything else (nested `patterns:`, `metavariable-pattern:`,
+/// `language:` override, etc.) is warn-skipped at build time.
+#[derive(Debug, Deserialize, Clone)]
+pub struct SemgrepMetavariablePatternClause {
+    pub metavariable: String,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default, rename = "pattern-regex")]
+    pub pattern_regex: Option<String>,
+    #[serde(default, rename = "pattern-either")]
+    pub pattern_either: Option<Vec<PatternEntry>>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum CweValue {
@@ -159,6 +177,7 @@ pub enum PatternMatcher {
         not_inside: Option<CompiledAstPattern>,
         metavariable_regexes: Vec<MetavariableRegexConstraint>,
         metavariable_comparisons: Vec<MetavariableComparisonConstraint>,
+        metavariable_patterns: Vec<MetavariablePatternConstraint>,
     },
 }
 
@@ -220,6 +239,19 @@ pub struct MetavariableComparisonConstraint {
     literal: f64,
     /// If true, the expression is `literal <op> metavar` (operands flipped).
     literal_is_lhs: bool,
+}
+
+/// A compiled `metavariable-pattern:` constraint.
+///
+/// The binding text for `metavariable` is re-parsed as a snippet and matched
+/// against `sub_matcher`. Supported sub-matcher forms: `Single` (pattern),
+/// `Regex` (pattern-regex), and `Either` (pattern-either of those). Any
+/// unsupported nested shape is warn-skipped at build time.
+#[derive(Debug, Clone)]
+pub struct MetavariablePatternConstraint {
+    metavariable: String,
+    sub_matcher: PatternMatcher,
+    lang: Language,
 }
 
 // ─── Comparison parser ───────────────────────────────────────────────────────
@@ -488,6 +520,78 @@ impl MetavariableComparisonConstraint {
     }
 }
 
+impl MetavariablePatternConstraint {
+    /// Build a `MetavariablePatternConstraint` from a YAML clause.
+    ///
+    /// Returns `None` (after printing a warning) for unsupported nested shapes
+    /// such as nested `patterns:`, `metavariable-pattern:`, or a `language:`
+    /// override — consistent with the codebase's graceful-degradation style.
+    fn from_yaml(clause: &SemgrepMetavariablePatternClause, lang: Language) -> Option<Self> {
+        let sub_matcher = if let Some(ref pat) = clause.pattern {
+            PatternMatcher::Single(CompiledAstPattern::new(pat.clone(), lang))
+        } else if let Some(ref regex) = clause.pattern_regex {
+            match compile_regex(regex) {
+                Ok(r) => PatternMatcher::Regex(r),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: metavariable-pattern for {} has invalid pattern-regex: {}; skipping constraint",
+                        clause.metavariable, e
+                    );
+                    return None;
+                }
+            }
+        } else if let Some(ref entries) = clause.pattern_either {
+            match build_either_matchers(entries, lang) {
+                Ok(matchers) => PatternMatcher::Either(matchers),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: metavariable-pattern for {} has invalid pattern-either: {}; skipping constraint",
+                        clause.metavariable, e
+                    );
+                    return None;
+                }
+            }
+        } else {
+            eprintln!(
+                "Warning: metavariable-pattern for {} has no supported nested pattern form \
+                (pattern, pattern-regex, or pattern-either); skipping constraint",
+                clause.metavariable
+            );
+            return None;
+        };
+
+        Some(Self {
+            metavariable: clause.metavariable.clone(),
+            sub_matcher,
+            lang,
+        })
+    }
+
+    /// Returns `true` when the bound text for `self.metavariable` matches
+    /// `self.sub_matcher`. Unparseable binding text is treated as no-match.
+    fn matches(&self, bindings: &HashMap<String, String>) -> bool {
+        let Some(bound_text) = bindings.get(&self.metavariable) else {
+            return false;
+        };
+
+        match &self.sub_matcher {
+            // For a regex sub-matcher we don't need to re-parse the binding.
+            PatternMatcher::Regex(regex) => regex.is_match(bound_text),
+
+            // For AST sub-matchers, re-parse the binding text as a snippet
+            // in the rule's language.  If parsing yields no tree we treat
+            // it as no-match rather than crashing.
+            _ => {
+                let Some(tree) = parse_file(bound_text, self.lang) else {
+                    return false;
+                };
+                let root = tree.root_node();
+                !match_pattern_in_tree(&self.sub_matcher, root, bound_text).is_empty()
+            }
+        }
+    }
+}
+
 impl CompiledAstPattern {
     fn new(source: String, lang: Language) -> Self {
         let source = prepare_pattern_for_grammar(source, lang);
@@ -606,6 +710,7 @@ fn match_pattern_in_tree(
             not_inside,
             metavariable_regexes,
             metavariable_comparisons,
+            metavariable_patterns,
         } => {
             // If we have an inside pattern, only search within matching contexts
             let search_roots = if let Some(inside_pat) = inside {
@@ -668,6 +773,10 @@ fn match_pattern_in_tree(
             }
 
             for constraint in metavariable_comparisons {
+                results.retain(|r| constraint.matches(&r.bindings));
+            }
+
+            for constraint in metavariable_patterns {
                 results.retain(|r| constraint.matches(&r.bindings));
             }
 
@@ -1194,6 +1303,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
         let mut not_inside = None;
         let mut metavariable_regexes = Vec::new();
         let mut metavariable_comparisons = Vec::new();
+        let mut metavariable_patterns = Vec::new();
 
         for clause in clauses {
             if let Some(ref p) = clause.pattern {
@@ -1233,6 +1343,13 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                     Err(e) => eprintln!("Warning: {e}"),
                 }
             }
+            if let Some(ref mp) = clause.metavariable_pattern {
+                if let Some(constraint) = MetavariablePatternConstraint::from_yaml(mp, lang) {
+                    metavariable_patterns.push(constraint);
+                }
+                // If from_yaml returns None it already printed a warning; we
+                // continue loading the rest of the rule's clauses.
+            }
         }
 
         return Ok(PatternMatcher::Combined {
@@ -1242,6 +1359,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
             not_inside,
             metavariable_regexes,
             metavariable_comparisons,
+            metavariable_patterns,
         });
     }
 
@@ -1292,6 +1410,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                 .map(|pattern| CompiledAstPattern::new(pattern.clone(), lang)),
             metavariable_regexes: Vec::new(),
             metavariable_comparisons: Vec::new(),
+            metavariable_patterns: Vec::new(),
         });
     }
 
@@ -2055,5 +2174,125 @@ rules:
         let findings = rules[0].check(source, &tree);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].line, 1);
+    }
+
+    /// metavariable-pattern: the binding for $FUNC must itself match a nested
+    /// AST sub-pattern.
+    #[test]
+    fn test_metavariable_pattern_match() {
+        // $FUNC must itself be a call matching `dangerous(...)`.
+        // Source line 1 calls eval(dangerous(x)) — $FUNC captures dangerous(x)
+        // which matches `dangerous(...)`.
+        // Source line 2 calls eval(safe(x)) — $FUNC captures safe(x)
+        // which does NOT match `dangerous(...)`.
+        let yaml = r#"
+rules:
+  - id: mvp-match
+    patterns:
+      - pattern: eval($FUNC)
+      - metavariable-pattern:
+          metavariable: $FUNC
+          pattern: dangerous(...)
+    message: dangerous arg in eval
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "eval(dangerous(x))\neval(safe(x))\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(findings.len(), 1, "expected exactly one finding");
+        assert_eq!(findings[0].line, 1);
+    }
+
+    /// Non-match case: binding exists but the sub-pattern does not match it.
+    #[test]
+    fn test_metavariable_pattern_no_match() {
+        let yaml = r#"
+rules:
+  - id: mvp-no-match
+    patterns:
+      - pattern: eval($FUNC)
+      - metavariable-pattern:
+          metavariable: $FUNC
+          pattern: dangerous(...)
+    message: dangerous arg
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "eval(safe(x))\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(
+            findings.len(),
+            0,
+            "expected no findings when sub-pattern does not match"
+        );
+    }
+
+    /// pattern-regex nested form: the bound text is matched via regex.
+    #[test]
+    fn test_metavariable_pattern_regex_nested() {
+        let yaml = r#"
+rules:
+  - id: mvp-regex
+    patterns:
+      - pattern: '"..." + $VAR'
+      - metavariable-pattern:
+          metavariable: $VAR
+          pattern-regex: '^user_'
+    message: user-prefixed var in concat
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "q = \"SELECT \" + user_input\nq2 = \"SELECT \" + data\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly one finding for user_ variable"
+        );
+        assert_eq!(findings[0].line, 1);
+    }
+
+    /// Warn-skip: an unsupported nested shape should warn and skip the
+    /// constraint without crashing, leaving other clauses active.
+    #[test]
+    fn test_metavariable_pattern_unsupported_nested_shape_warn_skip() {
+        // metavariable-pattern clause has neither pattern, pattern-regex, nor
+        // pattern-either — it has no recognised keys at all. The constraint
+        // should be silently dropped and the positive pattern `eval(...)` still
+        // fires on the source (no constraint to filter with).
+        let yaml = r#"
+rules:
+  - id: mvp-warn-skip
+    patterns:
+      - pattern: eval(...)
+      - metavariable-pattern:
+          metavariable: $FUNC
+    message: eval usage (constraint skipped)
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        // Loading must succeed (no panic, no Err).
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        assert_eq!(rules.len(), 1, "rule should still load after warn-skip");
+
+        // The positive pattern fires; the skipped constraint is absent.
+        let source = "eval(x)\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        // Without the constraint, the positive `eval(...)` still matches.
+        assert!(!findings.is_empty(), "positive pattern should still fire");
     }
 }
