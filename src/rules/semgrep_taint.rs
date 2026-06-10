@@ -34,6 +34,10 @@
 //!     gap that matches the engine's own one-level attribute propagation).
 //!   - call form (`pickle.loads($X)`, `pickle.loads(...)`, `func($X)`,
 //!     `func()`) — compiled to `Call { canonical }`, stripping arguments.
+//!   - metavariable-receiver call (`$CONN.executeQuery($X)`,
+//!     `$OBJ.innerHTML($X)`) — compiled to `MethodName { method }`, which
+//!     matches any invocation of that method name regardless of receiver.
+//!     Only valid as a sink or sanitizer shape; rejected as a source.
 //!
 //! Unsupported patterns inside an otherwise-loadable rule cause the *whole
 //! rule* to be skipped (with an explanatory warning) so the user sees a
@@ -73,6 +77,16 @@ enum GenericMatcher {
         names: Vec<String>,
         description: String,
     },
+    /// Matches any method call whose final method name equals `method`,
+    /// regardless of receiver. Compiled from patterns of the form
+    /// `$METAVAR.method($X)` — the metavariable receiver is discarded and
+    /// the engine matches any invocation of that method name.
+    ///
+    /// Supported as a sink/sanitizer shape for Python, JavaScript, Go, Java,
+    /// and Kotlin. For C the matcher is included in the spec but the C engine
+    /// only matches bare `Call` patterns, so `MethodName` entries are silently
+    /// skipped (no C OOP method calls exist).
+    MethodName { method: String, description: String },
 }
 
 #[derive(Clone, Debug)]
@@ -113,6 +127,13 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             names: names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => python_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -149,6 +170,13 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => javascript_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -181,6 +209,13 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
         },
         GenericMatcher::ParamName { names, description } => go_taint::NodeMatcher::ParamName {
             names: names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => go_taint::NodeMatcher::MethodName {
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -217,6 +252,13 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             names: names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => java_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -251,6 +293,15 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             names: names.clone(),
             description: description.clone(),
         },
+        // C has no OOP method calls; include the matcher for spec completeness but
+        // the C engine only recognises `NodeMatcher::Call`, so it will never fire.
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => c_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -283,6 +334,13 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
         },
         GenericMatcher::ParamName { names, description } => kotlin_taint::NodeMatcher::ParamName {
             names: names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => kotlin_taint::NodeMatcher::MethodName {
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -812,6 +870,31 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
         if callee.is_empty() {
             return None;
         }
+
+        // ── MethodName shape: `$METAVAR.method($X)` ─────────────────────
+        //
+        // When the callee is `$VAR.method` — a single metavariable segment
+        // followed by exactly one plain identifier — we compile to
+        // `MethodName { method }`, which the engine matches against the
+        // *final* segment of any resolved callee regardless of receiver.
+        //
+        // This covers the common Semgrep pattern shape used for OOP sinks
+        // like `$CONN.executeQuery($X)`, `$OBJ.innerHTML`, etc., that are
+        // currently warn-skipped because the `$`-prefixed segment fails the
+        // `is_dotted_identifier` check.
+        //
+        // Only meaningful as a sink/sanitizer shape (matching any receiver),
+        // not a source.
+        if let Some(method) = parse_metavar_dot_method(callee) {
+            return match role {
+                MatcherRole::Sink | MatcherRole::Sanitizer => Some(GenericMatcher::MethodName {
+                    method: method.to_string(),
+                    description: describe(method, role),
+                }),
+                MatcherRole::Source => None,
+            };
+        }
+
         // Callee must be a plain identifier or dotted identifier chain.
         if !is_dotted_identifier(callee) {
             return None;
@@ -854,6 +937,46 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
         }),
         MatcherRole::Sink | MatcherRole::Sanitizer => None,
     }
+}
+
+/// If `callee` has the shape `$METAVAR.plain_method` — exactly one
+/// `$`-prefixed metavariable segment followed by a plain identifier — return
+/// the method name. Returns `None` for all other shapes.
+///
+/// Examples:
+/// - `$CONN.executeQuery` → `Some("executeQuery")`
+/// - `$OBJ.innerHTML` → `Some("innerHTML")`
+/// - `pickle.loads` → `None` (dotted plain identifier, handled as `Call`)
+/// - `$X` → `None` (bare metavariable, no method)
+/// - `$A.b.c` → `None` (more than one segment after the metavar)
+fn parse_metavar_dot_method(callee: &str) -> Option<&str> {
+    let dot = callee.find('.')?;
+    let receiver = &callee[..dot];
+    let rest = &callee[dot + 1..];
+    // Receiver must be a metavariable: `$` followed by UPPER or `_`
+    if !is_metavariable(receiver) {
+        return None;
+    }
+    // The rest must be a single plain identifier (no more dots).
+    if rest.contains('.') {
+        return None;
+    }
+    if !is_identifier(rest) {
+        return None;
+    }
+    Some(rest)
+}
+
+/// True when `s` is a Semgrep metavariable: `$` followed by one or more
+/// ASCII uppercase letters or underscores (e.g. `$X`, `$CONN`, `$_`).
+fn is_metavariable(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some('$') => {}
+        _ => return false,
+    }
+    let rest: String = chars.collect();
+    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_uppercase() || c == '_')
 }
 
 fn describe(canonical: &str, role: MatcherRole) -> String {
@@ -1683,5 +1806,164 @@ pattern-sinks:
 "#,
         );
         assert_eq!(r.spec.sources.len(), 1);
+    }
+
+    // ── MethodName shape tests ────────────────────────────────────────────
+
+    #[test]
+    fn compile_metavar_receiver_sink_produces_method_name() {
+        // The canonical Semgrep pattern for "any call to executeQuery" is
+        // `$CONN.executeQuery($X)`.  The bridge must compile this to a
+        // `MethodName` matcher rather than warn-skipping it.
+        let m = compile("$CONN.executeQuery($X)", MatcherRole::Sink).expect("MethodName");
+        match m {
+            GenericMatcher::MethodName { method, .. } => assert_eq!(method, "executeQuery"),
+            _ => panic!("expected MethodName"),
+        }
+    }
+
+    #[test]
+    fn compile_metavar_receiver_sanitizer_produces_method_name() {
+        let m = compile("$OBJ.escape($X)", MatcherRole::Sanitizer).expect("MethodName sanitizer");
+        match m {
+            GenericMatcher::MethodName { method, .. } => assert_eq!(method, "escape"),
+            _ => panic!("expected MethodName"),
+        }
+    }
+
+    #[test]
+    fn metavar_receiver_as_source_is_rejected() {
+        // A `$RECEIVER.method($X)` source does not make semantic sense:
+        // we cannot identify which object is the origin if the receiver is
+        // any arbitrary variable.  The bridge must return None for sources.
+        assert!(compile("$OBJ.getInput($X)", MatcherRole::Source).is_none());
+    }
+
+    #[test]
+    fn metavar_without_dot_is_rejected() {
+        // A bare metavariable with no method — not a valid sink shape.
+        assert!(compile("$X", MatcherRole::Sink).is_none());
+        assert!(compile("$X($Y)", MatcherRole::Sink).is_none());
+    }
+
+    #[test]
+    fn metavar_with_multi_segment_rest_is_rejected() {
+        // `$OBJ.a.b($X)` is ambiguous — only single-segment method names
+        // are valid for the MethodName shape.
+        assert!(compile("$OBJ.a.b($X)", MatcherRole::Sink).is_none());
+    }
+
+    #[test]
+    fn metavar_lowercase_is_rejected() {
+        // Semgrep metavariables are UPPER-case after `$`.  `$obj` (lowercase)
+        // is not a metavariable; reject it so we don't accidentally match
+        // oddly-named dotted callees.
+        assert!(compile("$obj.method($X)", MatcherRole::Sink).is_none());
+    }
+
+    #[test]
+    fn taint_rule_with_metavar_receiver_sink_compiles() {
+        let r = compiled(
+            r#"
+id: java-sql-injection
+mode: taint
+languages: [java]
+severity: ERROR
+message: "Tainted input reaches executeQuery"
+metadata:
+  cwe: "CWE-89"
+pattern-sources:
+  - pattern: request.getParameter($X)
+pattern-sinks:
+  - pattern: $CONN.executeQuery($X)
+"#,
+        );
+        assert_eq!(r.spec.sinks.len(), 1);
+        match &r.spec.sinks[0] {
+            GenericMatcher::MethodName { method, .. } => assert_eq!(method, "executeQuery"),
+            other => panic!("expected MethodName sink, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn java_taint_method_name_sink_produces_finding() {
+        use crate::engine::parser::parse_file;
+
+        // Rule uses `$CONN.executeQuery($X)` — bridge compiles to MethodName.
+        // Java engine's `matcher_matches_call` handles MethodName via method name.
+        let rule = compiled(
+            r#"
+id: java-sql-metavar
+mode: taint
+languages: [java]
+severity: ERROR
+message: "SQL injection via executeQuery"
+metadata:
+  cwe: "CWE-89"
+pattern-sources:
+  - pattern: request.getParameter($X)
+pattern-sinks:
+  - pattern: $CONN.executeQuery($X)
+"#,
+        );
+
+        let src = r#"
+class Dao {
+    void query(HttpServletRequest request, Connection conn) throws Exception {
+        String input = request.getParameter("id");
+        conn.executeQuery(input);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("Java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "expected a finding for request.getParameter -> conn.executeQuery flow, got none"
+        );
+        assert!(
+            findings[0]
+                .sink_description
+                .as_deref()
+                .is_some_and(|d| d.contains("executeQuery")),
+            "sink description should mention executeQuery: {:?}",
+            findings[0]
+        );
+    }
+
+    #[test]
+    fn java_taint_method_name_non_matching_method_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        // Rule only matches `executeQuery` — calls to `executeUpdate` must NOT fire.
+        let rule = compiled(
+            r#"
+id: java-sql-metavar-negative
+mode: taint
+languages: [java]
+severity: ERROR
+message: "SQL injection via executeQuery"
+pattern-sources:
+  - pattern: request.getParameter($X)
+pattern-sinks:
+  - pattern: $CONN.executeQuery($X)
+"#,
+        );
+
+        let src = r#"
+class Dao {
+    void update(HttpServletRequest request, Connection conn) throws Exception {
+        String input = request.getParameter("id");
+        conn.executeUpdate(input);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("Java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "executeUpdate should NOT trigger the executeQuery rule, got {:?}",
+            findings
+        );
     }
 }
