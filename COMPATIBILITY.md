@@ -112,12 +112,52 @@ Language mapping:
 - JavaScript / TypeScript (`.ts` and `.tsx` use dedicated TypeScript/TSX parsers, then map onto the JavaScript-compatible rule surface)
 - Python
 - Go
+- HCL / Terraform (`.tf`, `.hcl`, `.tfvars`; the `hcl` and `terraform` language selectors both map to the HCL parser. This unlocks the Semgrep registry's `terraform/` rule pack — predominantly `pattern-regex` and `pattern` + `metavariable-regex` rules.)
+
+Other languages mapped by the `languages:` selector: Ruby, Java, PHP, Rust, C#, Swift, Kotlin, C.
 
 Rule loading:
 
 - load a single YAML file
 - load a directory recursively
 - deduplicate language aliases that map to the same foxguard parser
+
+## Generic mode (`languages: [generic]`)
+
+Semgrep's `generic` mode (a.k.a. spacegrep) is AST-less: it matches a tokenized
+pattern against the raw text of a file. foxguard routes any rule whose
+`languages` includes `generic` (or the `regex` alias) to a dedicated text
+matcher (`src/rules/generic_mode.rs`), separate from the tree-sitter pattern
+bridge. This is what lets the config-file rule packs (nginx, apache, dockerfile,
+generic secret patterns) actually match.
+
+```yaml
+rules:
+  - id: weak-ssl-protocols
+    pattern: ssl_protocols ...
+    message: weak ssl_protocols directive
+    severity: WARNING
+    languages: [generic]
+```
+
+Supported in generic mode:
+
+- `pattern` — tokenized literal matching
+- `pattern-either` — OR over multiple generic patterns
+- `pattern-not` — drops candidates whose span overlaps a negative match
+- `pattern-regex` — passthrough regex match against the raw text
+- `...` ellipsis — matches any run of tokens, including across whitespace and newlines
+- `$METAVAR` — binds a single token span, with equality enforcement (the same metavariable must bind the same text)
+- `paths.include` / `paths.exclude` — same path scoping as the AST bridge
+- `metadata.cwe` and `severity` mapping (`ERROR` → Critical, `WARNING` → High, `INFO` → Medium)
+
+Limits (parity-honest):
+
+- Tokenization is word/punctuation based (a "word" is a run of ASCII alphanumerics and underscores; every other non-whitespace character is its own token). It is close to, but not byte-identical with, spacegrep's tokenizer.
+- `metavariable-comparison` and `metavariable-pattern` are not applied in generic mode.
+- `pattern-inside` / `pattern-not-inside` are not applied in generic mode (generic mode treats the file as a flat token stream, not a brace-nested structure).
+- A generic rule only runs on files foxguard already recognizes (the languages above plus the config formats). Files with no detected language are not scanned, so a generic rule will not fire on an arbitrary extension the way upstream `semgrep` would. Scope generic rules with `paths:` and target recognized files.
+- Match line numbers are parity-checked against upstream `semgrep` in CI (`tests/semgrep_parity_generic.rs`, gated on `semgrep` being installed); exact end-column spans may differ because ellipsis greediness is approximated.
 
 ## Coccinelle bridge
 

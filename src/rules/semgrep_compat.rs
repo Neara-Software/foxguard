@@ -459,7 +459,7 @@ impl Rule for SemgrepRule {
 }
 
 impl PathFilter {
-    fn from_yaml(paths: Option<&SemgrepPaths>) -> Result<Option<Self>, String> {
+    pub(crate) fn from_yaml(paths: Option<&SemgrepPaths>) -> Result<Option<Self>, String> {
         let Some(paths) = paths else {
             return Ok(None);
         };
@@ -470,7 +470,7 @@ impl PathFilter {
         Ok(Some(Self { include, exclude }))
     }
 
-    fn matches(&self, path: &Path) -> bool {
+    pub(crate) fn matches(&self, path: &Path) -> bool {
         let normalized = normalize_rule_path(path);
 
         if let Some(include) = &self.include {
@@ -1445,8 +1445,49 @@ fn map_language(lang_str: &str) -> Option<Language> {
         "swift" => Some(Language::Swift),
         "kotlin" | "kt" => Some(Language::Kotlin),
         "c" => Some(Language::C),
+        "hcl" | "terraform" | "tf" => Some(Language::Hcl),
         _ => None,
     }
+}
+
+/// True when a rule's `languages` selects generic (spacegrep) matching:
+/// `generic` or its `regex` alias. Generic rules are AST-less and handled by
+/// [`crate::rules::generic_mode`].
+fn is_generic_language_rule(languages: &[String]) -> bool {
+    languages
+        .iter()
+        .any(|l| matches!(l.to_lowercase().as_str(), "generic" | "regex"))
+}
+
+/// Compile a generic-mode rule via [`crate::rules::generic_mode`]. Thin
+/// adapter: pulls the supported generic-mode fields off the YAML and delegates
+/// all matching logic to that module.
+fn build_generic_mode_rules(
+    yaml: &SemgrepRuleYaml,
+    severity: Severity,
+    cwe: &Option<String>,
+    path_filter: &Option<PathFilter>,
+) -> Result<Vec<Box<dyn Rule>>, String> {
+    use crate::rules::generic_mode::{build_generic_rules, GenericRuleSpec};
+
+    let pattern_either: Vec<String> = yaml
+        .pattern_either
+        .iter()
+        .flatten()
+        .filter_map(|entry| entry.pattern.clone())
+        .collect();
+
+    build_generic_rules(GenericRuleSpec {
+        id: &yaml.id,
+        message: &yaml.message,
+        severity,
+        cwe: cwe.clone(),
+        pattern: yaml.pattern.as_deref(),
+        pattern_regex: yaml.pattern_regex.as_deref(),
+        pattern_either,
+        pattern_not: yaml.pattern_not.as_deref(),
+        path_filter: path_filter.clone(),
+    })
 }
 
 fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatcher, String> {
@@ -1731,6 +1772,19 @@ pub fn parse_semgrep_str(content: &str, source_label: &str) -> Result<Vec<Box<dy
         let cwe = extract_cwe(&yaml_rule);
         let severity = map_severity(&yaml_rule.severity);
         let path_filter = PathFilter::from_yaml(yaml_rule.paths.as_ref())?;
+
+        // `languages: [generic]` (and the `regex` alias) are AST-less spacegrep
+        // rules — route them to the generic-mode matcher instead of the
+        // tree-sitter pattern bridge. See `generic_mode.rs`.
+        if is_generic_language_rule(&yaml_rule.languages) {
+            rules.extend(build_generic_mode_rules(
+                &yaml_rule,
+                severity,
+                &cwe,
+                &path_filter,
+            )?);
+            continue;
+        }
 
         let mut mapped_languages = Vec::new();
         for lang_str in &yaml_rule.languages {

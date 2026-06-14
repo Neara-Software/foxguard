@@ -30,6 +30,7 @@ fn parse_source_for_path(
         Language::Swift => tree_sitter_swift::LANGUAGE.into(),
         Language::Kotlin => tree_sitter_kotlin_sg::LANGUAGE.into(),
         Language::C => tree_sitter_c::LANGUAGE.into(),
+        Language::Hcl => tree_sitter_hcl::LANGUAGE.into(),
         Language::NginxConf
         | Language::ApacheConf
         | Language::HAProxyConf
@@ -72,5 +73,15 @@ mod tests {
             .expect("TSX parser should produce a tree");
 
         assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_terraform_hcl_without_errors() {
+        let source = "resource \"aws_s3_bucket\" \"b\" {\n  acl = \"public-read\"\n}\n";
+        let tree = parse_path(source, Language::Hcl, Path::new("main.tf"))
+            .expect("HCL parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+        assert_eq!(tree.root_node().kind(), "config_file");
     }
 }

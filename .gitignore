@@ -24,6 +24,10 @@ benchmarks/repos/
 benchmarks/results*.md
 .claude/
 
+# Registry-coverage harness snapshot (cloned semgrep-rules; never committed).
+# See src/bin/registry_coverage.rs and docs/parity/registry-coverage.md.
+.registry-snapshot/
+
 # Sync conflict artifacts
 *.sync-conflict-*
 
@@ -37,3 +41,6 @@ www/public/foxguard-logo.png
 .togi-cache/
 .togi.lock
 togi.toml
+
+# Local semgrep-rules registry snapshot used for ad-hoc coverage checks
+.registry-snapshot/
