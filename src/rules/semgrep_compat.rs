@@ -85,6 +85,8 @@ pub struct PatternClause {
     pub metavariable_comparison: Option<SemgrepMetavariableComparisonClause>,
     #[serde(default, rename = "metavariable-pattern")]
     pub metavariable_pattern: Option<SemgrepMetavariablePatternClause>,
+    #[serde(default, rename = "metavariable-analysis")]
+    pub metavariable_analysis: Option<SemgrepMetavariableAnalysisClause>,
     /// `focus-metavariable:` — report the range of the named metavariable(s)
     /// instead of the full enclosing match.
     #[serde(default, rename = "focus-metavariable")]
@@ -168,6 +170,21 @@ pub struct SemgrepMetavariablePatternClause {
     pub pattern_either: Option<Vec<PatternEntry>>,
 }
 
+/// A `metavariable-analysis:` clause inside a `patterns:` block.
+///
+/// Supported analyzers:
+/// - `entropy` — matches when the metavariable's bound text has high Shannon
+///   entropy (≥ `ENTROPY_THRESHOLD` bits/char). Designed to flag random secrets
+///   and tokens.
+/// - `redos` — **warn-skipped**: a sound, cheap heuristic is not implemented;
+///   the constraint is dropped and sibling clauses are unaffected.
+/// - Any other analyzer → warn-skipped (graceful degradation).
+#[derive(Debug, Deserialize, Clone)]
+pub struct SemgrepMetavariableAnalysisClause {
+    pub metavariable: String,
+    pub analyzer: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum CweValue {
@@ -193,6 +210,11 @@ pub struct SemgrepRule {
 }
 
 /// Represents the matching strategy for a rule.
+// The `Combined` variant is inherently large (it holds several constraint Vecs);
+// boxing the whole enum would require pervasive indirection. Suppress the lint
+// here — the enum is only heap-allocated as part of a `SemgrepRule` or another
+// `PatternMatcher` arm, so no stack-smashing risk.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum PatternMatcher {
     /// Single pattern
@@ -210,6 +232,7 @@ pub enum PatternMatcher {
         metavariable_regexes: Vec<MetavariableRegexConstraint>,
         metavariable_comparisons: Vec<MetavariableComparisonConstraint>,
         metavariable_patterns: Vec<MetavariablePatternConstraint>,
+        metavariable_analyses: Vec<MetavariableAnalysisConstraint>,
         /// `focus-metavariable:` — when non-empty, the reported finding range is
         /// overridden to point at the first listed metavariable's binding range
         /// (falling back to the full match range if the metavar isn't bound).
@@ -288,6 +311,94 @@ pub struct MetavariablePatternConstraint {
     metavariable: String,
     sub_matcher: PatternMatcher,
     lang: Language,
+}
+
+/// Shannon entropy threshold (bits per character) above which a string is
+/// considered high-entropy.
+///
+/// Rationale: real secrets (AWS key `AKIA…`, base64 bearer tokens, hex API
+/// keys) cluster between 3.5–4.5 bits/char, while English words and common
+/// identifiers sit below 3.0 bits/char.  Semgrep's built-in entropy analyzer
+/// uses a learned Gaussian-mixture cutoff that is not publicly documented;
+/// **3.5 bits/char** is a documented approximation that:
+///
+/// - flags `"AKIA1234567890ABCDEF"` (AWS-style key, entropy ≈ 4.0)
+/// - flags a 32-char base64 token (entropy ≈ 4.75)
+/// - passes `"hello"` (entropy ≈ 2.32)
+/// - passes `"password"` (entropy ≈ 2.75)
+///
+/// The threshold is intentionally a named constant so it can be adjusted in
+/// one place without a search-and-replace.
+const ENTROPY_THRESHOLD: f64 = 3.5;
+
+/// Compute Shannon entropy (bits per character) of `s`.
+///
+/// Returns 0.0 for an empty string.
+fn shannon_entropy(s: &str) -> f64 {
+    if s.is_empty() {
+        return 0.0;
+    }
+    let len = s.len() as f64;
+    let mut counts = [0u32; 256];
+    for b in s.bytes() {
+        counts[b as usize] += 1;
+    }
+    counts
+        .iter()
+        .filter(|&&c| c > 0)
+        .map(|&c| {
+            let p = c as f64 / len;
+            -p * p.log2()
+        })
+        .sum()
+}
+
+/// A compiled `metavariable-analysis:` constraint.
+///
+/// Only `analyzer: entropy` is implemented. Other analyzers (including
+/// `redos`) are warn-skipped at build time and the constraint is dropped;
+/// sibling clauses are unaffected.
+#[derive(Debug, Clone)]
+pub struct MetavariableAnalysisConstraint {
+    metavariable: String,
+}
+
+impl MetavariableAnalysisConstraint {
+    /// Build from a YAML clause.  Returns `Ok(Some(_))` for `entropy`,
+    /// `Ok(None)` (after printing a warning) for `redos` and unknown
+    /// analyzers.
+    fn from_yaml(clause: &SemgrepMetavariableAnalysisClause) -> Option<Self> {
+        match clause.analyzer.as_str() {
+            "entropy" => Some(Self {
+                metavariable: clause.metavariable.clone(),
+            }),
+            "redos" => {
+                eprintln!(
+                    "Warning: metavariable-analysis analyzer 'redos' for {} is not \
+                    implemented (no sound cheap heuristic); skipping constraint",
+                    clause.metavariable
+                );
+                None
+            }
+            other => {
+                eprintln!(
+                    "Warning: metavariable-analysis analyzer '{}' for {} is unknown; \
+                    skipping constraint",
+                    other, clause.metavariable
+                );
+                None
+            }
+        }
+    }
+
+    /// Returns `true` when the bound text has Shannon entropy ≥
+    /// [`ENTROPY_THRESHOLD`] bits/char.  Unbound metavariables → `false`.
+    fn matches(&self, bindings: &HashMap<String, String>) -> bool {
+        let Some(text) = bindings.get(&self.metavariable) else {
+            return false;
+        };
+        shannon_entropy(text) >= ENTROPY_THRESHOLD
+    }
 }
 
 // ─── Comparison parser ───────────────────────────────────────────────────────
@@ -765,6 +876,7 @@ fn match_pattern_in_tree(
             metavariable_regexes,
             metavariable_comparisons,
             metavariable_patterns,
+            metavariable_analyses,
             focus_metavariables,
         } => {
             // If we have an inside pattern, only search within matching contexts
@@ -832,6 +944,10 @@ fn match_pattern_in_tree(
             }
 
             for constraint in metavariable_patterns {
+                results.retain(|r| constraint.matches(&r.bindings));
+            }
+
+            for constraint in metavariable_analyses {
                 results.retain(|r| constraint.matches(&r.bindings));
             }
 
@@ -1500,6 +1616,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
         let mut metavariable_regexes = Vec::new();
         let mut metavariable_comparisons = Vec::new();
         let mut metavariable_patterns = Vec::new();
+        let mut metavariable_analyses = Vec::new();
         let mut focus_metavariables: Vec<String> = Vec::new();
 
         for clause in clauses {
@@ -1547,6 +1664,13 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                 // If from_yaml returns None it already printed a warning; we
                 // continue loading the rest of the rule's clauses.
             }
+            if let Some(ref ma) = clause.metavariable_analysis {
+                if let Some(constraint) = MetavariableAnalysisConstraint::from_yaml(ma) {
+                    metavariable_analyses.push(constraint);
+                }
+                // If from_yaml returns None it already printed a warning; we
+                // continue loading the rest of the rule's clauses.
+            }
             if let Some(ref fmv) = clause.focus_metavariable {
                 focus_metavariables.extend(fmv.clone().into_vec());
             }
@@ -1560,6 +1684,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
             metavariable_regexes,
             metavariable_comparisons,
             metavariable_patterns,
+            metavariable_analyses,
             focus_metavariables,
         });
     }
@@ -1612,6 +1737,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
             metavariable_regexes: Vec::new(),
             metavariable_comparisons: Vec::new(),
             metavariable_patterns: Vec::new(),
+            metavariable_analyses: Vec::new(),
             focus_metavariables: Vec::new(),
         });
     }
@@ -2769,6 +2895,187 @@ rules:
             findings[0].fix_suggestion.as_deref(),
             Some("new(bar, foo)"),
             "both metavars should be substituted correctly"
+        );
+    }
+
+    // ─── metavariable-analysis / entropy unit tests ──────────────────────────
+
+    /// `shannon_entropy` sanity checks: high-entropy token vs low-entropy word.
+    #[test]
+    fn test_shannon_entropy_values() {
+        // "AKIA1234567890ABCDEF" — AWS-key-style token, high entropy
+        let high = shannon_entropy("AKIA1234567890ABCDEF");
+        assert!(
+            high >= 3.5,
+            "expected entropy ≥ 3.5 for AWS-key-style token, got {high}"
+        );
+
+        // "hello" — low entropy
+        let low = shannon_entropy("hello");
+        assert!(low < 3.0, "expected entropy < 3.0 for 'hello', got {low}");
+
+        // empty string
+        assert_eq!(shannon_entropy(""), 0.0);
+    }
+
+    /// entropy constraint: matches a high-entropy token.
+    #[test]
+    fn test_metavariable_analysis_entropy_matches_high_entropy() {
+        let clause = SemgrepMetavariableAnalysisClause {
+            metavariable: "$TOKEN".to_string(),
+            analyzer: "entropy".to_string(),
+        };
+        let constraint = MetavariableAnalysisConstraint::from_yaml(&clause)
+            .expect("entropy analyzer should build successfully");
+
+        let mut bindings = HashMap::new();
+        // base64-ish token with high entropy
+        bindings.insert(
+            "$TOKEN".to_string(),
+            "aB3xQz9mKp2LwYv5NtRsUhJdEfCgOiV7".to_string(),
+        );
+        assert!(
+            constraint.matches(&bindings),
+            "entropy constraint must match a high-entropy token"
+        );
+    }
+
+    /// entropy constraint: does NOT match a low-entropy word.
+    #[test]
+    fn test_metavariable_analysis_entropy_no_match_low_entropy() {
+        let clause = SemgrepMetavariableAnalysisClause {
+            metavariable: "$TOKEN".to_string(),
+            analyzer: "entropy".to_string(),
+        };
+        let constraint = MetavariableAnalysisConstraint::from_yaml(&clause).unwrap();
+
+        let mut bindings = HashMap::new();
+        bindings.insert("$TOKEN".to_string(), "password".to_string());
+        assert!(
+            !constraint.matches(&bindings),
+            "entropy constraint must NOT match 'password'"
+        );
+    }
+
+    /// entropy constraint: unbound metavar → no match (no panic).
+    #[test]
+    fn test_metavariable_analysis_entropy_unbound_metavar_no_match() {
+        let clause = SemgrepMetavariableAnalysisClause {
+            metavariable: "$TOKEN".to_string(),
+            analyzer: "entropy".to_string(),
+        };
+        let constraint = MetavariableAnalysisConstraint::from_yaml(&clause).unwrap();
+
+        let bindings = HashMap::new(); // $TOKEN not bound
+        assert!(
+            !constraint.matches(&bindings),
+            "unbound metavar must return false (no panic)"
+        );
+    }
+
+    /// redos analyzer: warn-skips without crashing (from_yaml returns None).
+    #[test]
+    fn test_metavariable_analysis_redos_warn_skips() {
+        let clause = SemgrepMetavariableAnalysisClause {
+            metavariable: "$RE".to_string(),
+            analyzer: "redos".to_string(),
+        };
+        // Must return None (warn-skip), not panic or Err.
+        let result = MetavariableAnalysisConstraint::from_yaml(&clause);
+        assert!(
+            result.is_none(),
+            "redos analyzer must warn-skip (return None)"
+        );
+    }
+
+    /// Unknown analyzer: warn-skips without crashing.
+    #[test]
+    fn test_metavariable_analysis_unknown_analyzer_warn_skips() {
+        let clause = SemgrepMetavariableAnalysisClause {
+            metavariable: "$X".to_string(),
+            analyzer: "future-magic-analyzer".to_string(),
+        };
+        let result = MetavariableAnalysisConstraint::from_yaml(&clause);
+        assert!(
+            result.is_none(),
+            "unknown analyzer must warn-skip (return None)"
+        );
+    }
+
+    /// End-to-end: a rule with metavariable-analysis entropy fires on a
+    /// high-entropy bound value and is suppressed on a low-entropy value.
+    #[test]
+    fn test_metavariable_analysis_entropy_end_to_end() {
+        let yaml = r#"
+rules:
+  - id: hardcoded-secret-entropy
+    patterns:
+      - pattern: 'token = "$VALUE"'
+      - metavariable-analysis:
+          metavariable: $VALUE
+          analyzer: entropy
+    message: Hardcoded high-entropy token detected
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        assert_eq!(rules.len(), 1, "rule must load successfully");
+
+        // High-entropy token: should fire
+        let high_entropy_source = r#"token = "aB3xQz9mKp2LwYv5NtRsUhJdEfCgOiV7"
+"#;
+        let tree = parse_file(high_entropy_source, Language::Python).unwrap();
+        let findings = rules[0].check(high_entropy_source, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "entropy rule must fire on high-entropy token"
+        );
+
+        // Low-entropy token: should NOT fire
+        let low_entropy_source = r#"token = "password"
+"#;
+        let tree2 = parse_file(low_entropy_source, Language::Python).unwrap();
+        let findings2 = rules[0].check(low_entropy_source, &tree2);
+        assert_eq!(
+            findings2.len(),
+            0,
+            "entropy rule must NOT fire on low-entropy word"
+        );
+    }
+
+    /// End-to-end: a rule with redos analyzer must load (warn-skip) and the
+    /// positive pattern still fires (constraint is absent, not blocking).
+    #[test]
+    fn test_metavariable_analysis_redos_warn_skip_end_to_end() {
+        let yaml = r#"
+rules:
+  - id: redos-test
+    patterns:
+      - pattern: 'regex = "$PATTERN"'
+      - metavariable-analysis:
+          metavariable: $PATTERN
+          analyzer: redos
+    message: Possible ReDoS pattern
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        // Rule must load without error; warn-skip is printed to stderr.
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        assert_eq!(rules.len(), 1, "rule must load after warn-skip");
+
+        // With redos constraint dropped, the positive pattern fires unconstrained.
+        let source = r#"regex = "(a+)+"
+"#;
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        // The positive pattern still matches; no crash.
+        assert_eq!(
+            findings.len(),
+            1,
+            "positive pattern must still fire when redos constraint is warn-skipped"
         );
     }
 

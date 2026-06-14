@@ -84,6 +84,7 @@ const SUPPORTED_PATTERN_OPERATORS: &[&str] = &[
     "metavariable-comparison",
     "metavariable-pattern",
     "focus-metavariable",
+    "metavariable-analysis",
 ];
 
 /// Languages the compat loader maps to a real foxguard parser
@@ -326,10 +327,10 @@ fn classify_rule(rule: &Yaml) -> Outcome {
     // reported as the blocking reason (these are roughly ordered by how
     // central they are to the rule's match).
     const UNSUPPORTED_OPERATORS: &[&str] = &[
-        // metavariable-pattern / metavariable-comparison / focus-metavariable are
-        // now implemented by the loader — they fall through to ground_truth below.
+        // metavariable-pattern / metavariable-comparison / focus-metavariable /
+        // metavariable-analysis are now implemented by the loader — they fall
+        // through to ground_truth below.
         "metavariable-type",
-        "metavariable-analysis",
         "pattern-sources",
         "pattern-sinks",
         "pattern-sanitizers",
