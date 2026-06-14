@@ -322,7 +322,7 @@ pub struct MetavariablePatternConstraint {
 /// uses a learned Gaussian-mixture cutoff that is not publicly documented;
 /// **3.5 bits/char** is a documented approximation that:
 ///
-/// - flags `"AKIA1234567890ABCDEF"` (AWS-style key, entropy ≈ 4.0)
+/// - flags `"Zq7Z9kW3pL8xT2nR4dB6m"` (random high-entropy token, entropy ≈ 4.0)
 /// - flags a 32-char base64 token (entropy ≈ 4.75)
 /// - passes `"hello"` (entropy ≈ 2.32)
 /// - passes `"password"` (entropy ≈ 2.75)
@@ -2903,11 +2903,11 @@ rules:
     /// `shannon_entropy` sanity checks: high-entropy token vs low-entropy word.
     #[test]
     fn test_shannon_entropy_values() {
-        // "AKIA1234567890ABCDEF" — AWS-key-style token, high entropy
-        let high = shannon_entropy("AKIA1234567890ABCDEF");
+        // "Zq7Z9kW3pL8xT2nR4dB6m" — random high-entropy token
+        let high = shannon_entropy("Zq7Z9kW3pL8xT2nR4dB6m");
         assert!(
             high >= 3.5,
-            "expected entropy ≥ 3.5 for AWS-key-style token, got {high}"
+            "expected entropy >= 3.5 for high-entropy token, got {high}"
         );
 
         // "hello" — low entropy
