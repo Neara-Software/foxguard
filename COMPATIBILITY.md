@@ -82,6 +82,21 @@ Metavariable filtering:
   - If the bound metavariable text is not parseable as a number the constraint evaluates to false (no match) — identical to Semgrep behaviour
   - `base: 10` (or absent) accepted; any other `base:` value is warn-skipped for that constraint entry only
   - `strip:` field is accepted in YAML (not rejected) but is not required for correctness since suffix-stripping is always applied; unsupported `strip: true` behaviour beyond suffix stripping is silently ignored
+- `metavariable-analysis` (inside a `patterns:` block): the named metavariable's
+  bound text is analysed by a named analyzer.
+  - `analyzer: entropy` — **supported**. The constraint matches when the
+    metavar's bound text has Shannon entropy ≥ **3.5 bits/char**. This threshold
+    is a documented approximation of Semgrep's internal Gaussian-mixture entropy
+    model: it flags random secrets / tokens (e.g. an AWS-style key
+    `"AKIA1234567890ABCDEF"` scores ≈ 4.0 bits/char) while passing low-entropy
+    words (e.g. `"password"` scores ≈ 2.75 bits/char). The threshold is defined
+    as `ENTROPY_THRESHOLD` in `semgrep_compat.rs` and can be adjusted in one
+    place if calibration is needed.
+  - `analyzer: redos` — **warn-skipped** (constraint dropped, sibling
+    clauses/rules unaffected). A sound, cheap ReDoS heuristic is not yet
+    implemented. The rule loads and other constraints are fully active.
+  - Any other analyzer — **warn-skipped** in the same way (graceful
+    degradation consistent with other warn-skipped operators).
 - `metavariable-pattern` (inside a `patterns:` block): the named metavariable's
   bound text is re-parsed as a snippet in the rule's language and matched against
   a nested sub-pattern. Supported nested forms: `pattern:`, `pattern-regex:`, and

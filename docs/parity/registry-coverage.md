@@ -23,19 +23,18 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `unsupported language: regex` | 195 | 23.2% | 9.1% |
+| `unsupported language: regex` | 200 | 23.8% | 9.3% |
 | `taint: patterns: inside source/sink` | 180 | 21.5% | 8.4% |
-| `unsupported language: yaml` | 99 | 11.8% | 4.6% |
-| `generic mode (languages: [generic])` | 75 | 8.9% | 3.5% |
+| `unsupported language: yaml` | 100 | 11.9% | 4.7% |
+| `generic mode (languages: [generic])` | 78 | 9.3% | 3.6% |
 | `unsupported language: solidity` | 47 | 5.6% | 2.2% |
 | `unsupported language: dockerfile` | 39 | 4.6% | 1.8% |
 | `unsupported language: ocaml` | 34 | 4.1% | 1.6% |
 | `mode: taint (unsupported language: ruby)` | 33 | 3.9% | 1.5% |
 | `mode: taint (unsupported language: php)` | 21 | 2.5% | 1.0% |
 | `unsupported language: scala` | 18 | 2.1% | 0.8% |
-| `loader rejected (other)` | 16 | 1.9% | 0.7% |
+| `loader rejected (other)` | 17 | 2.0% | 0.8% |
 | `mode: taint (unsupported language: csharp)` | 11 | 1.3% | 0.5% |
-| `metavariable-analysis` | 10 | 1.2% | 0.5% |
 | `unsupported language: apex` | 9 | 1.1% | 0.4% |
 | `unsupported language: bash` | 9 | 1.1% | 0.4% |
 | `unsupported language: elixir` | 7 | 0.8% | 0.3% |
@@ -59,11 +58,10 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 | Rank | Capability to add | Rules unlocked |
 |---:|---|---:|
 | 1 | `taint: patterns: inside source/sink` | 180 |
-| 2 | `loader rejected (other)` | 16 |
-| 3 | `metavariable-analysis` | 10 |
-| 4 | `mode: taint (unsupported shape)` | 1 |
+| 2 | `loader rejected (other)` | 17 |
+| 3 | `mode: taint (unsupported shape)` | 1 |
 
-Operator/feature gaps account for **207 rules** (9.7% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **198 rules** (9.2% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
 
 ## Priority order — missing language grammars
 
@@ -71,9 +69,9 @@ Rules foxguard cannot run because it has no tree-sitter grammar for the target l
 
 | Rank | Language to add | Rules unlocked |
 |---:|---|---:|
-| 1 | `unsupported language: regex` | 195 |
-| 2 | `unsupported language: yaml` | 99 |
-| 3 | `generic mode (languages: [generic])` | 75 |
+| 1 | `unsupported language: regex` | 200 |
+| 2 | `unsupported language: yaml` | 100 |
+| 3 | `generic mode (languages: [generic])` | 78 |
 | 4 | `unsupported language: solidity` | 47 |
 | 5 | `unsupported language: dockerfile` | 39 |
 | 6 | `unsupported language: ocaml` | 34 |
@@ -96,7 +94,7 @@ Rules foxguard cannot run because it has no tree-sitter grammar for the target l
 | 23 | `unsupported language: dart` | 1 |
 | 24 | `unsupported language: xml` | 1 |
 
-Missing-grammar gaps account for **632 rules** (29.5% of all rules).
+Missing-grammar gaps account for **641 rules** (29.9% of all rules).
 
 ## Per-language breakdown
 
@@ -143,7 +141,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **dart**: `unsupported language: dart` (1)
 - **dockerfile**: `unsupported language: dockerfile` (39)
 - **elixir**: `unsupported language: elixir` (7)
-- **generic**: `generic mode (languages: [generic])` (75), `metavariable-analysis` (3)
+- **generic**: `generic mode (languages: [generic])` (78)
 - **go**: `taint: patterns: inside source/sink` (12), `mode: taint (unsupported shape)` (1)
 - **hcl**: `unsupported language: hcl` (2)
 - **html**: `unsupported language: html` (4)
@@ -152,14 +150,14 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **json**: `unsupported language: json` (7)
 - **ocaml**: `unsupported language: ocaml` (34)
 - **php**: `mode: taint (unsupported language: php)` (21), `loader rejected (other)` (1)
-- **python**: `taint: patterns: inside source/sink` (70), `loader rejected (other)` (6), `metavariable-analysis` (1)
-- **regex**: `unsupported language: regex` (195), `metavariable-analysis` (5)
+- **python**: `taint: patterns: inside source/sink` (70), `loader rejected (other)` (7)
+- **regex**: `unsupported language: regex` (200)
 - **ruby**: `mode: taint (unsupported language: ruby)` (33), `loader rejected (other)` (2)
 - **scala**: `unsupported language: scala` (18), `mode: taint (unsupported language: scala)` (5)
 - **solidity**: `unsupported language: solidity` (47), `mode: taint (unsupported language: solidity)` (3)
 - **swift**: `mode: taint (unsupported language: swift)` (1)
 - **xml**: `unsupported language: xml` (1)
-- **yaml**: `unsupported language: yaml` (99), `metavariable-analysis` (1)
+- **yaml**: `unsupported language: yaml` (100)
 
 ---
 
