@@ -81,6 +81,9 @@ const SUPPORTED_PATTERN_OPERATORS: &[&str] = &[
     "pattern-not-inside",
     "patterns",
     "metavariable-regex",
+    "metavariable-comparison",
+    "metavariable-pattern",
+    "focus-metavariable",
 ];
 
 /// Languages the compat loader maps to a real foxguard parser
@@ -119,7 +122,18 @@ fn language_supported(lang: &str) -> bool {
 fn taint_language_supported(lang: &str) -> bool {
     matches!(
         lang.to_lowercase().as_str(),
-        "python" | "py" | "javascript" | "js" | "typescript" | "ts" | "go" | "golang"
+        "python"
+            | "py"
+            | "javascript"
+            | "js"
+            | "typescript"
+            | "ts"
+            | "go"
+            | "golang"
+            | "java"
+            | "c"
+            | "kotlin"
+            | "kt"
     )
 }
 
@@ -256,10 +270,10 @@ fn classify_rule(rule: &Yaml) -> Outcome {
     // --- Mode handling ---
     match mode {
         "taint" => {
-            // Taint only compiles for python/js/go today.
+            // Taint compiles for python/js/ts/go/java/c/kotlin today.
             if !langs.iter().any(|l| taint_language_supported(l)) {
                 return Outcome::Skipped(format!(
-                    "mode: taint (non-python/js/go: {})",
+                    "mode: taint (unsupported language: {})",
                     language_bucket(&langs)
                 ));
             }
@@ -312,11 +326,10 @@ fn classify_rule(rule: &Yaml) -> Outcome {
     // reported as the blocking reason (these are roughly ordered by how
     // central they are to the rule's match).
     const UNSUPPORTED_OPERATORS: &[&str] = &[
-        "metavariable-pattern",
-        "metavariable-comparison",
+        // metavariable-pattern / metavariable-comparison / focus-metavariable are
+        // now implemented by the loader — they fall through to ground_truth below.
         "metavariable-type",
         "metavariable-analysis",
-        "focus-metavariable",
         "pattern-sources",
         "pattern-sinks",
         "pattern-sanitizers",
@@ -536,9 +549,9 @@ fn is_language_gap(reason: &str) -> bool {
         || reason.starts_with("generic mode")
         || reason.starts_with("regex language")
         || reason.starts_with("no/unknown languages")
-        // `mode: taint (non-python/js/go: <lang>)` is gated on the taint
+        // `mode: taint (unsupported language: <lang>)` is gated on the taint
         // engine supporting that language's grammar — treat as a language axis.
-        || reason.starts_with("mode: taint (non-python/js/go")
+        || reason.starts_with("mode: taint (unsupported language")
 }
 
 fn pct(n: usize, d: usize) -> f64 {
@@ -553,7 +566,7 @@ fn render_report(root: &Path, stats: &Stats) -> String {
     use std::fmt::Write;
     let mut s = String::new();
 
-    let today = "2026-06-10";
+    let today = "2026-06-15";
     let _ = writeln!(s, "# Semgrep registry coverage");
     let _ = writeln!(s);
     let _ = writeln!(
@@ -790,7 +803,9 @@ rules:
     }
 
     #[test]
-    fn metavariable_pattern_is_skipped_with_reason() {
+    fn metavariable_pattern_now_loads() {
+        // metavariable-pattern is implemented by the loader — the classifier must
+        // no longer pre-skip it; ground_truth confirms a live matcher.
         let r = rule(
             r#"
 rules:
@@ -805,14 +820,11 @@ rules:
     languages: [python]
 "#,
         );
-        match classify_rule(&r) {
-            Outcome::Skipped(reason) => assert_eq!(reason, "metavariable-pattern"),
-            other => panic!("expected skip, got {other:?}"),
-        }
+        assert!(matches!(classify_rule(&r), Outcome::Loaded));
     }
 
     #[test]
-    fn focus_metavariable_is_skipped() {
+    fn focus_metavariable_now_loads() {
         let r = rule(
             r#"
 rules:
@@ -825,10 +837,7 @@ rules:
     languages: [java]
 "#,
         );
-        match classify_rule(&r) {
-            Outcome::Skipped(reason) => assert_eq!(reason, "focus-metavariable"),
-            other => panic!("expected skip, got {other:?}"),
-        }
+        assert!(matches!(classify_rule(&r), Outcome::Loaded));
     }
 
     #[test]
@@ -885,11 +894,31 @@ rules:
         );
         match classify_rule(&r) {
             Outcome::Skipped(reason) => {
-                assert!(reason.contains("non-python/js/go"));
+                assert!(reason.contains("unsupported language"));
                 assert!(is_language_gap(&reason));
             }
             other => panic!("expected skip, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn java_taint_now_loads() {
+        // Java taint is bridged now — a simple source/sink rule must load.
+        let r = rule(
+            r#"
+rules:
+  - id: java-taint
+    mode: taint
+    pattern-sources:
+      - pattern: request.getParameter($X)
+    pattern-sinks:
+      - pattern: Runtime.exec($X)
+    message: m
+    severity: ERROR
+    languages: [java]
+"#,
+        );
+        assert!(matches!(classify_rule(&r), Outcome::Loaded));
     }
 
     #[test]
