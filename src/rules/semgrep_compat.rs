@@ -1566,13 +1566,258 @@ fn map_language(lang_str: &str) -> Option<Language> {
     }
 }
 
-/// True when a rule's `languages` selects generic (spacegrep) matching:
-/// `generic` or its `regex` alias. Generic rules are AST-less and handled by
-/// [`crate::rules::generic_mode`].
+/// True when a rule's `languages` selects generic (spacegrep) matching.
+/// Generic rules are AST-less and handled by [`crate::rules::generic_mode`].
+///
+/// Note: `languages: [regex]` is *not* generic mode — it is a distinct Semgrep
+/// mode that runs pure `pattern-regex` against raw file bytes.  Those rules are
+/// routed to [`build_regex_mode_rules`] instead.
 fn is_generic_language_rule(languages: &[String]) -> bool {
-    languages
+    languages.iter().any(|l| l.to_lowercase() == "generic")
+}
+
+/// True when a rule targets Semgrep's pure-regex mode (`languages: [regex]`).
+///
+/// Regex-mode rules only support `pattern-regex` and `pattern-not-regex`; they
+/// do not use a tree-sitter AST and are run against raw text on every file that
+/// passes the rule's `paths:` filter.
+fn is_regex_language_rule(languages: &[String]) -> bool {
+    languages.iter().any(|l| l.to_lowercase() == "regex")
+}
+
+// ─── Regex-mode Rule ─────────────────────────────────────────────────────────
+
+/// Every language the scanner can hand to a rule. A regex-mode rule is
+/// language-agnostic and runs against every file's raw text, so we register one
+/// rule instance per detectable language (fan-out mirrors the generic-mode
+/// approach). The compiled matcher is shared via `Arc`, so the fan-out is cheap.
+const REGEX_MODE_ALL_LANGUAGES: &[Language] = &[
+    Language::JavaScript,
+    Language::Python,
+    Language::Go,
+    Language::Ruby,
+    Language::Java,
+    Language::Php,
+    Language::Rust,
+    Language::CSharp,
+    Language::Swift,
+    Language::Kotlin,
+    Language::C,
+    Language::Hcl,
+    Language::NginxConf,
+    Language::ApacheConf,
+    Language::HAProxyConf,
+    Language::Dockerfile,
+    Language::Manifest,
+];
+
+/// A compiled Semgrep `languages: [regex]` rule.
+///
+/// Regex-mode rules carry only `pattern-regex` / `pattern-not-regex` matchers
+/// and are run against the raw text of every scanned file (no tree-sitter parse
+/// required).  One rule instance is created per detectable language so the
+/// existing `rule.language() == file_language` dispatch continues to work.
+struct RegexModeRule {
+    id: String,
+    message: String,
+    severity: Severity,
+    cwe: Option<String>,
+    /// Language this instance is registered under.
+    lang: Language,
+    /// The positive regex(es) — all must match at least once (AND semantics when
+    /// multiple are present, matching Semgrep's `patterns:` AND-block behaviour).
+    positives: std::sync::Arc<Vec<Regex>>,
+    /// Negative regexes — if any match the entire file, the finding is suppressed.
+    negatives: std::sync::Arc<Vec<Regex>>,
+    path_filter: Option<std::sync::Arc<PathFilter>>,
+}
+
+impl Rule for RegexModeRule {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn severity(&self) -> Severity {
+        self.severity
+    }
+    fn cwe(&self) -> Option<&str> {
+        self.cwe.as_deref()
+    }
+    fn description(&self) -> &str {
+        &self.message
+    }
+    fn language(&self) -> Language {
+        self.lang
+    }
+    fn applies_to_path(&self, path: &Path) -> bool {
+        self.path_filter
+            .as_ref()
+            .is_none_or(|filter| filter.matches(path))
+    }
+
+    fn check(&self, source: &str, _tree: &tree_sitter::Tree) -> Vec<Finding> {
+        // Run the positive regexes in intersection: each positive must produce
+        // at least one match.  If any positive misses, the rule doesn't fire.
+        let candidates: Option<Vec<MatchRange>> =
+            self.positives
+                .iter()
+                .fold(None, |acc: Option<Vec<MatchRange>>, re| {
+                    let hits: Vec<MatchRange> = match_regex_pattern(re, source);
+                    Some(match acc {
+                        None => hits,
+                        Some(prev) => {
+                            // Intersect: keep matches from `prev` that overlap with
+                            // at least one match from `hits` (AND semantics across
+                            // patterns: clauses, mirroring the AST Combined path).
+                            prev.into_iter()
+                                .filter(|p| {
+                                    hits.iter().any(|h| {
+                                        p.start_byte < h.end_byte && h.start_byte < p.end_byte
+                                    })
+                                })
+                                .collect()
+                        }
+                    })
+                });
+
+        let mut results = candidates.unwrap_or_default();
+        if results.is_empty() {
+            return Vec::new();
+        }
+
+        // Apply negative filters: drop any positive match that overlaps with a
+        // negative regex match anywhere in the file.
+        for neg in self.negatives.iter() {
+            let neg_hits: Vec<MatchRange> = match_regex_pattern(neg, source);
+            if !neg_hits.is_empty() {
+                results.retain(|r| {
+                    !neg_hits
+                        .iter()
+                        .any(|n| r.start_byte < n.end_byte && n.start_byte < r.end_byte)
+                });
+            }
+        }
+
+        results
+            .into_iter()
+            .map(|m| Finding {
+                rule_id: self.id.clone(),
+                severity: self.severity,
+                cwe: self.cwe.clone(),
+                description: self.message.clone(),
+                file: String::new(),
+                line: m.line,
+                column: m.column,
+                end_line: m.end_line,
+                end_column: m.end_column,
+                snippet: m.snippet,
+                source_line: None,
+                source_description: None,
+                sink_line: None,
+                sink_description: None,
+                fix_suggestion: None,
+                sink_start_byte: None,
+                sink_end_byte: None,
+                confidence: 0.7,
+                taint_hops: None,
+                tags: vec![],
+                crypto_algorithm: None,
+                cnsa2_deadline: None,
+                dep_name: None,
+                dep_version: None,
+                dep_ecosystem: None,
+                dep_purl: None,
+                dep_vulnerability_id: None,
+                dep_fixed_version: None,
+                dep_source: None,
+                dep_vulnerability_severity: None,
+                dep_path: vec![],
+            })
+            .collect()
+    }
+}
+
+/// Compile a `languages: [regex]` rule into one [`RegexModeRule`] per
+/// detectable language. Warns and returns an empty vec for rules that carry
+/// only AST patterns (no `pattern-regex` anywhere).
+fn build_regex_mode_rules(
+    yaml: &SemgrepRuleYaml,
+    severity: Severity,
+    cwe: &Option<String>,
+    path_filter: &Option<PathFilter>,
+) -> Result<Vec<Box<dyn Rule>>, String> {
+    // Collect all pattern-regex clauses from top-level AND from patterns: blocks.
+    let mut positives: Vec<Regex> = Vec::new();
+    let mut negatives: Vec<Regex> = Vec::new();
+
+    // Top-level pattern-regex / pattern-not-regex.
+    if let Some(ref re) = yaml.pattern_regex {
+        positives.push(compile_regex(re)?);
+    }
+    if let Some(ref re) = yaml.pattern_not_regex {
+        negatives.push(compile_regex(re)?);
+    }
+
+    // patterns: [...] blocks — collect pattern-regex / pattern-not-regex subclauses.
+    if let Some(ref clauses) = yaml.patterns {
+        for clause in clauses {
+            if let Some(ref re) = clause.pattern_regex {
+                positives.push(compile_regex(re)?);
+            }
+            if let Some(ref re) = clause.pattern_not_regex {
+                negatives.push(compile_regex(re)?);
+            }
+            // Nested pattern-either entries may also carry pattern-regex.
+            if let Some(ref entries) = clause.pattern_either {
+                for entry in entries {
+                    if let Some(ref re) = entry.pattern_regex {
+                        positives.push(compile_regex(re)?);
+                    }
+                }
+            }
+        }
+    }
+
+    // Top-level pattern-either regex entries.
+    if let Some(ref entries) = yaml.pattern_either {
+        for entry in entries {
+            if let Some(ref re) = entry.pattern_regex {
+                positives.push(compile_regex(re)?);
+            }
+        }
+    }
+
+    if positives.is_empty() {
+        // Rule has no regex patterns at all (only AST patterns that regex mode
+        // cannot execute). Warn-skip rather than build a no-op matcher.
+        eprintln!(
+            "Warning: languages: [regex] rule '{}' has no pattern-regex; \
+             regex mode cannot run AST patterns — skipping",
+            yaml.id
+        );
+        return Ok(Vec::new());
+    }
+
+    let positives = std::sync::Arc::new(positives);
+    let negatives = std::sync::Arc::new(negatives);
+    let path_filter = path_filter.clone().map(std::sync::Arc::new);
+
+    let rules = REGEX_MODE_ALL_LANGUAGES
         .iter()
-        .any(|l| matches!(l.to_lowercase().as_str(), "generic" | "regex"))
+        .map(|&lang| {
+            Box::new(RegexModeRule {
+                id: format!("semgrep/{}", yaml.id),
+                message: yaml.message.clone(),
+                severity,
+                cwe: cwe.clone(),
+                lang,
+                positives: std::sync::Arc::clone(&positives),
+                negatives: std::sync::Arc::clone(&negatives),
+                path_filter: path_filter.clone(),
+            }) as Box<dyn Rule>
+        })
+        .collect();
+
+    Ok(rules)
 }
 
 /// Compile a generic-mode rule via [`crate::rules::generic_mode`]. Thin
@@ -1899,11 +2144,23 @@ pub fn parse_semgrep_str(content: &str, source_label: &str) -> Result<Vec<Box<dy
         let severity = map_severity(&yaml_rule.severity);
         let path_filter = PathFilter::from_yaml(yaml_rule.paths.as_ref())?;
 
-        // `languages: [generic]` (and the `regex` alias) are AST-less spacegrep
-        // rules — route them to the generic-mode matcher instead of the
-        // tree-sitter pattern bridge. See `generic_mode.rs`.
+        // `languages: [generic]` — AST-less spacegrep rules routed to the
+        // generic-mode (tokenized) matcher.  See `generic_mode.rs`.
         if is_generic_language_rule(&yaml_rule.languages) {
             rules.extend(build_generic_mode_rules(
+                &yaml_rule,
+                severity,
+                &cwe,
+                &path_filter,
+            )?);
+            continue;
+        }
+
+        // `languages: [regex]` — pure regex rules that run `pattern-regex` /
+        // `pattern-not-regex` against raw file text, with no tree-sitter parse.
+        // They are language-agnostic and fan out across all detectable languages.
+        if is_regex_language_rule(&yaml_rule.languages) {
+            rules.extend(build_regex_mode_rules(
                 &yaml_rule,
                 severity,
                 &cwe,
@@ -3108,5 +3365,156 @@ rules:
         );
         // `b` is the 6th character on line 2 in "sink(b)"
         assert_eq!(findings[0].column, 6, "$X (`b`) should be at column 6");
+    }
+
+    // ── languages: [regex] ────────────────────────────────────────────────────
+
+    /// (a) A `languages: [regex]` rule with `pattern-regex` loads (produces rule
+    /// instances) and FIRES on a file whose text matches.
+    #[test]
+    fn regex_lang_rule_loads_and_fires_on_matching_text() {
+        let yaml = r#"
+rules:
+  - id: test/detect-token
+    pattern-regex: "MYTOKEN[0-9]{4}"
+    languages: [regex]
+    message: Token detected
+    severity: ERROR
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        // Fan-out produces one instance per detectable language.
+        assert!(
+            !rules.is_empty(),
+            "regex-mode rule should produce at least one rule instance"
+        );
+
+        // All instances should have the correct id, severity, and language.
+        for rule in &rules {
+            assert_eq!(rule.id(), "semgrep/test/detect-token");
+            assert_eq!(rule.severity(), Severity::Critical);
+        }
+
+        // Pick any instance and run it against matching text.
+        let source = "access_token = \"MYTOKEN1234\"\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly one finding for matching text"
+        );
+        assert_eq!(findings[0].line, 1);
+    }
+
+    /// (b) The same rule does NOT fire on non-matching text.
+    #[test]
+    fn regex_lang_rule_does_not_fire_on_non_matching_text() {
+        let yaml = r#"
+rules:
+  - id: test/detect-token
+    pattern-regex: "MYTOKEN[0-9]{4}"
+    languages: [regex]
+    message: Token detected
+    severity: ERROR
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "access_token = \"NOT_A_TOKEN\"\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert!(
+            findings.is_empty(),
+            "regex-mode rule must not fire on non-matching text"
+        );
+    }
+
+    /// (c) `paths.include` / `paths.exclude` respected by the regex-mode rule.
+    #[test]
+    fn regex_lang_rule_respects_paths_filter() {
+        let yaml = r#"
+rules:
+  - id: test/jsp-scriptlet
+    pattern-regex: "<%[^@]"
+    languages: [regex]
+    message: JSP scriptlet detected
+    severity: WARNING
+    paths:
+      include:
+        - "*.jsp"
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        assert!(!rules.is_empty(), "should produce at least one rule");
+
+        // Should apply to .jsp files.
+        assert!(
+            rules[0].applies_to_path(std::path::Path::new("view.jsp")),
+            "rule should apply to .jsp files"
+        );
+        // Should NOT apply to .py files.
+        assert!(
+            !rules[0].applies_to_path(std::path::Path::new("main.py")),
+            "rule must not apply to .py files when paths.include = [*.jsp]"
+        );
+    }
+
+    /// (d) A `languages: [regex]` rule with only an AST `pattern:` (no
+    /// `pattern-regex`) should warn-skip (produce zero rule instances).
+    #[test]
+    fn regex_lang_rule_with_only_ast_pattern_warns_and_skips() {
+        let yaml = r#"
+rules:
+  - id: test/ast-only-in-regex-mode
+    pattern: eval(...)
+    languages: [regex]
+    message: This should be skipped
+    severity: ERROR
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        assert!(
+            rules.is_empty(),
+            "regex-mode rule with only an AST pattern must produce zero rule instances"
+        );
+    }
+
+    /// Regex-mode rule with `patterns:` block (pattern-regex + pattern-not-regex)
+    /// loads and correctly applies negation.
+    #[test]
+    fn regex_lang_rule_patterns_block_with_negation() {
+        let yaml = r#"
+rules:
+  - id: test/detect-artifactory-token
+    patterns:
+      - pattern-regex: "\\bAKC[a-zA-Z0-9]{10,}"
+      - pattern-not-regex: "sha(128|256|512)"
+    languages: [regex]
+    message: Artifactory token detected
+    severity: ERROR
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        assert!(!rules.is_empty(), "should produce rule instances");
+
+        let tree = parse_file("x = 1\n", Language::Python).unwrap();
+
+        // Matching text without the excluded pattern — should fire.
+        let matching = "token = \"AKCp1234567890abcdef\"\n";
+        let findings = rules[0].check(matching, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "should fire on text matching pattern-regex"
+        );
+
+        // Text matching the negative pattern — should NOT fire.
+        let negated = "hash = \"sha256_AKCp1234567890abcdef\"\n";
+        let findings = rules[0].check(negated, &tree);
+        assert!(
+            findings.is_empty(),
+            "should not fire when pattern-not-regex also matches"
+        );
     }
 }

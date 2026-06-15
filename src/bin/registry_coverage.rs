@@ -88,7 +88,8 @@ const SUPPORTED_PATTERN_OPERATORS: &[&str] = &[
 ];
 
 /// Languages the compat loader maps to a real foxguard parser
-/// (see `map_language`). Anything else is an unsupported-language skip.
+/// (see `map_language`), plus `regex` which is handled by the regex-mode
+/// engine (not a tree-sitter grammar). Anything else is an unsupported-language skip.
 fn language_supported(lang: &str) -> bool {
     matches!(
         lang.to_lowercase().as_str(),
@@ -115,6 +116,9 @@ fn language_supported(lang: &str) -> bool {
             | "kotlin"
             | "kt"
             | "c"
+            // `languages: [regex]` rules are handled by the regex-mode engine
+            // (pure pattern-regex against raw text, no tree-sitter parse needed).
+            | "regex"
     )
 }
 
@@ -327,15 +331,18 @@ fn classify_rule(rule: &Yaml) -> Outcome {
         }
     }
 
-    // Generic mode (languages: [generic]) — no AST grammar, foxguard can't run it.
+    // Generic mode (languages: [generic]) — tokenized spacegrep matching;
+    // foxguard routes these to `generic_mode.rs`.
     if langs.iter().any(|l| l.eq_ignore_ascii_case("generic")) {
         return Outcome::Skipped("generic mode (languages: [generic])".to_string());
     }
-    if langs.iter().any(|l| l.eq_ignore_ascii_case("regex")) {
-        // pure regex-language rules: only work if a pattern-regex is present.
-        if !keys.iter().any(|k| k == "pattern-regex") {
-            return Outcome::Skipped("regex language (no pattern-regex)".to_string());
-        }
+
+    // `languages: [regex]` rules with no pattern-regex anywhere cannot be compiled
+    // by the regex-mode engine (it only supports pattern-regex, not AST patterns).
+    if langs.iter().any(|l| l.eq_ignore_ascii_case("regex"))
+        && !keys.iter().any(|k| k == "pattern-regex")
+    {
+        return Outcome::Skipped("regex language (no pattern-regex)".to_string());
     }
 
     // No supported language among the declared ones.
@@ -530,7 +537,8 @@ fn main() {
 fn is_language_gap(reason: &str) -> bool {
     reason.starts_with("unsupported language:")
         || reason.starts_with("generic mode")
-        || reason.starts_with("regex language")
+        // "regex language (no pattern-regex)" — the rule itself is malformed
+        // (only AST patterns in a regex-mode rule); classify as operator gap.
         || reason.starts_with("no/unknown languages")
         // `mode: taint (unsupported language: <lang>)` is gated on the taint
         // engine supporting that language's grammar — treat as a language axis.
@@ -910,5 +918,8 @@ rules:
         assert!(is_language_gap("generic mode (languages: [generic])"));
         assert!(!is_language_gap("metavariable-pattern"));
         assert!(!is_language_gap("focus-metavariable"));
+        // "regex language (no pattern-regex)" is an operator gap: the rule is
+        // malformed (no regex pattern), not a missing grammar.
+        assert!(!is_language_gap("regex language (no pattern-regex)"));
     }
 }
