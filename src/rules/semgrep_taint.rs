@@ -9,7 +9,7 @@
 //! - `mode: taint` with `languages: [python]`, `languages: [javascript]` /
 //!   `[typescript]` / `[js]` / `[ts]`, `languages: [go]` / `[golang]`,
 //!   `languages: [java]`, `languages: [c]`, `languages: [kotlin]` /
-//!   `[kt]`, or `languages: [ruby]` / `[rb]`.
+//!   `[kt]`, `languages: [ruby]` / `[rb]`, or `languages: [php]`.
 //!   Other languages are rejected with a warning and the rule is skipped;
 //!   non-taint rules fall through to the regular Semgrep bridge.
 //! - `pattern-sources`, `pattern-sinks`, `pattern-sanitizers` as lists of
@@ -62,6 +62,7 @@ use crate::rules::go_taint;
 use crate::rules::java_taint;
 use crate::rules::javascript_taint;
 use crate::rules::kotlin_taint;
+use crate::rules::php_taint;
 use crate::rules::python_taint;
 use crate::rules::ruby_taint;
 use crate::rules::{FileContext, Rule};
@@ -466,6 +467,55 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
     }
 }
 
+/// Convert the generic spec into a PHP taint spec.
+fn to_php_spec(g: &GenericSpec) -> php_taint::TaintSpec {
+    php_taint::TaintSpec {
+        sources: g.sources.iter().map(to_php_matcher).collect(),
+        sinks: g.sinks.iter().map(to_php_matcher).collect(),
+        sanitizers: g.sanitizers.iter().map(to_php_matcher).collect(),
+    }
+}
+
+fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
+    match m {
+        GenericMatcher::Attribute {
+            root,
+            field,
+            description,
+        } => php_taint::NodeMatcher::Attribute {
+            root: root.clone(),
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Call {
+            canonical,
+            description,
+        } => php_taint::NodeMatcher::Call {
+            canonical: canonical.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ParamName { names, description } => php_taint::NodeMatcher::ParamName {
+            names: names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => php_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
+        // MemberAssign is JS-specific; included in the spec for completeness but
+        // the PHP engine ignores it.
+        GenericMatcher::MemberAssign { field, description } => {
+            php_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
+    }
+}
+
 /// A compiled Semgrep `mode: taint` rule.
 pub struct SemgrepTaintRule {
     pub id: String,
@@ -581,6 +631,19 @@ impl TaintFindingView {
             hops: f.hops,
         }
     }
+    fn from_php(f: php_taint::TaintFinding) -> Self {
+        Self {
+            sink_start_byte: f.sink_start_byte,
+            sink_line: f.sink_line,
+            sink_column: f.sink_column,
+            sink_end_line: f.sink_end_line,
+            sink_end_column: f.sink_end_column,
+            source_description: f.source_description,
+            sink_description: f.sink_description,
+            source_line: f.source_line,
+            hops: f.hops,
+        }
+    }
 }
 
 impl Rule for SemgrepTaintRule {
@@ -669,6 +732,13 @@ impl Rule for SemgrepTaintRule {
                 ruby_taint::analyze_tree(tree.root_node(), source, &spec, None)
                     .into_iter()
                     .map(TaintFindingView::from_ruby)
+                    .collect()
+            }
+            Language::Php => {
+                let spec = to_php_spec(&self.spec);
+                php_taint::analyze_tree(tree.root_node(), source, &spec, None)
+                    .into_iter()
+                    .map(TaintFindingView::from_php)
                     .collect()
             }
             _ => Vec::new(),
@@ -781,6 +851,10 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                         detected = Some(Language::Ruby);
                         break;
                     }
+                    "php" => {
+                        detected = Some(Language::Php);
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -788,7 +862,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                 Some(l) => l,
                 None => {
                     return TaintRuleParse::Skip(format!(
-                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, Kotlin, and Ruby are supported",
+                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, Kotlin, Ruby, and PHP are supported",
                         id
                     ));
                 }
@@ -1184,6 +1258,25 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
         });
     }
 
+    // ── PHP-style bare variable: `$_GET`, `$_POST`, `$_REQUEST`, etc. ──────
+    //
+    // PHP superglobals and user-defined variables start with `$` followed by
+    // a valid identifier. When a Semgrep rule for PHP uses a pattern like
+    // `$_GET` as a source, `is_dotted_identifier` fails (because `$` is not
+    // an ASCII letter or underscore). We handle this explicitly BEFORE the
+    // `is_dotted_identifier` guard: a bare `$name` pattern (no call parens,
+    // no dots, no spaces) is compiled as `ParamName` for source roles. This
+    // allows PHP taint rules to use `pattern: $_GET` as a source.
+    if is_php_variable(pat) {
+        return match role {
+            MatcherRole::Source => Some(GenericMatcher::ParamName {
+                names: vec![pat.to_string()],
+                description: format!("untrusted `{}` input", pat),
+            }),
+            MatcherRole::Sink | MatcherRole::Sanitizer => None,
+        };
+    }
+
     // ── No parens: identifier or attribute chain ────────────────────────
     if !is_dotted_identifier(pat) {
         return None;
@@ -1335,6 +1428,26 @@ fn is_identifier(s: &str) -> bool {
         _ => return false,
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// True when `s` is a PHP variable: `$` followed by a valid identifier.
+///
+/// Examples: `$_GET`, `$_POST`, `$request`, `$cmd`.
+///
+/// This is a SOURCE-only shape — there is no meaningful PHP sink that is
+/// just a bare variable name.
+fn is_php_variable(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some('$') => {}
+        _ => return false,
+    }
+    // After `$`, the rest must be a valid PHP identifier: [A-Za-z_][A-Za-z0-9_]*
+    let rest: &str = &s[1..];
+    if rest.is_empty() {
+        return false;
+    }
+    is_identifier(rest)
 }
 
 fn map_severity(s: &str) -> Severity {
@@ -2874,6 +2987,135 @@ pattern-sinks:
             TaintRuleParse::Compiled(_) => {
                 panic!("expected Skip when patterns: block has no expressible matchers")
             }
+            TaintRuleParse::NotTaint => panic!("expected taint rule"),
+        }
+    }
+
+    // ── Bridge-level (end-to-end) tests for PHP taint ────────────────────────
+    //
+    // These compile a rule through `parse_taint_rule` (the SAME path the CLI
+    // uses) where the source is a bare identifier (`$_GET`) with no parens.
+    // The bridge compiles those to `GenericMatcher::ParamName`, which is the
+    // path that was previously broken end-to-end for other languages.
+    // We assert the sink line and that a sanitized variant produces no finding.
+
+    /// `$_GET['cmd'] → system($c)` via the bare-identifier `$_GET` source.
+    #[test]
+    fn php_bridge_bare_get_source_to_system_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: php-get-cmdi
+mode: taint
+languages: [php]
+severity: ERROR
+message: "Tainted $_GET reaches system"
+pattern-sources:
+  - pattern: $_GET
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        let src = "<?php\nfunction handle() {\n  $c = $_GET['cmd'];\n  system($c);\n}\n";
+        let tree = parse_file(src, Language::Php).expect("PHP fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for $_GET['cmd'] -> system, got {:?}",
+            findings
+        );
+        assert_eq!(
+            findings[0].line, 4,
+            "finding should be at the system() sink line"
+        );
+    }
+
+    /// A sanitizer (escapeshellarg) between a bare-identifier `$_GET` source
+    /// and the sink blocks the flow end-to-end.
+    #[test]
+    fn php_bridge_bare_get_source_sanitized_produces_no_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: php-get-cmdi-sanitized
+mode: taint
+languages: [php]
+severity: ERROR
+message: "Tainted $_GET reaches system"
+pattern-sources:
+  - pattern: $_GET
+pattern-sanitizers:
+  - pattern: escapeshellarg($X)
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        let src =
+            "<?php\nfunction handle() {\n  $c = escapeshellarg($_GET['cmd']);\n  system($c);\n}\n";
+        let tree = parse_file(src, Language::Php).expect("PHP fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "sanitized $_GET flow must produce no finding, got {:?}",
+            findings
+        );
+    }
+
+    /// Near-miss: `$_GET` is assigned but the literal `'ls'` is passed to the
+    /// sink — must produce no finding.
+    #[test]
+    fn php_bridge_bare_get_source_near_miss_no_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: php-get-cmdi-nearmiss
+mode: taint
+languages: [php]
+severity: ERROR
+message: "Tainted $_GET reaches system"
+pattern-sources:
+  - pattern: $_GET
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        let src = "<?php\nfunction handle() {\n  $tainted = $_GET['cmd'];\n  $safe = 'ls';\n  system($safe);\n}\n";
+        let tree = parse_file(src, Language::Php).expect("PHP fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "untainted argument must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// PHP taint rule with `languages: [php]` compiles cleanly.
+    #[test]
+    fn taint_rule_with_php_language_compiles() {
+        let yaml = r#"
+id: php-taint
+mode: taint
+languages: [php]
+severity: ERROR
+message: m
+pattern-sources: [{pattern: $_GET}]
+pattern-sinks: [{pattern: system($X)}]
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Compiled(r) => {
+                assert_eq!(r.lang, Language::Php);
+                assert_eq!(r.spec.sources.len(), 1);
+                assert_eq!(r.spec.sinks.len(), 1);
+            }
+            TaintRuleParse::Skip(msg) => panic!("unexpected skip: {}", msg),
             TaintRuleParse::NotTaint => panic!("expected taint rule"),
         }
     }
