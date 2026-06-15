@@ -62,6 +62,11 @@ pub enum Language {
     HAProxyConf,
     Dockerfile,
     Manifest,
+    Bash,
+    Ocaml,
+    Scala,
+    Elixir,
+    Json,
     /// Pseudo-language for Semgrep `languages: [regex]` rules.
     ///
     /// A `Regex`-language rule carries only `pattern-regex` / `pattern-not-regex`
@@ -94,6 +99,11 @@ impl std::fmt::Display for Language {
             Language::HAProxyConf => write!(f, "haproxyconf"),
             Language::Dockerfile => write!(f, "dockerfile"),
             Language::Manifest => write!(f, "manifest"),
+            Language::Bash => write!(f, "bash"),
+            Language::Ocaml => write!(f, "ocaml"),
+            Language::Scala => write!(f, "scala"),
+            Language::Elixir => write!(f, "elixir"),
+            Language::Json => write!(f, "json"),
             Language::Regex => write!(f, "regex"),
         }
     }

@@ -1611,6 +1611,11 @@ fn map_language(lang_str: &str) -> Option<Language> {
         "solidity" | "sol" => Some(Language::Solidity),
         "yaml" | "yml" => Some(Language::Yaml),
         "dockerfile" | "docker" => Some(Language::Dockerfile),
+        "bash" | "sh" => Some(Language::Bash),
+        "ocaml" | "ml" | "mli" => Some(Language::Ocaml),
+        "scala" | "sc" => Some(Language::Scala),
+        "elixir" | "ex" | "exs" => Some(Language::Elixir),
+        "json" => Some(Language::Json),
         _ => None,
     }
 }
@@ -1660,6 +1665,11 @@ const REGEX_MODE_ALL_LANGUAGES: &[Language] = &[
     Language::HAProxyConf,
     Language::Dockerfile,
     Language::Manifest,
+    Language::Bash,
+    Language::Ocaml,
+    Language::Scala,
+    Language::Elixir,
+    Language::Json,
 ];
 
 /// A compiled Semgrep `languages: [regex]` rule.
@@ -3747,5 +3757,90 @@ rules:
             !findings.is_empty(),
             "pattern-regex ':latest' must match 'ubuntu:latest' in Dockerfile"
         );
+    }
+
+    /// A `languages: [bash]` rule loads successfully.
+    #[test]
+    fn test_bash_language_loads() {
+        let yaml = r#"
+rules:
+  - id: bash-eval-call
+    pattern: eval $X
+    message: Avoid eval in bash
+    severity: WARNING
+    languages: [bash]
+"#;
+        let f = make_yaml(yaml);
+        let rules =
+            parse_semgrep_file(f.path()).expect("bash language rule must load without error");
+        assert_eq!(rules.len(), 1, "expected one rule for bash language");
+    }
+
+    /// A `languages: [ocaml]` rule loads successfully.
+    #[test]
+    fn test_ocaml_language_loads() {
+        let yaml = r#"
+rules:
+  - id: ocaml-pattern
+    pattern-regex: 'Sys\.command'
+    message: Avoid Sys.command
+    severity: WARNING
+    languages: [ocaml]
+"#;
+        let f = make_yaml(yaml);
+        let rules =
+            parse_semgrep_file(f.path()).expect("ocaml language rule must load without error");
+        assert!(!rules.is_empty(), "expected rules for ocaml language");
+    }
+
+    /// A `languages: [scala]` rule loads successfully.
+    #[test]
+    fn test_scala_language_loads() {
+        let yaml = r#"
+rules:
+  - id: scala-pattern
+    pattern-regex: 'Runtime\.getRuntime\(\)'
+    message: Avoid Runtime.getRuntime
+    severity: WARNING
+    languages: [scala]
+"#;
+        let f = make_yaml(yaml);
+        let rules =
+            parse_semgrep_file(f.path()).expect("scala language rule must load without error");
+        assert!(!rules.is_empty(), "expected rules for scala language");
+    }
+
+    /// A `languages: [elixir]` rule loads successfully.
+    #[test]
+    fn test_elixir_language_loads() {
+        let yaml = r#"
+rules:
+  - id: elixir-pattern
+    pattern: System.cmd($CMD, ...)
+    message: Avoid System.cmd with untrusted input
+    severity: WARNING
+    languages: [elixir]
+"#;
+        let f = make_yaml(yaml);
+        let rules =
+            parse_semgrep_file(f.path()).expect("elixir language rule must load without error");
+        assert_eq!(rules.len(), 1, "expected one rule for elixir language");
+    }
+
+    /// A `languages: [json]` rule loads successfully.
+    #[test]
+    fn test_json_language_loads() {
+        let yaml = r#"
+rules:
+  - id: json-pattern
+    pattern-regex: '"password"\s*:\s*"[^"]+"'
+    message: Hardcoded password in JSON
+    severity: ERROR
+    languages: [json]
+"#;
+        let f = make_yaml(yaml);
+        let rules =
+            parse_semgrep_file(f.path()).expect("json language rule must load without error");
+        assert!(!rules.is_empty(), "expected rules for json language");
     }
 }

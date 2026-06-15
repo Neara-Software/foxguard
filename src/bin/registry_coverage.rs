@@ -129,6 +129,22 @@ fn language_supported(lang: &str) -> bool {
             // Dockerfile grammar (tree-sitter-containerfile).
             | "dockerfile"
             | "docker"
+            // Bash grammar (tree-sitter-bash).
+            | "bash"
+            | "sh"
+            // OCaml grammar (tree-sitter-ocaml).
+            | "ocaml"
+            | "ml"
+            | "mli"
+            // Scala grammar (tree-sitter-scala).
+            | "scala"
+            | "sc"
+            // Elixir grammar (tree-sitter-elixir).
+            | "elixir"
+            | "ex"
+            | "exs"
+            // JSON grammar (tree-sitter-json).
+            | "json"
     )
 }
 
@@ -861,18 +877,19 @@ rules:
 
     #[test]
     fn unsupported_language_is_skipped() {
+        // Apex has no supported grammar — it must be skipped.
         let r = rule(
             r#"
 rules:
-  - id: elixir-rule
+  - id: apex-rule
     pattern: foo
     message: m
     severity: INFO
-    languages: [elixir]
+    languages: [apex]
 "#,
         );
         match classify_rule(&r) {
-            Outcome::Skipped(reason) => assert_eq!(reason, "unsupported language: elixir"),
+            Outcome::Skipped(reason) => assert_eq!(reason, "unsupported language: apex"),
             other => panic!("expected skip, got {other:?}"),
         }
     }
