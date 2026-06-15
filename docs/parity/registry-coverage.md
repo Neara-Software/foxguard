@@ -12,10 +12,10 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 | Rule files scanned | 2070 |
 | Files with YAML parse errors | 0 |
 | Total rules | 2144 |
-| Rules loaded OK | 1540 (71.8%) |
-| Rules skipped | 604 (28.2%) |
+| Rules loaded OK | 1559 (72.7%) |
+| Rules skipped | 585 (27.3%) |
 
-**Headline load rate: 71.8%** (1540 / 2144 rules).
+**Headline load rate: 72.7%** (1559 / 2144 rules).
 
 ## Skip-reason histogram
 
@@ -23,31 +23,31 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 130 | 21.5% | 6.1% |
-| `unsupported language: yaml` | 100 | 16.6% | 4.7% |
-| `generic mode (languages: [generic])` | 78 | 12.9% | 3.6% |
-| `unsupported language: solidity` | 47 | 7.8% | 2.2% |
-| `unsupported language: dockerfile` | 39 | 6.5% | 1.8% |
-| `unsupported language: ocaml` | 34 | 5.6% | 1.6% |
-| `mode: taint (unsupported language: ruby)` | 33 | 5.5% | 1.5% |
-| `loader rejected (other)` | 30 | 5.0% | 1.4% |
-| `mode: taint (unsupported language: php)` | 21 | 3.5% | 1.0% |
-| `unsupported language: scala` | 18 | 3.0% | 0.8% |
-| `mode: taint (unsupported language: csharp)` | 11 | 1.8% | 0.5% |
+| `mode: taint (unsupported shape)` | 130 | 22.2% | 6.1% |
+| `unsupported language: yaml` | 100 | 17.1% | 4.7% |
+| `generic mode (languages: [generic])` | 78 | 13.3% | 3.6% |
+| `unsupported language: solidity` | 47 | 8.0% | 2.2% |
+| `unsupported language: dockerfile` | 39 | 6.7% | 1.8% |
+| `unsupported language: ocaml` | 34 | 5.8% | 1.6% |
+| `mode: taint (unsupported language: ruby)` | 33 | 5.6% | 1.5% |
+| `mode: taint (unsupported language: php)` | 21 | 3.6% | 1.0% |
+| `unsupported language: scala` | 18 | 3.1% | 0.8% |
+| `loader rejected (other)` | 12 | 2.1% | 0.6% |
+| `mode: taint (unsupported language: csharp)` | 11 | 1.9% | 0.5% |
 | `unsupported language: apex` | 9 | 1.5% | 0.4% |
 | `unsupported language: bash` | 9 | 1.5% | 0.4% |
 | `unsupported language: elixir` | 7 | 1.2% | 0.3% |
 | `unsupported language: json` | 7 | 1.2% | 0.3% |
-| `mode: taint (unsupported language: scala)` | 5 | 0.8% | 0.2% |
-| `unsupported language: clojure` | 5 | 0.8% | 0.2% |
+| `mode: taint (unsupported language: scala)` | 5 | 0.9% | 0.2% |
+| `unsupported language: clojure` | 5 | 0.9% | 0.2% |
 | `unsupported language: html` | 4 | 0.7% | 0.2% |
 | `mode: taint (unsupported language: apex)` | 3 | 0.5% | 0.1% |
 | `mode: taint (unsupported language: bash)` | 3 | 0.5% | 0.1% |
 | `mode: taint (unsupported language: solidity)` | 3 | 0.5% | 0.1% |
 | `taint: pattern-propagators` | 3 | 0.5% | 0.1% |
-| `unsupported language: hcl` | 2 | 0.3% | 0.1% |
 | `mode: taint (unsupported language: swift)` | 1 | 0.2% | 0.0% |
 | `unsupported language: dart` | 1 | 0.2% | 0.0% |
+| `unsupported language: hcl` | 1 | 0.2% | 0.0% |
 | `unsupported language: xml` | 1 | 0.2% | 0.0% |
 
 ## Priority order — operator/feature backlog
@@ -57,10 +57,10 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 | Rank | Capability to add | Rules unlocked |
 |---:|---|---:|
 | 1 | `mode: taint (unsupported shape)` | 130 |
-| 2 | `loader rejected (other)` | 30 |
+| 2 | `loader rejected (other)` | 12 |
 | 3 | `taint: pattern-propagators` | 3 |
 
-Operator/feature gaps account for **163 rules** (7.6% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **145 rules** (6.8% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
 
 ## Priority order — missing language grammars
 
@@ -87,12 +87,12 @@ Rules foxguard cannot run because it has no tree-sitter grammar for the target l
 | 17 | `mode: taint (unsupported language: apex)` | 3 |
 | 18 | `mode: taint (unsupported language: bash)` | 3 |
 | 19 | `mode: taint (unsupported language: solidity)` | 3 |
-| 20 | `unsupported language: hcl` | 2 |
-| 21 | `mode: taint (unsupported language: swift)` | 1 |
-| 22 | `unsupported language: dart` | 1 |
+| 20 | `mode: taint (unsupported language: swift)` | 1 |
+| 21 | `unsupported language: dart` | 1 |
+| 22 | `unsupported language: hcl` | 1 |
 | 23 | `unsupported language: xml` | 1 |
 
-Missing-grammar gaps account for **441 rules** (20.6% of all rules).
+Missing-grammar gaps account for **440 rules** (20.5% of all rules).
 
 ## Per-language breakdown
 
@@ -100,22 +100,22 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 
 | Language | Total | Loaded | Skipped | Load rate |
 |---|---:|---:|---:|---:|
-| python | 423 | 370 | 53 | 87.5% |
-| hcl | 359 | 357 | 2 | 99.4% |
-| javascript | 243 | 185 | 58 | 76.1% |
-| regex | 237 | 224 | 13 | 94.5% |
-| java | 131 | 109 | 22 | 83.2% |
+| python | 423 | 377 | 46 | 89.1% |
+| hcl | 359 | 358 | 1 | 99.7% |
+| javascript | 243 | 190 | 53 | 78.2% |
+| regex | 237 | 225 | 12 | 94.9% |
+| java | 131 | 110 | 21 | 84.0% |
 | generic | 103 | 25 | 78 | 24.3% |
 | yaml | 100 | 0 | 100 | 0.0% |
 | go | 97 | 84 | 13 | 86.6% |
-| ruby | 92 | 57 | 35 | 62.0% |
-| php | 63 | 41 | 22 | 65.1% |
+| ruby | 92 | 59 | 33 | 64.1% |
+| php | 63 | 42 | 21 | 66.7% |
 | solidity | 50 | 0 | 50 | 0.0% |
 | csharp | 48 | 37 | 11 | 77.1% |
 | dockerfile | 39 | 0 | 39 | 0.0% |
 | ocaml | 34 | 0 | 34 | 0.0% |
 | scala | 23 | 0 | 23 | 0.0% |
-| c | 16 | 15 | 1 | 93.8% |
+| c | 16 | 16 | 0 | 100.0% |
 | kotlin | 15 | 15 | 0 | 100.0% |
 | bash | 13 | 1 | 12 | 7.7% |
 | apex | 12 | 0 | 12 | 0.0% |
@@ -133,7 +133,6 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 
 - **apex**: `unsupported language: apex` (9), `mode: taint (unsupported language: apex)` (3)
 - **bash**: `unsupported language: bash` (9), `mode: taint (unsupported language: bash)` (3)
-- **c**: `loader rejected (other)` (1)
 - **clojure**: `unsupported language: clojure` (5)
 - **csharp**: `mode: taint (unsupported language: csharp)` (11)
 - **dart**: `unsupported language: dart` (1)
@@ -141,16 +140,16 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **elixir**: `unsupported language: elixir` (7)
 - **generic**: `generic mode (languages: [generic])` (78)
 - **go**: `mode: taint (unsupported shape)` (13)
-- **hcl**: `unsupported language: hcl` (2)
+- **hcl**: `unsupported language: hcl` (1)
 - **html**: `unsupported language: html` (4)
-- **java**: `mode: taint (unsupported shape)` (18), `taint: pattern-propagators` (3), `loader rejected (other)` (1)
-- **javascript**: `mode: taint (unsupported shape)` (53), `loader rejected (other)` (5)
+- **java**: `mode: taint (unsupported shape)` (18), `taint: pattern-propagators` (3)
+- **javascript**: `mode: taint (unsupported shape)` (53)
 - **json**: `unsupported language: json` (7)
 - **ocaml**: `unsupported language: ocaml` (34)
-- **php**: `mode: taint (unsupported language: php)` (21), `loader rejected (other)` (1)
-- **python**: `mode: taint (unsupported shape)` (46), `loader rejected (other)` (7)
-- **regex**: `loader rejected (other)` (13)
-- **ruby**: `mode: taint (unsupported language: ruby)` (33), `loader rejected (other)` (2)
+- **php**: `mode: taint (unsupported language: php)` (21)
+- **python**: `mode: taint (unsupported shape)` (46)
+- **regex**: `loader rejected (other)` (12)
+- **ruby**: `mode: taint (unsupported language: ruby)` (33)
 - **scala**: `unsupported language: scala` (18), `mode: taint (unsupported language: scala)` (5)
 - **solidity**: `unsupported language: solidity` (47), `mode: taint (unsupported language: solidity)` (3)
 - **swift**: `mode: taint (unsupported language: swift)` (1)
