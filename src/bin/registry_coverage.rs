@@ -121,6 +121,8 @@ fn language_supported(lang: &str) -> bool {
             | "tf"
             | "solidity"
             | "sol"
+            | "yaml"
+            | "yml"
             // `languages: [regex]` rules are handled by the regex-mode engine
             // (pure pattern-regex against raw text, no tree-sitter parse needed).
             | "regex"
@@ -870,6 +872,21 @@ rules:
             Outcome::Skipped(reason) => assert_eq!(reason, "unsupported language: elixir"),
             other => panic!("expected skip, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn yaml_language_loads() {
+        let r = rule(
+            r#"
+rules:
+  - id: yaml-rule
+    pattern: "key: $VALUE"
+    message: found key
+    severity: INFO
+    languages: [yaml]
+"#,
+        );
+        assert!(matches!(classify_rule(&r), Outcome::Loaded));
     }
 
     #[test]

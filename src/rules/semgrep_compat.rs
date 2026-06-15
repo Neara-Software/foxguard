@@ -1609,6 +1609,7 @@ fn map_language(lang_str: &str) -> Option<Language> {
         "c" => Some(Language::C),
         "hcl" | "terraform" | "tf" => Some(Language::Hcl),
         "solidity" | "sol" => Some(Language::Solidity),
+        "yaml" | "yml" => Some(Language::Yaml),
         _ => None,
     }
 }
@@ -1652,6 +1653,7 @@ const REGEX_MODE_ALL_LANGUAGES: &[Language] = &[
     Language::C,
     Language::Hcl,
     Language::Solidity,
+    Language::Yaml,
     Language::NginxConf,
     Language::ApacheConf,
     Language::HAProxyConf,

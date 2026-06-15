@@ -5375,9 +5375,12 @@ mod config_files {
         // Regular .txt files should not match
         assert_eq!(detect_language(Path::new("notes.txt")), None);
         assert_eq!(detect_language(Path::new("Cargo.toml")), None);
-        // Regular .json and .yaml should not match
+        // Regular .json should not match; .yaml now routes to Language::Yaml
         assert_eq!(detect_language(Path::new("config.json")), None);
-        assert_eq!(detect_language(Path::new("config.yaml")), None);
+        assert_eq!(
+            detect_language(Path::new("config.yaml")),
+            Some(Language::Yaml)
+        );
     }
 
     fn osv_fixture(
