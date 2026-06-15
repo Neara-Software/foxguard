@@ -53,6 +53,8 @@ const ALL_LANGUAGES: &[Language] = &[
     Language::Swift,
     Language::Kotlin,
     Language::C,
+    Language::Hcl,
+    Language::Solidity,
     Language::NginxConf,
     Language::ApacheConf,
     Language::HAProxyConf,

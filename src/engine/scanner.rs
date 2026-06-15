@@ -350,6 +350,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "kt" | "kts" => Some(Language::Kotlin),
         "c" | "h" => Some(Language::C),
         "tf" | "hcl" | "tfvars" => Some(Language::Hcl),
+        "sol" => Some(Language::Solidity),
         _ => None,
     }
 }
@@ -710,6 +711,7 @@ fn comment_markers(language: Language) -> &'static [&'static str] {
     match language {
         Language::Python | Language::Ruby => &["#"],
         Language::Hcl => &["#", "//"],
+        Language::Solidity => &["//", "/*"],
         Language::Php => &["//", "#"],
         Language::JavaScript
         | Language::Go

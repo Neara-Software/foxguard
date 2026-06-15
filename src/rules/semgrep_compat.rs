@@ -1608,6 +1608,7 @@ fn map_language(lang_str: &str) -> Option<Language> {
         "kotlin" | "kt" => Some(Language::Kotlin),
         "c" => Some(Language::C),
         "hcl" | "terraform" | "tf" => Some(Language::Hcl),
+        "solidity" | "sol" => Some(Language::Solidity),
         _ => None,
     }
 }
@@ -1650,6 +1651,7 @@ const REGEX_MODE_ALL_LANGUAGES: &[Language] = &[
     Language::Kotlin,
     Language::C,
     Language::Hcl,
+    Language::Solidity,
     Language::NginxConf,
     Language::ApacheConf,
     Language::HAProxyConf,

@@ -116,6 +116,11 @@ fn language_supported(lang: &str) -> bool {
             | "kotlin"
             | "kt"
             | "c"
+            | "hcl"
+            | "terraform"
+            | "tf"
+            | "solidity"
+            | "sol"
             // `languages: [regex]` rules are handled by the regex-mode engine
             // (pure pattern-regex against raw text, no tree-sitter parse needed).
             | "regex"
@@ -854,15 +859,15 @@ rules:
         let r = rule(
             r#"
 rules:
-  - id: hcl-rule
+  - id: elixir-rule
     pattern: foo
     message: m
     severity: INFO
-    languages: [hcl]
+    languages: [elixir]
 "#,
         );
         match classify_rule(&r) {
-            Outcome::Skipped(reason) => assert_eq!(reason, "unsupported language: hcl"),
+            Outcome::Skipped(reason) => assert_eq!(reason, "unsupported language: elixir"),
             other => panic!("expected skip, got {other:?}"),
         }
     }
