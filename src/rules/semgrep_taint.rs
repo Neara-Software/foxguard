@@ -13,16 +13,22 @@
 //!   Other languages are rejected with a warning and the rule is skipped;
 //!   non-taint rules fall through to the regular Semgrep bridge.
 //! - `pattern-sources`, `pattern-sinks`, `pattern-sanitizers` as lists of
-//!   single-`pattern:` entries *or* `pattern-either:` lists (which may nest
-//!   recursively and flatten into multiple matchers for the same role).
+//!   single-`pattern:` entries, `pattern-either:` lists (which may nest
+//!   recursively and flatten into multiple matchers for the same role), **or**
+//!   `patterns:` AND-blocks (see below).
+//! - `patterns:` AND-blocks inside source/sink/sanitizer entries: the bridge
+//!   extracts all `pattern:` and `pattern-either:` sub-items as expressible
+//!   matchers. Constraint-only sub-items (`pattern-inside:`, `pattern-not:`,
+//!   `focus-metavariable:`, `metavariable-*:`) are dropped with a per-key
+//!   warning (documented broadening — see COMPATIBILITY.md). If the block
+//!   produces at least one expressible matcher, the entry is loaded; otherwise
+//!   the entry is warn-skipped without aborting the whole rule.
 //! - Severity mapping via the same `map_severity` used by the pattern-rule
 //!   bridge (`ERROR` → Critical, `WARNING` → High, `INFO` → Medium).
 //! - `metadata.cwe` propagated to findings.
 //!
 //! # Unsupported (rule is skipped with a warning)
 //!
-//! - `pattern-inside:`, `metavariable-pattern:`, `patterns:` inside
-//!   source/sink blocks.
 //! - Any `mode: taint` rule that does not target Python, JavaScript/TypeScript,
 //!   Go, Java, C, or Kotlin.
 //! - Any `pattern:` string whose shape is not one of:
@@ -46,9 +52,9 @@
 //!     engines include the matcher in the compiled spec but silently ignore
 //!     it. Only valid as a sink or sanitizer shape; rejected as a source.
 //!
-//! Unsupported patterns inside an otherwise-loadable rule cause the *whole
-//! rule* to be skipped (with an explanatory warning) so the user sees a
-//! clear signal rather than a silently-degraded match surface.
+//! A `patterns:` entry with NO expressible matchers (only constraint-only
+//! sub-items) is warn-skipped. If all source or sink entries are warn-skipped
+//! and none survive, the whole rule is skipped.
 
 use crate::rules::c_taint;
 use crate::rules::common::get_source_line;
@@ -824,8 +830,9 @@ fn compile_matcher_list(
 }
 
 /// Compile a single entry from a source/sink/sanitizer list, flattening
-/// nested `pattern-either:` blocks. Invalid entries emit a warning and are
-/// skipped rather than aborting the whole rule.
+/// nested `pattern-either:` blocks, and extracting expressible matchers from
+/// `patterns:` AND-blocks. Invalid entries emit a warning and are skipped
+/// rather than aborting the whole rule.
 fn compile_entry(
     entry: &YamlValue,
     role: MatcherRole,
@@ -846,7 +853,7 @@ fn compile_entry(
     // don't support inside taint blocks — warn and skip.
     if map.len() != 1 {
         eprintln!(
-            "Warning: taint rule `{}` {} entry has {} keys (expected a single `pattern:` or `pattern-either:`); skipping entry",
+            "Warning: taint rule `{}` {} entry has {} keys (expected a single `pattern:`, `pattern-either:`, or `patterns:`); skipping entry",
             rule_id,
             role.label(),
             map.len(),
@@ -896,9 +903,25 @@ fn compile_entry(
                 compile_entry(nested, role, rule_id, out);
             }
         }
+        Some("patterns") => {
+            // `patterns:` is a Semgrep AND-block: all sub-items must hold
+            // simultaneously. foxguard's taint engine cannot express all AND
+            // semantics (no nested scope / contextual constraints), so we
+            // apply a graceful-degradation strategy:
+            //
+            // - Extract every `pattern:` and `pattern-either:` sub-item and
+            //   compile them as expressible node-shape matchers.
+            // - Drop constraint-only sub-items (`pattern-inside:`,
+            //   `pattern-not:`, `focus-metavariable:`, `metavariable-*:`)
+            //   with a per-key warning. This makes the compiled matcher
+            //   slightly BROADER than the original Semgrep rule — documented
+            //   in COMPATIBILITY.md.
+            // - If no expressible matcher results, warn-skip the whole entry.
+            compile_patterns_block(v, role, rule_id, out);
+        }
         Some(other) => {
             eprintln!(
-                "Warning: taint rule `{}` {} uses unsupported key `{}` (only `pattern:` and `pattern-either:` are supported); skipping entry",
+                "Warning: taint rule `{}` {} uses unsupported key `{}` (only `pattern:`, `pattern-either:`, and `patterns:` are supported); skipping entry",
                 rule_id,
                 role.label(),
                 other
@@ -911,6 +934,101 @@ fn compile_entry(
                 role.label()
             );
         }
+    }
+}
+
+/// The set of sub-item keys inside a `patterns:` block that are purely
+/// constraint/narrowing operators — they refine the match scope but do not
+/// themselves name a code node shape. The taint engine has no equivalent;
+/// they are dropped with a warning, making the compiled matcher broader.
+const PATTERNS_CONSTRAINT_KEYS: &[&str] = &[
+    "pattern-inside",
+    "pattern-not-inside",
+    "pattern-not",
+    "pattern-not-regex",
+    "focus-metavariable",
+    "metavariable-regex",
+    "metavariable-comparison",
+    "metavariable-pattern",
+    "metavariable-analysis",
+    "metavariable-type",
+];
+
+/// Compile a `patterns:` AND-block value (the list under the `patterns:` key)
+/// by extracting all expressible `pattern:` and `pattern-either:` sub-items.
+/// Constraint-only sub-items are dropped with a warning. If no expressible
+/// matcher is produced the whole entry is warn-skipped.
+fn compile_patterns_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    rule_id: &str,
+    out: &mut Vec<GenericMatcher>,
+) {
+    let Some(inner) = v.as_sequence() else {
+        eprintln!(
+            "Warning: taint rule `{}` {} `patterns:` value must be a list; skipping entry",
+            rule_id,
+            role.label()
+        );
+        return;
+    };
+
+    if inner.is_empty() {
+        eprintln!(
+            "Warning: taint rule `{}` {} `patterns:` block is empty; skipping entry",
+            rule_id,
+            role.label()
+        );
+        return;
+    }
+
+    let before = out.len();
+
+    for sub in inner {
+        let Some(sub_map) = sub.as_mapping() else {
+            continue;
+        };
+        if sub_map.len() != 1 {
+            continue;
+        }
+        let (sk, sv) = sub_map.iter().next().expect("len == 1");
+        match sk.as_str() {
+            Some("pattern") | Some("pattern-either") => {
+                // Recursively compile via the normal entry path.
+                compile_entry(sub, role, rule_id, out);
+            }
+            Some(constraint_key) if PATTERNS_CONSTRAINT_KEYS.contains(&constraint_key) => {
+                // Constraint-only key — drop with a warning (documented broadening).
+                eprintln!(
+                    "Warning: taint rule `{}` {} `patterns:` block contains `{}` \
+                     which foxguard cannot enforce inside a taint source/sink entry; \
+                     dropping constraint (matcher will be broader than the original rule)",
+                    rule_id,
+                    role.label(),
+                    constraint_key
+                );
+                let _ = sv; // sv is not used beyond the warning
+            }
+            Some(other) => {
+                eprintln!(
+                    "Warning: taint rule `{}` {} `patterns:` block contains unknown key `{}`; \
+                     skipping sub-item",
+                    rule_id,
+                    role.label(),
+                    other
+                );
+            }
+            None => {}
+        }
+    }
+
+    if out.len() == before {
+        eprintln!(
+            "Warning: taint rule `{}` {} `patterns:` block produced no expressible matchers; \
+             skipping entry",
+            rule_id,
+            role.label()
+        );
     }
 }
 
@@ -1891,24 +2009,9 @@ pattern-sanitizers:
 
     #[test]
     fn unknown_composite_still_rejected() {
-        // `patterns:` inside a source block → entry is skipped with a
-        // warning. With no other source entries the whole rule is skipped.
-        let yaml = r#"
-id: x
-mode: taint
-languages: [python]
-severity: ERROR
-message: m
-pattern-sources:
-  - patterns:
-      - pattern: request.data
-pattern-sinks:
-  - pattern: pickle.loads($X)
-"#;
-        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
-        assert!(matches!(parse_taint_rule(&v), TaintRuleParse::Skip(_)));
-
-        // `pattern-inside:` likewise rejected per-entry.
+        // `pattern-inside:` as a standalone top-level source entry (not inside
+        // a `patterns:` block) — unsupported key, the entry is warn-skipped.
+        // With no other source entries the whole rule is skipped.
         let yaml2 = r#"
 id: x
 mode: taint
@@ -1925,9 +2028,9 @@ pattern-sinks:
         let v2: YamlValue = serde_yaml_ng::from_str(yaml2).unwrap();
         assert!(matches!(parse_taint_rule(&v2), TaintRuleParse::Skip(_)));
 
-        // But a mix where one entry is `patterns:` and another is a plain
-        // `pattern:` still compiles — the bad entry is dropped, the good
-        // one survives.
+        // A mix where one entry is an unsupported key and another is a plain
+        // `pattern:` still compiles — the bad entry is dropped, the good one
+        // survives.
         let r = compiled(
             r#"
 id: x
@@ -1936,8 +2039,9 @@ languages: [python]
 severity: ERROR
 message: m
 pattern-sources:
-  - patterns:
-      - pattern: request.data
+  - pattern-inside: |
+      def $F(...):
+        ...
   - pattern: request.form
 pattern-sinks:
   - pattern: pickle.loads($X)
@@ -2270,5 +2374,155 @@ function handler(req) {
             "textContent assignment should NOT trigger the innerHTML rule, got {:?}",
             findings
         );
+    }
+
+    // ── `patterns:` AND-block inside source/sink ──────────────────────────
+
+    /// (a) source/sink using single-pattern `patterns:` block — must produce a
+    /// source→sink finding just like a bare `pattern:` entry would.
+    #[test]
+    fn patterns_block_single_pattern_source_to_sink_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: patterns-block-single-pattern
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted data reaches pickle.loads"
+pattern-sources:
+  - patterns:
+      - pattern: request.data
+pattern-sinks:
+  - patterns:
+      - pattern: pickle.loads($X)
+"#,
+        );
+        // sources and sinks must both compile from the patterns: block
+        assert_eq!(rule.spec.sources.len(), 1, "source from patterns: block");
+        assert_eq!(rule.spec.sinks.len(), 1, "sink from patterns: block");
+
+        let src = r#"
+import pickle
+def view(request):
+    data = request.data
+    result = pickle.loads(data)
+    return result
+"#;
+        let tree = parse_file(src, Language::Python).expect("Python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "expected a finding for request.data -> pickle.loads flow, got none"
+        );
+    }
+
+    /// (b) `patterns:` block containing `pattern-either:` — must compile all
+    /// alternatives and match accordingly.
+    #[test]
+    fn patterns_block_with_pattern_either_compiles_all_alternatives() {
+        let r = compiled(
+            r#"
+id: patterns-block-pattern-either
+mode: taint
+languages: [python]
+severity: ERROR
+message: m
+pattern-sources:
+  - pattern: request.data
+pattern-sinks:
+  - patterns:
+      - pattern-either:
+          - pattern: pickle.loads($X)
+          - pattern: pickle.load($X)
+          - pattern: eval($X)
+"#,
+        );
+        // All three alternatives inside pattern-either inside patterns: must compile.
+        assert_eq!(
+            r.spec.sinks.len(),
+            3,
+            "expected 3 sink matchers from patterns: {{ pattern-either: [3] }}"
+        );
+    }
+
+    /// (c) `patterns:` block with an unsupported narrowing constraint still
+    /// compiles via the expressible matcher — documented broadening, no crash.
+    #[test]
+    fn patterns_block_with_unsupported_constraint_compiles_with_broadening() {
+        // This mirrors the real-world shape: event source narrowed by
+        // pattern-inside (which we cannot enforce), plus a focus-metavariable
+        // and pattern-either for the real node shape.
+        let r = compiled(
+            r#"
+id: patterns-block-broadening
+mode: taint
+languages: [python]
+severity: ERROR
+message: m
+pattern-sources:
+  - patterns:
+      - pattern-inside: |
+          def handler(event, context):
+            ...
+      - pattern: event
+pattern-sinks:
+  - patterns:
+      - focus-metavariable: $CMD
+      - pattern-either:
+          - pattern: os.system($CMD)
+          - pattern: os.popen($CMD)
+"#,
+        );
+        // Source: `event` from the patterns: block (pattern-inside dropped)
+        assert_eq!(
+            r.spec.sources.len(),
+            1,
+            "source compiled despite dropped pattern-inside"
+        );
+        // Sinks: os.system + os.popen from pattern-either (focus-metavariable dropped)
+        assert_eq!(
+            r.spec.sinks.len(),
+            2,
+            "sinks compiled despite dropped focus-metavariable"
+        );
+    }
+
+    /// (d) `patterns:` block with NO expressible matcher — warn-skips
+    /// gracefully without crashing. When all entries in a role are skipped the
+    /// whole rule is skipped.
+    #[test]
+    fn patterns_block_no_expressible_matcher_warn_skips_gracefully() {
+        // Only constraint-only keys inside the patterns: block → no matcher
+        // extracted → entry produces nothing → sources empty → whole rule skipped.
+        let yaml = r#"
+id: patterns-block-no-expressible
+mode: taint
+languages: [python]
+severity: ERROR
+message: m
+pattern-sources:
+  - patterns:
+      - pattern-inside: |
+          def handler(event, context):
+            ...
+      - focus-metavariable: $X
+pattern-sinks:
+  - pattern: pickle.loads($X)
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Skip(msg) => {
+                assert!(
+                    msg.contains("pattern-sources"),
+                    "skip message should mention pattern-sources: {msg}"
+                );
+            }
+            TaintRuleParse::Compiled(_) => {
+                panic!("expected Skip when patterns: block has no expressible matchers")
+            }
+            TaintRuleParse::NotTaint => panic!("expected taint rule"),
+        }
     }
 }

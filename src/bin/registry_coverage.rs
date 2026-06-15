@@ -281,32 +281,14 @@ fn classify_rule(rule: &Yaml) -> Outcome {
             // Even on supported langs, the taint bridge only accepts a narrow
             // source/sink shape. Detect operators it rejects inside the
             // source/sink/sanitizer blocks.
-            let mut taint_keys = Vec::new();
-            for block in ["pattern-sources", "pattern-sinks", "pattern-sanitizers"] {
-                if let Some(b) = rule.get(block) {
-                    collect_keys(b, &mut taint_keys);
-                }
-            }
-            // The taint bridge supports only `pattern` / `pattern-either`
-            // inside those blocks (see semgrep_taint.rs + COMPATIBILITY.md).
-            for k in &taint_keys {
-                if k == "patterns" {
-                    return Outcome::Skipped("taint: patterns: inside source/sink".to_string());
-                }
-                if k == "pattern-inside" || k == "pattern-not-inside" {
-                    return Outcome::Skipped("taint: pattern-inside in source/sink".to_string());
-                }
-                if k == "metavariable-pattern" {
-                    return Outcome::Skipped(
-                        "taint: metavariable-pattern in source/sink".to_string(),
-                    );
-                }
-                if k == "focus-metavariable" {
-                    return Outcome::Skipped(
-                        "taint: focus-metavariable in source/sink".to_string(),
-                    );
-                }
-            }
+            // The taint bridge supports `pattern` / `pattern-either` /
+            // `patterns:` inside those blocks (see semgrep_taint.rs +
+            // COMPATIBILITY.md). `patterns:` blocks undergo graceful
+            // degradation: expressible `pattern:`/`pattern-either:` sub-items
+            // are compiled; constraint-only sub-items (pattern-inside, etc.)
+            // are dropped with a warning making the matcher broader. The real
+            // loader (ground_truth) is the authoritative accept/reject for
+            // taint rules now — no static pre-classification needed here.
             if rule.get("pattern-propagators").is_some() {
                 return Outcome::Skipped("taint: pattern-propagators".to_string());
             }
