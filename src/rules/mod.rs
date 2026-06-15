@@ -15,6 +15,7 @@ pub mod kotlin;
 pub mod kotlin_taint;
 pub mod manifest;
 pub mod php;
+pub mod php_taint;
 pub mod python;
 pub mod python_aliases;
 pub mod python_taint;

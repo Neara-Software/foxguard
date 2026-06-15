@@ -148,7 +148,7 @@ fn language_supported(lang: &str) -> bool {
     )
 }
 
-/// Taint mode is compiled for Python / JavaScript / Go / Java / C / Kotlin / Ruby
+/// Taint mode is compiled for Python / JavaScript / Go / Java / C / Kotlin / Ruby / PHP
 /// (see `src/rules/semgrep_taint.rs`).
 fn taint_language_supported(lang: &str) -> bool {
     matches!(
@@ -167,6 +167,7 @@ fn taint_language_supported(lang: &str) -> bool {
             | "kt"
             | "ruby"
             | "rb"
+            | "php"
     )
 }
 
