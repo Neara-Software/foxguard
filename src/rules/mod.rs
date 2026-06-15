@@ -4,6 +4,7 @@ pub mod common;
 pub mod config;
 pub mod cross_file;
 pub mod csharp;
+pub mod csharp_taint;
 pub mod generic_mode;
 pub mod go;
 pub mod go_taint;

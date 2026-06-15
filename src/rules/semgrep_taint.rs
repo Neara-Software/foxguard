@@ -58,6 +58,7 @@
 
 use crate::rules::c_taint;
 use crate::rules::common::get_source_line;
+use crate::rules::csharp_taint;
 use crate::rules::go_taint;
 use crate::rules::java_taint;
 use crate::rules::javascript_taint;
@@ -476,6 +477,55 @@ fn to_php_spec(g: &GenericSpec) -> php_taint::TaintSpec {
     }
 }
 
+/// Convert the generic spec into a C# taint spec.
+fn to_csharp_spec(g: &GenericSpec) -> csharp_taint::TaintSpec {
+    csharp_taint::TaintSpec {
+        sources: g.sources.iter().map(to_csharp_matcher).collect(),
+        sinks: g.sinks.iter().map(to_csharp_matcher).collect(),
+        sanitizers: g.sanitizers.iter().map(to_csharp_matcher).collect(),
+    }
+}
+
+fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
+    match m {
+        GenericMatcher::Attribute {
+            root,
+            field,
+            description,
+        } => csharp_taint::NodeMatcher::Attribute {
+            root: root.clone(),
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Call {
+            canonical,
+            description,
+        } => csharp_taint::NodeMatcher::Call {
+            canonical: canonical.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ParamName { names, description } => csharp_taint::NodeMatcher::ParamName {
+            names: names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => csharp_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
+        // MemberAssign is JS-specific; included in the spec for completeness but
+        // the C# engine ignores it.
+        GenericMatcher::MemberAssign { field, description } => {
+            csharp_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
+    }
+}
+
 fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
     match m {
         GenericMatcher::Attribute {
@@ -644,6 +694,19 @@ impl TaintFindingView {
             hops: f.hops,
         }
     }
+    fn from_csharp(f: csharp_taint::TaintFinding) -> Self {
+        Self {
+            sink_start_byte: f.sink_start_byte,
+            sink_line: f.sink_line,
+            sink_column: f.sink_column,
+            sink_end_line: f.sink_end_line,
+            sink_end_column: f.sink_end_column,
+            source_description: f.source_description,
+            sink_description: f.sink_description,
+            source_line: f.source_line,
+            hops: f.hops,
+        }
+    }
 }
 
 impl Rule for SemgrepTaintRule {
@@ -739,6 +802,13 @@ impl Rule for SemgrepTaintRule {
                 php_taint::analyze_tree(tree.root_node(), source, &spec, None)
                     .into_iter()
                     .map(TaintFindingView::from_php)
+                    .collect()
+            }
+            Language::CSharp => {
+                let spec = to_csharp_spec(&self.spec);
+                csharp_taint::analyze_tree(tree.root_node(), source, &spec, None)
+                    .into_iter()
+                    .map(TaintFindingView::from_csharp)
                     .collect()
             }
             _ => Vec::new(),
@@ -855,6 +925,10 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                         detected = Some(Language::Php);
                         break;
                     }
+                    "csharp" | "cs" | "c#" => {
+                        detected = Some(Language::CSharp);
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -862,7 +936,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                 Some(l) => l,
                 None => {
                     return TaintRuleParse::Skip(format!(
-                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, Kotlin, Ruby, and PHP are supported",
+                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, Kotlin, Ruby, PHP, and C# are supported",
                         id
                     ));
                 }
@@ -3118,5 +3192,223 @@ pattern-sinks: [{pattern: system($X)}]
             TaintRuleParse::Skip(msg) => panic!("unexpected skip: {}", msg),
             TaintRuleParse::NotTaint => panic!("expected taint rule"),
         }
+    }
+
+    // ─── Bridge-level (end-to-end) tests for C# taint engine ─────────────────
+    //
+    // These compile a rule through `parse_taint_rule` (the SAME path the CLI
+    // uses) and run it against real C# source via the bridge. We test the
+    // primary dotted-source shapes that arrive as `Attribute` / `Call` matchers
+    // through the bridge (not `ParamName`, since C# sources are dotted).
+
+    /// `Request.QueryString["cmd"] → Process.Start(cmd)` fires end-to-end.
+    #[test]
+    fn csharp_bridge_dotted_source_to_process_start_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: csharp-cmd-injection
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: "Tainted input reaches Process.Start"
+metadata:
+  cwe: "CWE-78"
+pattern-sources:
+  - pattern: Request.QueryString
+pattern-sinks:
+  - pattern: Process.Start($X)
+"#,
+        );
+
+        let src = r#"
+using System.Web;
+using System.Diagnostics;
+
+class Controller {
+    public void Handle() {
+        string cmd = Request.QueryString["cmd"];
+        Process.Start(cmd);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for Request.QueryString -> Process.Start, got {:?}",
+            findings
+        );
+        assert!(
+            findings[0].line > 0,
+            "finding should carry a valid line number"
+        );
+    }
+
+    /// Sanitized variant: `HttpUtility.HtmlEncode(raw)` blocks XSS.
+    #[test]
+    fn csharp_bridge_sanitized_variant_produces_no_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: csharp-xss-sanitized
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: "Tainted input reaches Response.Write"
+pattern-sources:
+  - pattern: Request.QueryString
+pattern-sanitizers:
+  - pattern: HttpUtility.HtmlEncode($X)
+pattern-sinks:
+  - pattern: Response.Write($X)
+"#,
+        );
+
+        let src = r#"
+using System.Web;
+
+class Controller {
+    public void Handle() {
+        string raw = Request.QueryString["q"];
+        string safe = HttpUtility.HtmlEncode(raw);
+        Response.Write(safe);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "sanitized flow must produce no finding, got {:?}",
+            findings
+        );
+    }
+
+    /// Near-miss: tainted variable not passed to the sink → no finding.
+    #[test]
+    fn csharp_bridge_near_miss_produces_no_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: csharp-cmd-nearmiss
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: "Tainted input reaches Process.Start"
+pattern-sources:
+  - pattern: Request.QueryString
+pattern-sinks:
+  - pattern: Process.Start($X)
+"#,
+        );
+
+        // tainted is assigned but a literal "notepad.exe" is passed to the sink.
+        let src = r#"
+using System.Web;
+using System.Diagnostics;
+
+class Controller {
+    public void Handle() {
+        string _tainted = Request.QueryString["cmd"];
+        Process.Start("notepad.exe");
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "near-miss must produce no finding, got {:?}",
+            findings
+        );
+    }
+
+    /// `csharp` language alias parses correctly.
+    #[test]
+    fn taint_rule_with_csharp_language_compiles() {
+        let yaml = r#"
+id: cs-taint
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: m
+pattern-sources: [{pattern: Request.QueryString}]
+pattern-sinks: [{pattern: Process.Start($X)}]
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Compiled(r) => {
+                assert_eq!(r.lang, Language::CSharp);
+                assert_eq!(r.spec.sources.len(), 1);
+                assert_eq!(r.spec.sinks.len(), 1);
+            }
+            TaintRuleParse::Skip(msg) => panic!("unexpected skip: {}", msg),
+            TaintRuleParse::NotTaint => panic!("expected taint rule"),
+        }
+    }
+
+    /// `cs` alias compiles as C#.
+    #[test]
+    fn taint_rule_with_cs_alias_compiles_as_csharp() {
+        let yaml = r#"
+id: cs-taint
+mode: taint
+languages: [cs]
+severity: ERROR
+message: m
+pattern-sources: [{pattern: Request.QueryString}]
+pattern-sinks: [{pattern: Process.Start($X)}]
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Compiled(r) => assert_eq!(r.lang, Language::CSharp),
+            TaintRuleParse::Skip(msg) => panic!("unexpected skip: {}", msg),
+            TaintRuleParse::NotTaint => panic!("expected taint rule"),
+        }
+    }
+
+    /// `Console.ReadLine()` → `Process.Start()` fires via Call source.
+    #[test]
+    fn csharp_bridge_console_readline_to_process_start() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: csharp-console-cmdi
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: "Console.ReadLine input reaches Process.Start"
+pattern-sources:
+  - pattern: Console.ReadLine($X)
+pattern-sinks:
+  - pattern: Process.Start($X)
+"#,
+        );
+
+        let src = r#"
+using System;
+using System.Diagnostics;
+
+class App {
+    static void Main() {
+        string cmd = Console.ReadLine();
+        Process.Start(cmd);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for Console.ReadLine -> Process.Start, got {:?}",
+            findings
+        );
     }
 }

@@ -168,6 +168,9 @@ fn taint_language_supported(lang: &str) -> bool {
             | "ruby"
             | "rb"
             | "php"
+            | "csharp"
+            | "cs"
+            | "c#"
     )
 }
 
