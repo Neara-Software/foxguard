@@ -54,7 +54,7 @@ see [release provenance](docs/release-provenance.md) for manual verification.
 **GitHub Action:**
 
 ```yaml
-- uses: 0sec-labs/foxguard/action@v0.8.1
+- uses: 0sec-labs/foxguard/action@v0.9.0
   with:
     path: .
     severity: medium
@@ -70,7 +70,7 @@ verification is available as a separate `gh attestation verify` policy step.
 ```yaml
 repos:
   - repo: https://github.com/0sec-labs/foxguard
-    rev: v0.8.1
+    rev: v0.9.0
     hooks:
       - id: foxguard
 ```
