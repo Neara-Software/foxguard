@@ -148,7 +148,7 @@ fn language_supported(lang: &str) -> bool {
     )
 }
 
-/// Taint mode is only compiled for Python / JavaScript / Go today
+/// Taint mode is compiled for Python / JavaScript / Go / Java / C / Kotlin / Ruby
 /// (see `src/rules/semgrep_taint.rs`).
 fn taint_language_supported(lang: &str) -> bool {
     matches!(
@@ -165,6 +165,8 @@ fn taint_language_supported(lang: &str) -> bool {
             | "c"
             | "kotlin"
             | "kt"
+            | "ruby"
+            | "rb"
     )
 }
 
@@ -911,10 +913,11 @@ rules:
 
     #[test]
     fn non_python_taint_is_a_language_gap() {
+        // Elixir is still an unsupported language for taint mode.
         let r = rule(
             r#"
 rules:
-  - id: ruby-taint
+  - id: elixir-taint
     mode: taint
     pattern-sources:
       - pattern: source()
@@ -922,7 +925,7 @@ rules:
       - pattern: sink(...)
     message: m
     severity: ERROR
-    languages: [ruby]
+    languages: [elixir]
 "#,
         );
         match classify_rule(&r) {
@@ -932,6 +935,26 @@ rules:
             }
             other => panic!("expected skip, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn ruby_taint_now_loads() {
+        // Ruby taint is bridged now — a simple source/sink rule must load.
+        let r = rule(
+            r#"
+rules:
+  - id: ruby-taint
+    mode: taint
+    pattern-sources:
+      - pattern: gets($X)
+    pattern-sinks:
+      - pattern: system($X)
+    message: m
+    severity: ERROR
+    languages: [ruby]
+"#,
+        );
+        assert!(matches!(classify_rule(&r), Outcome::Loaded));
     }
 
     #[test]
