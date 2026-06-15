@@ -33,11 +33,10 @@ fn parse_source_for_path(
         Language::Hcl => tree_sitter_hcl::LANGUAGE.into(),
         Language::Solidity => tree_sitter_solidity::LANGUAGE.into(),
         Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
-        Language::NginxConf
-        | Language::ApacheConf
-        | Language::HAProxyConf
-        | Language::Dockerfile
-        | Language::Manifest => tree_sitter_bash::LANGUAGE.into(),
+        Language::Dockerfile => tree_sitter_containerfile::LANGUAGE.into(),
+        Language::NginxConf | Language::ApacheConf | Language::HAProxyConf | Language::Manifest => {
+            tree_sitter_bash::LANGUAGE.into()
+        }
         // Regex-mode rules never use a tree-sitter parser — they match raw text
         // only. Return `None` immediately so the scanner skips the tree build.
         Language::Regex => return None,
@@ -122,5 +121,15 @@ contract Token {
 
         assert!(!tree.root_node().has_error());
         assert_eq!(tree.root_node().kind(), "stream");
+    }
+
+    #[test]
+    fn parses_dockerfile_without_errors() {
+        let source = "FROM ubuntu:22.04\nRUN apt-get update && apt-get install -y curl\nCMD [\"/bin/bash\"]\n";
+        let tree = parse_path(source, Language::Dockerfile, Path::new("Dockerfile"))
+            .expect("Dockerfile parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+        assert_eq!(tree.root_node().kind(), "source_file");
     }
 }

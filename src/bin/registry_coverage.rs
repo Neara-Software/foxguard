@@ -126,6 +126,9 @@ fn language_supported(lang: &str) -> bool {
             // `languages: [regex]` rules are handled by the regex-mode engine
             // (pure pattern-regex against raw text, no tree-sitter parse needed).
             | "regex"
+            // Dockerfile grammar (tree-sitter-containerfile).
+            | "dockerfile"
+            | "docker"
     )
 }
 

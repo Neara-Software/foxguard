@@ -1610,6 +1610,7 @@ fn map_language(lang_str: &str) -> Option<Language> {
         "hcl" | "terraform" | "tf" => Some(Language::Hcl),
         "solidity" | "sol" => Some(Language::Solidity),
         "yaml" | "yml" => Some(Language::Yaml),
+        "dockerfile" | "docker" => Some(Language::Dockerfile),
         _ => None,
     }
 }
@@ -3674,5 +3675,77 @@ rules:
         let rules = parse_semgrep_file(f.path())
             .expect("pattern-regex with \\Z anchor must load after normalisation");
         assert_eq!(rules.len(), 1);
+    }
+
+    // ─── Dockerfile language tests ────────────────────────────────────────────
+
+    /// A `languages: [dockerfile]` rule loads without error.
+    #[test]
+    fn test_dockerfile_language_rule_loads() {
+        let yaml = r#"
+rules:
+  - id: dockerfile-no-latest
+    pattern-regex: ':latest'
+    message: Avoid using the latest tag in Dockerfile FROM instructions
+    severity: WARNING
+    languages: [dockerfile]
+"#;
+        let f = make_yaml(yaml);
+        let rules =
+            parse_semgrep_file(f.path()).expect("dockerfile language rule must load without error");
+        assert_eq!(rules.len(), 1, "expected one rule for dockerfile language");
+    }
+
+    /// A `languages: [docker]` alias also loads.
+    #[test]
+    fn test_docker_language_alias_loads() {
+        let yaml = r#"
+rules:
+  - id: docker-root-user
+    pattern-regex: 'USER\s+root'
+    message: Container should not run as root
+    severity: ERROR
+    languages: [docker]
+"#;
+        let f = make_yaml(yaml);
+        let rules =
+            parse_semgrep_file(f.path()).expect("docker language alias must load without error");
+        assert!(
+            !rules.is_empty(),
+            "docker alias should produce rule instances"
+        );
+    }
+
+    /// A `languages: [dockerfile]` `pattern-regex` rule matches inside a sample Dockerfile.
+    #[test]
+    fn test_dockerfile_pattern_regex_matches() {
+        use crate::engine::parser::parse_path;
+        use std::path::Path;
+
+        let yaml = r#"
+rules:
+  - id: dockerfile-latest-tag
+    pattern-regex: ':latest'
+    message: Avoid :latest tag
+    severity: WARNING
+    languages: [dockerfile]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).expect("rule must load");
+        assert_eq!(rules.len(), 1);
+
+        let source = "FROM ubuntu:latest\nRUN apt-get update\nCMD [\"/bin/bash\"]\n";
+        let tree = parse_path(source, Language::Dockerfile, Path::new("Dockerfile"))
+            .expect("Dockerfile must parse");
+        assert!(
+            !tree.root_node().has_error(),
+            "Dockerfile parse must be error-free"
+        );
+
+        let findings = rules[0].check(source, &tree);
+        assert!(
+            !findings.is_empty(),
+            "pattern-regex ':latest' must match 'ubuntu:latest' in Dockerfile"
+        );
     }
 }

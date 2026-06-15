@@ -352,6 +352,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "tf" | "hcl" | "tfvars" => Some(Language::Hcl),
         "sol" => Some(Language::Solidity),
         "yaml" | "yml" => Some(Language::Yaml),
+        "dockerfile" => Some(Language::Dockerfile),
         _ => None,
     }
 }
@@ -1668,6 +1669,34 @@ mod tests {
         assert_eq!(result.stats.files_skipped, 2);
         assert_eq!(result.stats.files_ignored, 1);
         assert_eq!(result.stats.unsupported_files, 1);
+    }
+
+    #[test]
+    fn dockerfile_filename_detection() {
+        // Exact name "Dockerfile" must detect as Dockerfile.
+        assert_eq!(
+            detect_language(Path::new("Dockerfile")),
+            Some(Language::Dockerfile),
+            "bare 'Dockerfile' should be detected"
+        );
+        // Lowercase variant
+        assert_eq!(
+            detect_language(Path::new("dockerfile")),
+            Some(Language::Dockerfile),
+            "'dockerfile' (lowercase) should be detected"
+        );
+        // Stage-specific variant: Dockerfile.prod
+        assert_eq!(
+            detect_language(Path::new("Dockerfile.prod")),
+            Some(Language::Dockerfile),
+            "'Dockerfile.prod' should be detected"
+        );
+        // *.dockerfile extension
+        assert_eq!(
+            detect_language(Path::new("backend.dockerfile")),
+            Some(Language::Dockerfile),
+            "'backend.dockerfile' should be detected via extension"
+        );
     }
 
     #[test]
