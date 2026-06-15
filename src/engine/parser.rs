@@ -36,6 +36,9 @@ fn parse_source_for_path(
         | Language::HAProxyConf
         | Language::Dockerfile
         | Language::Manifest => tree_sitter_bash::LANGUAGE.into(),
+        // Regex-mode rules never use a tree-sitter parser — they match raw text
+        // only. Return `None` immediately so the scanner skips the tree build.
+        Language::Regex => return None,
     };
 
     parser.set_language(&ts_language).ok()?;

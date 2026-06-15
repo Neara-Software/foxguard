@@ -677,6 +677,9 @@ fn parse_inline_ignore(line: &str, language: Language) -> Option<(bool, InlineIg
             | Language::CSharp
             | Language::Swift
             | Language::Php
+            // Regex-mode rules inherit C-style block comment suppression so
+            // `/* foxguard: ignore */` works in files where that syntax is valid.
+            | Language::Regex
     ) {
         if let Some(result) = parse_block_comment_ignore(line) {
             return Some(result);
@@ -721,6 +724,9 @@ fn comment_markers(language: Language) -> &'static [&'static str] {
         | Language::HAProxyConf
         | Language::Dockerfile
         | Language::Manifest => &["#"],
+        // Regex-mode rules run against raw text with no guaranteed comment syntax.
+        // Use `#` as a safe fallback (it works for most config/script files).
+        Language::Regex => &["#"],
     }
 }
 
@@ -1398,6 +1404,9 @@ fn treats_tree_errors_as_parse_failures(language: Language, _path: &Path) -> boo
             | Language::HAProxyConf
             | Language::Dockerfile
             | Language::Manifest
+            // Regex-mode rules match raw text and never use the syntax tree;
+            // don't gate them behind tree-sitter parse success.
+            | Language::Regex
     )
 }
 

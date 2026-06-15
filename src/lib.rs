@@ -60,6 +60,14 @@ pub enum Language {
     HAProxyConf,
     Dockerfile,
     Manifest,
+    /// Pseudo-language for Semgrep `languages: [regex]` rules.
+    ///
+    /// A `Regex`-language rule carries only `pattern-regex` / `pattern-not-regex`
+    /// matchers and is run against the raw text of **every** scanned file (no
+    /// tree-sitter parse required).  The scanner fans out one rule instance per
+    /// detectable language (mirroring the `generic` mode fan-out) so that the
+    /// existing `rule.language() == file_language` dispatch continues to work.
+    Regex,
 }
 
 impl std::fmt::Display for Language {
@@ -82,6 +90,7 @@ impl std::fmt::Display for Language {
             Language::HAProxyConf => write!(f, "haproxyconf"),
             Language::Dockerfile => write!(f, "dockerfile"),
             Language::Manifest => write!(f, "manifest"),
+            Language::Regex => write!(f, "regex"),
         }
     }
 }

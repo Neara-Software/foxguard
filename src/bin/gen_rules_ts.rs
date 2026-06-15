@@ -51,6 +51,9 @@ fn language_slug(language: Language) -> &'static str {
         Language::HAProxyConf => "haproxyconf",
         Language::Dockerfile => "dockerfile",
         Language::Manifest => "manifest",
+        // Regex-mode rules fan out per language; this binary generates rules
+        // for concrete languages only.
+        Language::Regex => "regex",
     }
 }
 
@@ -73,6 +76,7 @@ fn language_display_name(language: Language) -> &'static str {
         Language::HAProxyConf => "HAProxy",
         Language::Dockerfile => "Dockerfile",
         Language::Manifest => "Manifest",
+        Language::Regex => "Regex",
     }
 }
 
@@ -95,6 +99,7 @@ fn language_array_name(language: Language) -> &'static str {
         Language::HAProxyConf => "haproxyconfRules",
         Language::Dockerfile => "dockerfileRules",
         Language::Manifest => "manifestRules",
+        Language::Regex => "regexRules",
     }
 }
 
