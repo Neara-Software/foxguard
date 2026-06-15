@@ -8,8 +8,8 @@
 //!
 //! - `mode: taint` with `languages: [python]`, `languages: [javascript]` /
 //!   `[typescript]` / `[js]` / `[ts]`, `languages: [go]` / `[golang]`,
-//!   `languages: [java]`, `languages: [c]`, or `languages: [kotlin]` /
-//!   `[kt]`.
+//!   `languages: [java]`, `languages: [c]`, `languages: [kotlin]` /
+//!   `[kt]`, or `languages: [ruby]` / `[rb]`.
 //!   Other languages are rejected with a warning and the rule is skipped;
 //!   non-taint rules fall through to the regular Semgrep bridge.
 //! - `pattern-sources`, `pattern-sinks`, `pattern-sanitizers` as lists of
@@ -63,6 +63,7 @@ use crate::rules::java_taint;
 use crate::rules::javascript_taint;
 use crate::rules::kotlin_taint;
 use crate::rules::python_taint;
+use crate::rules::ruby_taint;
 use crate::rules::{FileContext, Rule};
 use crate::{Finding, Language, Severity};
 use serde_yaml_ng::Value as YamlValue;
@@ -416,6 +417,55 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
     }
 }
 
+/// Convert the generic spec into a Ruby taint spec.
+fn to_ruby_spec(g: &GenericSpec) -> ruby_taint::TaintSpec {
+    ruby_taint::TaintSpec {
+        sources: g.sources.iter().map(to_ruby_matcher).collect(),
+        sinks: g.sinks.iter().map(to_ruby_matcher).collect(),
+        sanitizers: g.sanitizers.iter().map(to_ruby_matcher).collect(),
+    }
+}
+
+fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
+    match m {
+        GenericMatcher::Attribute {
+            root,
+            field,
+            description,
+        } => ruby_taint::NodeMatcher::Attribute {
+            root: root.clone(),
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Call {
+            canonical,
+            description,
+        } => ruby_taint::NodeMatcher::Call {
+            canonical: canonical.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ParamName { names, description } => ruby_taint::NodeMatcher::ParamName {
+            names: names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => ruby_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
+        // MemberAssign is JS-specific; included in the spec for completeness but
+        // the Ruby engine ignores it.
+        GenericMatcher::MemberAssign { field, description } => {
+            ruby_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
+    }
+}
+
 /// A compiled Semgrep `mode: taint` rule.
 pub struct SemgrepTaintRule {
     pub id: String,
@@ -518,6 +568,19 @@ impl TaintFindingView {
             hops: f.hops,
         }
     }
+    fn from_ruby(f: ruby_taint::TaintFinding) -> Self {
+        Self {
+            sink_start_byte: f.sink_start_byte,
+            sink_line: f.sink_line,
+            sink_column: f.sink_column,
+            sink_end_line: f.sink_end_line,
+            sink_end_column: f.sink_end_column,
+            source_description: f.source_description,
+            sink_description: f.sink_description,
+            source_line: f.source_line,
+            hops: f.hops,
+        }
+    }
 }
 
 impl Rule for SemgrepTaintRule {
@@ -599,6 +662,13 @@ impl Rule for SemgrepTaintRule {
                 kotlin_taint::analyze_tree(tree.root_node(), source, &spec, None)
                     .into_iter()
                     .map(TaintFindingView::from_kotlin)
+                    .collect()
+            }
+            Language::Ruby => {
+                let spec = to_ruby_spec(&self.spec);
+                ruby_taint::analyze_tree(tree.root_node(), source, &spec, None)
+                    .into_iter()
+                    .map(TaintFindingView::from_ruby)
                     .collect()
             }
             _ => Vec::new(),
@@ -707,6 +777,10 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                         detected = Some(Language::Kotlin);
                         break;
                     }
+                    "ruby" | "rb" => {
+                        detected = Some(Language::Ruby);
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -714,7 +788,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                 Some(l) => l,
                 None => {
                     return TaintRuleParse::Skip(format!(
-                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, and Kotlin are supported",
+                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, Kotlin, and Ruby are supported",
                         id
                     ));
                 }
@@ -1414,7 +1488,7 @@ languages: [python]
         let yaml = r#"
 id: x
 mode: taint
-languages: [ruby]
+languages: [elixir]
 severity: ERROR
 message: m
 pattern-sources: [{pattern: req}]
@@ -1422,6 +1496,86 @@ pattern-sinks: [{pattern: eval($X)}]
 "#;
         let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
         assert!(matches!(parse_taint_rule(&v), TaintRuleParse::Skip(_)));
+    }
+
+    #[test]
+    fn taint_rule_with_ruby_language_compiles() {
+        let yaml = r#"
+id: ruby-taint
+mode: taint
+languages: [ruby]
+severity: ERROR
+message: m
+pattern-sources: [{pattern: gets($X)}]
+pattern-sinks: [{pattern: system($X)}]
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Compiled(r) => {
+                assert_eq!(r.lang, Language::Ruby);
+                assert_eq!(r.spec.sources.len(), 1);
+                assert_eq!(r.spec.sinks.len(), 1);
+            }
+            TaintRuleParse::Skip(msg) => panic!("unexpected skip: {}", msg),
+            TaintRuleParse::NotTaint => panic!("expected taint rule"),
+        }
+    }
+
+    #[test]
+    fn taint_rule_with_rb_alias_compiles_as_ruby() {
+        let yaml = r#"
+id: rb-taint
+mode: taint
+languages: [rb]
+severity: ERROR
+message: m
+pattern-sources: [{pattern: gets($X)}]
+pattern-sinks: [{pattern: eval($X)}]
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Compiled(r) => assert_eq!(r.lang, Language::Ruby),
+            TaintRuleParse::Skip(msg) => panic!("unexpected skip: {}", msg),
+            TaintRuleParse::NotTaint => panic!("expected taint rule"),
+        }
+    }
+
+    #[test]
+    fn ruby_taint_rule_produces_finding_for_source_to_sink_flow() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: ruby-cmd-injection
+mode: taint
+languages: [ruby]
+severity: ERROR
+message: "Tainted input reaches system"
+metadata:
+  cwe: "CWE-78"
+pattern-sources:
+  - pattern: gets($X)
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        let src = r#"
+def run
+  cmd = gets
+  system(cmd)
+end
+"#;
+        let tree = parse_file(src, Language::Ruby).expect("Ruby fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "expected a finding for gets -> system flow, got none"
+        );
+        assert!(
+            findings[0].description.contains("gets"),
+            "description should mention source"
+        );
     }
 
     #[test]

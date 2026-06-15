@@ -19,6 +19,7 @@ pub mod python;
 pub mod python_aliases;
 pub mod python_taint;
 pub mod ruby;
+pub mod ruby_taint;
 pub mod rust_lang;
 pub mod semgrep_compat;
 pub mod semgrep_taint;
