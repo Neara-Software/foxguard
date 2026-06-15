@@ -677,8 +677,60 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
                     return Some(description.clone());
                 }
             }
-            NodeMatcher::ParamName { .. } => {
-                // Handled at param-seeding time, not in expression matching.
+            NodeMatcher::ParamName { names, description } => {
+                // Bare-identifier sources (`params`, `gets`, `ENV`, …) are
+                // compiled by the Semgrep bridge to `ParamName`. In Ruby these
+                // most often denote a method call / accessor rather than a
+                // formal parameter (Rails `params`, `Kernel#gets`, the `ENV`
+                // constant), so we match them in expression position too — not
+                // just at param-seeding time (which still happens separately in
+                // `seed_params`).
+                //
+                // Shapes matched:
+                //   - bare `identifier` / `constant`: `params`, `gets`, `ENV`
+                //   - `element_reference` receiver: `params[:cmd]`, `ENV["X"]`
+                //   - `call` whose leftmost receiver is a name: `params.require`
+                //   - bare `call` whose method is a name: `gets()`
+                let matches_name = |n: &str| names.iter().any(|name| name == n);
+
+                match node.kind() {
+                    "identifier" | "constant" => {
+                        if matches_name(node_text(node, source)) {
+                            return Some(description.clone());
+                        }
+                    }
+                    "element_reference" => {
+                        if let Some(object) = node.child_by_field_name("object") {
+                            // Only match a *bare* receiver (`params[:cmd]`),
+                            // not a dotted chain, so we don't double-fire on
+                            // the inner access.
+                            if matches!(object.kind(), "identifier" | "constant")
+                                && matches_name(node_text(object, source))
+                            {
+                                return Some(description.clone());
+                            }
+                        }
+                    }
+                    "call" => {
+                        // `params.require(:x)` / `gets` parsed as a call.
+                        // Match when the bare method name (no receiver) is one
+                        // of the names, or the leftmost receiver is.
+                        if node.child_by_field_name("receiver").is_none() {
+                            if let Some(method) = node.child_by_field_name("method") {
+                                if matches_name(node_text(method, source)) {
+                                    return Some(description.clone());
+                                }
+                            }
+                        } else if let Some(recv) = node.child_by_field_name("receiver") {
+                            if let Some(leftmost) = leftmost_receiver_text(recv, source) {
+                                if matches_name(leftmost) {
+                                    return Some(description.clone());
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
             NodeMatcher::MethodName { .. } | NodeMatcher::MemberAssign { .. } => {
                 // Sink-only matchers.

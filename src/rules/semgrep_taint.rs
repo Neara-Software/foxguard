@@ -1578,6 +1578,204 @@ end
         );
     }
 
+    // ── Bridge-level (end-to-end) tests for BARE-IDENTIFIER Ruby sources ─────
+    //
+    // These compile a rule through `parse_taint_rule` (the SAME path the CLI
+    // uses) where the source is a bare identifier (`params`, `gets`) with no
+    // parens. The bridge compiles those to `GenericMatcher::ParamName`, which
+    // is the path that was previously broken end-to-end (the `analyze_tree`
+    // unit tests bypassed it by hand-building `Call` specs). We assert the
+    // sink line and that a sanitized variant produces no finding.
+
+    /// `params[:cmd] → system(cmd)` via the bare-identifier `params` source.
+    #[test]
+    fn ruby_bridge_bare_params_source_to_system_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: ruby-params-cmdi
+mode: taint
+languages: [ruby]
+severity: ERROR
+message: "Tainted params reaches system"
+pattern-sources:
+  - pattern: params
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        let src = r#"
+def handler
+  cmd = params[:cmd]
+  system(cmd)
+end
+"#;
+        let tree = parse_file(src, Language::Ruby).expect("Ruby fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for params[:cmd] -> system, got {:?}",
+            findings
+        );
+        // sink is on the `system(cmd)` line (line 4 with leading newline).
+        assert_eq!(
+            findings[0].line, 4,
+            "finding should be at the system() sink line"
+        );
+    }
+
+    /// Bare `gets` (no parens) → `system(cmd)` via the `ParamName` bridge path.
+    #[test]
+    fn ruby_bridge_bare_gets_source_to_system_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: ruby-gets-cmdi
+mode: taint
+languages: [ruby]
+severity: ERROR
+message: "Tainted gets reaches system"
+pattern-sources:
+  - pattern: gets
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        let src = r#"
+def handler
+  cmd = gets
+  system(cmd)
+end
+"#;
+        let tree = parse_file(src, Language::Ruby).expect("Ruby fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for bare gets -> system, got {:?}",
+            findings
+        );
+        assert_eq!(
+            findings[0].line, 4,
+            "finding should be at the system() sink line"
+        );
+    }
+
+    /// A sanitizer between a bare-identifier source and the sink blocks the
+    /// flow end-to-end (still through the bridge).
+    #[test]
+    fn ruby_bridge_bare_params_source_sanitized_produces_no_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: ruby-params-cmdi-sanitized
+mode: taint
+languages: [ruby]
+severity: ERROR
+message: "Tainted params reaches system"
+pattern-sources:
+  - pattern: params
+pattern-sanitizers:
+  - pattern: Shellwords.escape($X)
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        let src = r#"
+def handler
+  cmd = Shellwords.escape(params[:cmd])
+  system(cmd)
+end
+"#;
+        let tree = parse_file(src, Language::Ruby).expect("Ruby fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "sanitized params flow must produce no finding, got {:?}",
+            findings
+        );
+    }
+
+    /// The dotted `request.params` source must keep firing end-to-end (it was
+    /// already working — this is a regression guard).
+    #[test]
+    fn ruby_bridge_dotted_request_params_source_still_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: ruby-request-params-cmdi
+mode: taint
+languages: [ruby]
+severity: ERROR
+message: "Tainted request.params reaches system"
+pattern-sources:
+  - pattern: request.params
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        let src = r#"
+def handler
+  val = request.params[:q]
+  system(val)
+end
+"#;
+        let tree = parse_file(src, Language::Ruby).expect("Ruby fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "dotted request.params -> system must still fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Near-miss: a bare-identifier source that never reaches the sink must
+    /// produce no finding (end-to-end via the bridge).
+    #[test]
+    fn ruby_bridge_bare_params_source_near_miss_no_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: ruby-params-cmdi-nearmiss
+mode: taint
+languages: [ruby]
+severity: ERROR
+message: "Tainted params reaches system"
+pattern-sources:
+  - pattern: params
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        // `safe` is a literal, never tainted; `cmd` is tainted but not used.
+        let src = r#"
+def handler
+  cmd = params[:cmd]
+  safe = "ls"
+  system(safe)
+end
+"#;
+        let tree = parse_file(src, Language::Ruby).expect("Ruby fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "untainted argument must not fire, got {:?}",
+            findings
+        );
+    }
+
     #[test]
     fn taint_rule_with_c_language_compiles() {
         let yaml = r#"
