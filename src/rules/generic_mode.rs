@@ -60,6 +60,11 @@ const ALL_LANGUAGES: &[Language] = &[
     Language::HAProxyConf,
     Language::Dockerfile,
     Language::Manifest,
+    Language::Bash,
+    Language::Ocaml,
+    Language::Scala,
+    Language::Elixir,
+    Language::Json,
 ];
 
 // ─── Tokenizer ──────────────────────────────────────────────────────────────

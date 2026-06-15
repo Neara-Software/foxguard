@@ -5375,8 +5375,11 @@ mod config_files {
         // Regular .txt files should not match
         assert_eq!(detect_language(Path::new("notes.txt")), None);
         assert_eq!(detect_language(Path::new("Cargo.toml")), None);
-        // Regular .json should not match; .yaml now routes to Language::Yaml
-        assert_eq!(detect_language(Path::new("config.json")), None);
+        // .json now routes to Language::Json; .yaml routes to Language::Yaml
+        assert_eq!(
+            detect_language(Path::new("config.json")),
+            Some(Language::Json)
+        );
         assert_eq!(
             detect_language(Path::new("config.yaml")),
             Some(Language::Yaml)

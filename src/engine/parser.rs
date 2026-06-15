@@ -37,6 +37,11 @@ fn parse_source_for_path(
         Language::NginxConf | Language::ApacheConf | Language::HAProxyConf | Language::Manifest => {
             tree_sitter_bash::LANGUAGE.into()
         }
+        Language::Bash => tree_sitter_bash::LANGUAGE.into(),
+        Language::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
+        Language::Scala => tree_sitter_scala::LANGUAGE.into(),
+        Language::Elixir => tree_sitter_elixir::LANGUAGE.into(),
+        Language::Json => tree_sitter_json::LANGUAGE.into(),
         // Regex-mode rules never use a tree-sitter parser — they match raw text
         // only. Return `None` immediately so the scanner skips the tree build.
         Language::Regex => return None,
@@ -131,5 +136,50 @@ contract Token {
 
         assert!(!tree.root_node().has_error());
         assert_eq!(tree.root_node().kind(), "source_file");
+    }
+
+    #[test]
+    fn parses_bash_without_errors() {
+        let source = "#!/bin/bash\necho \"Hello, world\"\nif [ -z \"$1\" ]; then\n  exit 1\nfi\n";
+        let tree = parse_path(source, Language::Bash, Path::new("script.sh"))
+            .expect("Bash parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_ocaml_without_errors() {
+        let source = "let () = print_endline \"Hello, world\"\n";
+        let tree = parse_path(source, Language::Ocaml, Path::new("main.ml"))
+            .expect("OCaml parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_scala_without_errors() {
+        let source = "object Hello {\n  def main(args: Array[String]): Unit = {\n    println(\"Hello, world\")\n  }\n}\n";
+        let tree = parse_path(source, Language::Scala, Path::new("Hello.scala"))
+            .expect("Scala parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_elixir_without_errors() {
+        let source = "defmodule Hello do\n  def greet(name) do\n    IO.puts(\"Hello, #{name}\")\n  end\nend\n";
+        let tree = parse_path(source, Language::Elixir, Path::new("hello.ex"))
+            .expect("Elixir parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_json_without_errors() {
+        let source = "{\"name\": \"foxguard\", \"version\": \"1.0.0\", \"active\": true}\n";
+        let tree = parse_path(source, Language::Json, Path::new("config.json"))
+            .expect("JSON parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
     }
 }

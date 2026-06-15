@@ -353,6 +353,11 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "sol" => Some(Language::Solidity),
         "yaml" | "yml" => Some(Language::Yaml),
         "dockerfile" => Some(Language::Dockerfile),
+        "sh" | "bash" => Some(Language::Bash),
+        "ml" | "mli" => Some(Language::Ocaml),
+        "scala" | "sc" => Some(Language::Scala),
+        "ex" | "exs" => Some(Language::Elixir),
+        "json" => Some(Language::Json),
         _ => None,
     }
 }
@@ -727,7 +732,12 @@ fn comment_markers(language: Language) -> &'static [&'static str] {
         | Language::ApacheConf
         | Language::HAProxyConf
         | Language::Dockerfile
-        | Language::Manifest => &["#"],
+        | Language::Manifest
+        | Language::Bash => &["#"],
+        Language::Ocaml => &["(*"],
+        Language::Scala => &["//"],
+        Language::Elixir => &["#"],
+        Language::Json => &[],
         // Regex-mode rules run against raw text with no guaranteed comment syntax.
         // Use `#` as a safe fallback (it works for most config/script files).
         Language::Regex => &["#"],

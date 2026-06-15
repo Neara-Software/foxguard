@@ -65,6 +65,10 @@ tower-http = { version = "0.6", default-features = false, features = ["trace", "
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"], optional = true }
 jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"], optional = true }
+tree-sitter-ocaml = "0.25.0"
+tree-sitter-scala = "0.26.0"
+tree-sitter-elixir = "0.3.5"
+tree-sitter-json = "0.24.8"
 
 [features]
 default = []
