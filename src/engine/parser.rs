@@ -31,6 +31,7 @@ fn parse_source_for_path(
         Language::Kotlin => tree_sitter_kotlin_sg::LANGUAGE.into(),
         Language::C => tree_sitter_c::LANGUAGE.into(),
         Language::Hcl => tree_sitter_hcl::LANGUAGE.into(),
+        Language::Solidity => tree_sitter_solidity::LANGUAGE.into(),
         Language::NginxConf
         | Language::ApacheConf
         | Language::HAProxyConf
@@ -86,5 +87,29 @@ mod tests {
 
         assert!(!tree.root_node().has_error());
         assert_eq!(tree.root_node().kind(), "config_file");
+    }
+
+    #[test]
+    fn parses_solidity_contract_without_errors() {
+        let source = r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Token {
+    address public owner;
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function transfer(address to, uint256 amount) public {
+        require(msg.sender == owner, "not owner");
+        payable(to).transfer(amount);
+    }
+}
+"#;
+        let tree = parse_path(source, Language::Solidity, Path::new("Token.sol"))
+            .expect("Solidity parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
     }
 }
