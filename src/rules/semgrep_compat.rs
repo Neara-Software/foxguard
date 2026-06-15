@@ -98,6 +98,10 @@ pub struct PatternClause {
 pub enum SemgrepSeverity {
     Error,
     Warning,
+    /// `MEDIUM` is a Semgrep severity variant used by some registry rules (e.g.
+    /// supply-chain / package-manager packs).  Foxguard maps it to `High`,
+    /// matching the spirit of "medium" risk in the broader threat model.
+    Medium,
     Info,
 }
 
@@ -122,7 +126,14 @@ pub struct SemgrepMetavariableRegexClause {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct SemgrepMetavariableComparisonClause {
-    pub metavariable: String,
+    /// The metavariable to compare.  Some advanced Semgrep rules omit this key
+    /// (they use `comparison: str($F1) == str($F2)` with both operands being
+    /// metavariables inside the expression string). We make the field optional
+    /// so those rules still deserialize; `from_yaml` will warn-skip the
+    /// constraint when the field is absent because the comparison is outside
+    /// our supported `$VAR <op> <number>` subset regardless.
+    #[serde(default)]
+    pub metavariable: Option<String>,
     pub comparison: String,
     /// Optional integer base for parsing (e.g. 16 for hex). Warn-skipped if
     /// present — we only support base-10 by default.
@@ -601,11 +612,28 @@ impl PathFilter {
 }
 
 impl MetavariableRegexConstraint {
-    fn from_yaml(clause: &SemgrepMetavariableRegexClause) -> Result<Self, String> {
-        Ok(Self {
-            metavariable: clause.metavariable.clone(),
-            regex: compile_regex(&clause.regex)?,
-        })
+    /// Build from a YAML clause.
+    ///
+    /// Returns `Some(_)` on success, `None` (after printing a warning) when the
+    /// regex uses features that the Rust `regex` crate does not support
+    /// (lookaheads / lookbehinds / `\Z`, etc.).  The caller continues loading
+    /// the rest of the rule's clauses — this mirrors the behaviour of
+    /// `MetavariableAnalysisConstraint::from_yaml`.
+    fn from_yaml(clause: &SemgrepMetavariableRegexClause) -> Option<Self> {
+        match compile_regex(&clause.regex) {
+            Ok(regex) => Some(Self {
+                metavariable: clause.metavariable.clone(),
+                regex,
+            }),
+            Err(e) => {
+                eprintln!(
+                    "Warning: metavariable-regex for {} uses an unsupported regex ({}); \
+                     skipping constraint",
+                    clause.metavariable, e
+                );
+                None
+            }
+        }
     }
 
     fn matches(&self, bindings: &HashMap<String, String>) -> bool {
@@ -629,6 +657,20 @@ impl MetavariableComparisonConstraint {
                     "metavariable-comparison: base:{base} is not supported (only base:10); skipping constraint"
                 ));
             }
+        }
+
+        // Some advanced Semgrep rules use `comparison:` without an explicit
+        // `metavariable:` key (e.g. `comparison: str($F1) == str($F2)` with
+        // both operands as metavar expressions). The `metavariable` field is
+        // optional in the YAML schema (see `SemgrepMetavariableComparisonClause`).
+        // Those rules fall outside our supported `$VAR <op> <number>` subset, so
+        // we warn-skip the constraint without failing the whole rule load.
+        if clause.metavariable.is_none() {
+            return Err(format!(
+                "metavariable-comparison: no `metavariable:` key in clause '{}'; \
+                 the comparison uses an unsupported expression form — skipping constraint",
+                clause.comparison
+            ));
         }
 
         let (metavariable, op, literal, literal_is_lhs) = parse_comparison(&clause.comparison)?;
@@ -1544,6 +1586,10 @@ fn map_severity(s: &SemgrepSeverity) -> Severity {
     match s {
         SemgrepSeverity::Error => Severity::Critical,
         SemgrepSeverity::Warning => Severity::High,
+        // `MEDIUM` is used by some Semgrep registry packs (e.g. supply-chain rules).
+        // Map to `High` to preserve the intent of "non-trivial risk"; foxguard
+        // does not have a dedicated Medium->Medium mapping in its severity enum.
+        SemgrepSeverity::Medium => Severity::High,
         SemgrepSeverity::Info => Severity::Medium,
     }
 }
@@ -1894,7 +1940,11 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                 positives.push(PatternMatcher::Either(matchers));
             }
             if let Some(ref mr) = clause.metavariable_regex {
-                metavariable_regexes.push(MetavariableRegexConstraint::from_yaml(mr)?);
+                if let Some(constraint) = MetavariableRegexConstraint::from_yaml(mr) {
+                    metavariable_regexes.push(constraint);
+                }
+                // If from_yaml returns None it already printed a warning; we
+                // continue loading the rest of the rule's clauses.
             }
             if let Some(ref mc) = clause.metavariable_comparison {
                 match MetavariableComparisonConstraint::from_yaml(mc) {
@@ -2013,7 +2063,12 @@ fn build_either_matchers(
 }
 
 fn compile_regex(pattern: &str) -> Result<Regex, String> {
-    Regex::new(pattern).map_err(|e| format!("Invalid pattern-regex '{}': {}", pattern, e))
+    // `\Z` is a Python/PCRE end-of-string anchor meaning "end of string before
+    // optional trailing newline".  The Rust `regex` crate uses `$` with the
+    // `MULTILINE` flag off for the same semantics (match at absolute end).
+    // We normalise it here so rules that use `\Z` load successfully.
+    let normalised = pattern.replace(r"\Z", "$");
+    Regex::new(&normalised).map_err(|e| format!("Invalid pattern-regex '{}': {}", pattern, e))
 }
 
 fn compile_globset(patterns: &[String]) -> Result<Option<GlobSet>, String> {
@@ -2641,7 +2696,7 @@ rules:
     #[test]
     fn test_constraint_matches_numeric_match() {
         let clause = SemgrepMetavariableComparisonClause {
-            metavariable: "$X".to_string(),
+            metavariable: Some("$X".to_string()),
             comparison: "$X < 10".to_string(),
             base: None,
             strip: None,
@@ -2655,7 +2710,7 @@ rules:
     #[test]
     fn test_constraint_non_match() {
         let clause = SemgrepMetavariableComparisonClause {
-            metavariable: "$X".to_string(),
+            metavariable: Some("$X".to_string()),
             comparison: "$X < 10".to_string(),
             base: None,
             strip: None,
@@ -2669,7 +2724,7 @@ rules:
     #[test]
     fn test_constraint_non_numeric_binding_no_match() {
         let clause = SemgrepMetavariableComparisonClause {
-            metavariable: "$X".to_string(),
+            metavariable: Some("$X".to_string()),
             comparison: "$X < 10".to_string(),
             base: None,
             strip: None,
@@ -2683,7 +2738,7 @@ rules:
     #[test]
     fn test_constraint_unbound_metavar_no_match() {
         let clause = SemgrepMetavariableComparisonClause {
-            metavariable: "$X".to_string(),
+            metavariable: Some("$X".to_string()),
             comparison: "$X < 10".to_string(),
             base: None,
             strip: None,
@@ -2696,7 +2751,7 @@ rules:
     #[test]
     fn test_constraint_float_comparison() {
         let clause = SemgrepMetavariableComparisonClause {
-            metavariable: "$X".to_string(),
+            metavariable: Some("$X".to_string()),
             comparison: "$X >= 3.14".to_string(),
             base: None,
             strip: None,
@@ -2726,7 +2781,7 @@ rules:
     #[test]
     fn test_constraint_eq_is_exact() {
         let clause = SemgrepMetavariableComparisonClause {
-            metavariable: "$X".to_string(),
+            metavariable: Some("$X".to_string()),
             comparison: "$X == 5".to_string(),
             base: None,
             strip: None,
@@ -2745,7 +2800,7 @@ rules:
         // Regression for the `f` suffix bug: a bound C float literal `1.5f`
         // must compare equal to the literal `1.5` rather than being dropped.
         let clause = SemgrepMetavariableComparisonClause {
-            metavariable: "$X".to_string(),
+            metavariable: Some("$X".to_string()),
             comparison: "$X == 1.5".to_string(),
             base: None,
             strip: None,
@@ -2759,7 +2814,7 @@ rules:
     #[test]
     fn test_constraint_unsupported_base_warn_skip() {
         let clause = SemgrepMetavariableComparisonClause {
-            metavariable: "$X".to_string(),
+            metavariable: Some("$X".to_string()),
             comparison: "$X < 10".to_string(),
             base: Some(16),
             strip: None,
@@ -3516,5 +3571,104 @@ rules:
             findings.is_empty(),
             "should not fire when pattern-not-regex also matches"
         );
+    }
+
+    // ── Regression tests for "loader rejected (other)" fixes ────────────────
+
+    /// Fix 1: `severity: MEDIUM` must load without error.
+    ///
+    /// Regression for rules such as `supply-chain/audit/go-audit-...` that
+    /// use `MEDIUM` as their severity value.  Previously the serde deserialiser
+    /// rejected the value because the enum only had ERROR/WARNING/INFO.
+    #[test]
+    fn test_severity_medium_loads() {
+        let yaml = r#"
+rules:
+  - id: medium-sev-rule
+    pattern: foo()
+    message: medium severity rule
+    severity: MEDIUM
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).expect("MEDIUM severity rule must load");
+        assert_eq!(rules.len(), 1);
+    }
+
+    /// Fix 2: `metavariable-comparison:` without a `metavariable:` key must
+    /// warn-skip the comparison constraint and still load the rule.
+    ///
+    /// Regression for rules such as `python/sql-injection-...` that use
+    /// `comparison: str($F1) == str($F2)` (two metavar operands, no single
+    /// bound metavar key).
+    #[test]
+    fn test_metavariable_comparison_without_metavariable_key_loads_rule() {
+        let yaml = r#"
+rules:
+  - id: cmp-no-metavar-key
+    patterns:
+      - pattern: foo($F1, $F2)
+      - metavariable-comparison:
+          comparison: $F1 > $F2
+    message: comparison without metavariable key
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).expect(
+            "rule with metavariable-comparison missing `metavariable:` key must still load",
+        );
+        assert_eq!(rules.len(), 1);
+    }
+
+    /// Fix 3: `metavariable-regex:` with a lookahead pattern must warn-skip
+    /// the constraint and still load the rule.
+    ///
+    /// Regression for rules such as `javascript/hardcoded-...` that use
+    /// `(?!...)` lookahead assertions in their `metavariable-regex` value.
+    /// The Rust `regex` crate does not support PCRE lookaheads; previously
+    /// this caused the entire rule to fail to load.
+    #[test]
+    fn test_metavariable_regex_with_lookahead_loads_rule() {
+        let yaml = r#"
+rules:
+  - id: mv-regex-lookahead
+    patterns:
+      - pattern: |
+          var $X = "...";
+      - metavariable-regex:
+          metavariable: $X
+          regex: '(?!localhost).*'
+    message: hardcoded non-localhost value
+    severity: WARNING
+    languages: [javascript]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path())
+            .expect("rule with lookahead in metavariable-regex must still load");
+        assert_eq!(rules.len(), 1);
+    }
+
+    /// Fix 4: `\Z` in a `pattern-regex` value must compile successfully.
+    ///
+    /// Regression for the PHP `assert-use-audit` rule which uses `\Z` (Python
+    /// end-of-string anchor) in its primary `pattern-regex`.  The Rust `regex`
+    /// crate uses `$` for the same purpose; we normalise `\Z` → `$` before
+    /// compilation.
+    #[test]
+    fn test_pattern_regex_backslash_z_anchor_loads() {
+        // `\Z` normalised to `$` — the rule must load without error.
+        let yaml = r#"
+rules:
+  - id: pattern-regex-z-anchor
+    pattern-regex: 'assert\s*\(\s*\$\w+\s*\)\s*\Z'
+    message: assert usage
+    severity: WARNING
+    languages: [php]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path())
+            .expect("pattern-regex with \\Z anchor must load after normalisation");
+        assert_eq!(rules.len(), 1);
     }
 }
