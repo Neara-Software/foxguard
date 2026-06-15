@@ -32,6 +32,7 @@ fn parse_source_for_path(
         Language::C => tree_sitter_c::LANGUAGE.into(),
         Language::Hcl => tree_sitter_hcl::LANGUAGE.into(),
         Language::Solidity => tree_sitter_solidity::LANGUAGE.into(),
+        Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         Language::NginxConf
         | Language::ApacheConf
         | Language::HAProxyConf
@@ -111,5 +112,15 @@ contract Token {
             .expect("Solidity parser should produce a tree");
 
         assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_yaml_without_errors() {
+        let source = "key: value\nlist:\n  - item1\n  - item2\n";
+        let tree = parse_path(source, Language::Yaml, Path::new("config.yaml"))
+            .expect("YAML parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+        assert_eq!(tree.root_node().kind(), "stream");
     }
 }

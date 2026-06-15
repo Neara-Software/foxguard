@@ -351,6 +351,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "c" | "h" => Some(Language::C),
         "tf" | "hcl" | "tfvars" => Some(Language::Hcl),
         "sol" => Some(Language::Solidity),
+        "yaml" | "yml" => Some(Language::Yaml),
         _ => None,
     }
 }
@@ -709,7 +710,7 @@ fn is_comment_only_line(trimmed_line: &str, language: Language) -> bool {
 
 fn comment_markers(language: Language) -> &'static [&'static str] {
     match language {
-        Language::Python | Language::Ruby => &["#"],
+        Language::Python | Language::Ruby | Language::Yaml => &["#"],
         Language::Hcl => &["#", "//"],
         Language::Solidity => &["//", "/*"],
         Language::Php => &["//", "#"],
