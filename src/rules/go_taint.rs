@@ -1146,15 +1146,64 @@ fn match_source(
                     }
                 }
             }
+            NodeMatcher::FieldName { field, description } => {
+                // Any-receiver field READ: `<anything>.field`. Matches a
+                // `selector_expression` whose field equals `field`,
+                // regardless of the root operand. Covers `ctx.params`,
+                // `req.body`, etc.
+                if node.kind() != "selector_expression" {
+                    continue;
+                }
+                let Some(final_field) = node.child_by_field_name("field") else {
+                    continue;
+                };
+                if node_text(final_field, source) == field.as_str() {
+                    return Some(description.clone());
+                }
+            }
+            NodeMatcher::Subscript { base, description } => {
+                // Index access `base[...]` → `index_expression`. Matches when
+                // the indexed operand's final segment equals `base` (or any
+                // when `base` is None).
+                if node.kind() != "index_expression" {
+                    continue;
+                }
+                let Some(operand) = node.child_by_field_name("operand") else {
+                    continue;
+                };
+                if go_subscript_base_matches(operand, source, base.as_deref()) {
+                    return Some(description.clone());
+                }
+            }
             NodeMatcher::ParamName { .. } => {
                 // Seeded at function entry, not matched on expressions.
             }
-            NodeMatcher::MethodName { .. } | NodeMatcher::MemberAssign { .. } => {
+            NodeMatcher::MethodName { .. }
+            | NodeMatcher::ReceiverCall { .. }
+            | NodeMatcher::MemberAssign { .. } => {
                 // Sink-only matcher; MemberAssign is JS-specific.
             }
         }
     }
     None
+}
+
+/// True when the indexed operand of an `index_expression` matches the
+/// requested base. `want = None` matches any. For `Some(name)`, an
+/// `identifier` matches its text and a `selector_expression` matches its
+/// final field name.
+fn go_subscript_base_matches(operand: Node<'_>, source: &str, want: Option<&str>) -> bool {
+    let Some(want) = want else {
+        return true;
+    };
+    match operand.kind() {
+        "identifier" => node_text(operand, source) == want,
+        "selector_expression" => operand
+            .child_by_field_name("field")
+            .map(|f| node_text(f, source) == want)
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 /// Canonical set of untrusted-input sources for Go web handlers and
