@@ -1884,19 +1884,97 @@ fn build_regex_mode_rules(
 /// Compile a generic-mode rule via [`crate::rules::generic_mode`]. Thin
 /// adapter: pulls the supported generic-mode fields off the YAML and delegates
 /// all matching logic to that module.
+///
+/// Mapping from YAML → [`GenericRuleSpec`]:
+/// - Top-level `pattern` / `pattern-regex` / `pattern-either` / `pattern-not` /
+///   `pattern-not-regex` are forwarded as-is.
+/// - `patterns:` AND-blocks are mapped clause-by-clause into
+///   [`GenericPatternsClause`] structs; unsupported sub-clauses (e.g.
+///   `pattern-inside`, `metavariable-*`) are warn-skipped without aborting
+///   the rest of the rule.
 fn build_generic_mode_rules(
     yaml: &SemgrepRuleYaml,
     severity: Severity,
     cwe: &Option<String>,
     path_filter: &Option<PathFilter>,
 ) -> Result<Vec<Box<dyn Rule>>, String> {
-    use crate::rules::generic_mode::{build_generic_rules, GenericRuleSpec};
+    use crate::rules::generic_mode::{
+        build_generic_rules, GenericEitherEntry, GenericPatternsClause, GenericRuleSpec,
+    };
 
-    let pattern_either: Vec<String> = yaml
+    // Top-level pattern-either: both `pattern:` and `pattern-regex:` arms are
+    // forwarded so rules like `mcp-tool-poisoning` (all-regex arms) also load.
+    let pattern_either: Vec<GenericEitherEntry> = yaml
         .pattern_either
         .iter()
         .flatten()
-        .filter_map(|entry| entry.pattern.clone())
+        .map(|entry| GenericEitherEntry {
+            pattern: entry.pattern.clone(),
+            pattern_regex: entry.pattern_regex.clone(),
+        })
+        .collect();
+
+    // Map `patterns:` clauses.
+    let patterns_clauses: Vec<GenericPatternsClause> = yaml
+        .patterns
+        .iter()
+        .flatten()
+        .filter_map(|clause| {
+            // Warn-skip entirely constraint-only or unsupported clauses that
+            // have neither a positive match nor a negative filter we can use.
+            // Supported: pattern, pattern-regex, pattern-either, pattern-not,
+            // pattern-not-regex. Unsupported: pattern-inside, pattern-not-inside,
+            // metavariable-*.
+            if clause.pattern_inside.is_some() {
+                eprintln!(
+                    "Warning: generic mode does not support pattern-inside in rule '{}'; \
+                     skipping clause",
+                    yaml.id
+                );
+                return None;
+            }
+            if clause.pattern_not_inside.is_some() {
+                eprintln!(
+                    "Warning: generic mode does not support pattern-not-inside in rule '{}'; \
+                     skipping clause",
+                    yaml.id
+                );
+                return None;
+            }
+
+            // Build the either-entries for a nested pattern-either: clause.
+            let pattern_either_entries: Vec<GenericEitherEntry> = clause
+                .pattern_either
+                .iter()
+                .flatten()
+                .map(|e| GenericEitherEntry {
+                    pattern: e.pattern.clone(),
+                    pattern_regex: e.pattern_regex.clone(),
+                })
+                .collect();
+
+            // Silently skip pure constraint clauses (metavariable-regex, etc.)
+            // that carry no match expression — they have no effect in generic
+            // mode but also do not block loading.
+            let has_positive = clause.pattern.is_some()
+                || clause.pattern_regex.is_some()
+                || !pattern_either_entries.is_empty();
+            let has_negative = clause.pattern_not.is_some() || clause.pattern_not_regex.is_some();
+
+            if !has_positive && !has_negative {
+                // Pure constraint clause (metavariable-regex / metavariable-comparison /
+                // metavariable-analysis / focus-metavariable / etc.) — silently skip.
+                return None;
+            }
+
+            Some(GenericPatternsClause {
+                pattern: clause.pattern.clone(),
+                pattern_regex: clause.pattern_regex.clone(),
+                pattern_either: pattern_either_entries,
+                pattern_not: clause.pattern_not.clone(),
+                pattern_not_regex: clause.pattern_not_regex.clone(),
+            })
+        })
         .collect();
 
     build_generic_rules(GenericRuleSpec {
@@ -1908,6 +1986,8 @@ fn build_generic_mode_rules(
         pattern_regex: yaml.pattern_regex.as_deref(),
         pattern_either,
         pattern_not: yaml.pattern_not.as_deref(),
+        pattern_not_regex: yaml.pattern_not_regex.as_deref(),
+        patterns_clauses,
         path_filter: path_filter.clone(),
     })
 }

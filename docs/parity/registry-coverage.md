@@ -12,10 +12,10 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 | Rule files scanned | 2070 |
 | Files with YAML parse errors | 0 |
 | Total rules | 2144 |
-| Rules loaded OK | 1845 (86.1%) |
-| Rules skipped | 299 (13.9%) |
+| Rules loaded OK | 1916 (89.4%) |
+| Rules skipped | 228 (10.6%) |
 
-**Headline load rate: 86.1%** (1845 / 2144 rules).
+**Headline load rate: 89.4%** (1916 / 2144 rules).
 
 ## Skip-reason histogram
 
@@ -23,20 +23,20 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 166 | 55.5% | 7.7% |
-| `generic mode (languages: [generic])` | 78 | 26.1% | 3.6% |
-| `loader rejected (other)` | 15 | 5.0% | 0.7% |
-| `unsupported language: apex` | 9 | 3.0% | 0.4% |
-| `mode: taint (unsupported language: scala)` | 5 | 1.7% | 0.2% |
-| `taint: pattern-propagators` | 5 | 1.7% | 0.2% |
-| `unsupported language: clojure` | 5 | 1.7% | 0.2% |
-| `unsupported language: html` | 4 | 1.3% | 0.2% |
-| `mode: taint (unsupported language: apex)` | 3 | 1.0% | 0.1% |
-| `mode: taint (unsupported language: bash)` | 3 | 1.0% | 0.1% |
-| `mode: taint (unsupported language: solidity)` | 3 | 1.0% | 0.1% |
-| `mode: taint (unsupported language: swift)` | 1 | 0.3% | 0.0% |
-| `unsupported language: dart` | 1 | 0.3% | 0.0% |
-| `unsupported language: xml` | 1 | 0.3% | 0.0% |
+| `mode: taint (unsupported shape)` | 166 | 72.8% | 7.7% |
+| `loader rejected (other)` | 15 | 6.6% | 0.7% |
+| `unsupported language: apex` | 9 | 3.9% | 0.4% |
+| `generic mode (languages: [generic])` | 7 | 3.1% | 0.3% |
+| `mode: taint (unsupported language: scala)` | 5 | 2.2% | 0.2% |
+| `taint: pattern-propagators` | 5 | 2.2% | 0.2% |
+| `unsupported language: clojure` | 5 | 2.2% | 0.2% |
+| `unsupported language: html` | 4 | 1.8% | 0.2% |
+| `mode: taint (unsupported language: apex)` | 3 | 1.3% | 0.1% |
+| `mode: taint (unsupported language: bash)` | 3 | 1.3% | 0.1% |
+| `mode: taint (unsupported language: solidity)` | 3 | 1.3% | 0.1% |
+| `mode: taint (unsupported language: swift)` | 1 | 0.4% | 0.0% |
+| `unsupported language: dart` | 1 | 0.4% | 0.0% |
+| `unsupported language: xml` | 1 | 0.4% | 0.0% |
 
 ## Priority order — operator/feature backlog
 
@@ -56,8 +56,8 @@ Rules foxguard cannot run because it has no tree-sitter grammar for the target l
 
 | Rank | Language to add | Rules unlocked |
 |---:|---|---:|
-| 1 | `generic mode (languages: [generic])` | 78 |
-| 2 | `unsupported language: apex` | 9 |
+| 1 | `unsupported language: apex` | 9 |
+| 2 | `generic mode (languages: [generic])` | 7 |
 | 3 | `mode: taint (unsupported language: scala)` | 5 |
 | 4 | `unsupported language: clojure` | 5 |
 | 5 | `unsupported language: html` | 4 |
@@ -68,7 +68,7 @@ Rules foxguard cannot run because it has no tree-sitter grammar for the target l
 | 10 | `unsupported language: dart` | 1 |
 | 11 | `unsupported language: xml` | 1 |
 
-Missing-grammar gaps account for **113 rules** (5.3% of all rules).
+Missing-grammar gaps account for **42 rules** (2.0% of all rules).
 
 ## Per-language breakdown
 
@@ -81,7 +81,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 | javascript | 243 | 199 | 44 | 81.9% |
 | regex | 237 | 225 | 12 | 94.9% |
 | java | 131 | 110 | 21 | 84.0% |
-| generic | 103 | 25 | 78 | 24.3% |
+| generic | 103 | 96 | 7 | 93.2% |
 | yaml | 100 | 99 | 1 | 99.0% |
 | go | 97 | 84 | 13 | 86.6% |
 | ruby | 92 | 69 | 23 | 75.0% |
@@ -113,7 +113,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **csharp**: `mode: taint (unsupported shape)` (10), `taint: pattern-propagators` (1)
 - **dart**: `unsupported language: dart` (1)
 - **dockerfile**: `loader rejected (other)` (1)
-- **generic**: `generic mode (languages: [generic])` (78)
+- **generic**: `generic mode (languages: [generic])` (7)
 - **go**: `mode: taint (unsupported shape)` (13)
 - **hcl**: `loader rejected (other)` (1)
 - **html**: `unsupported language: html` (4)
