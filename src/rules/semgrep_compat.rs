@@ -22,6 +22,75 @@ pub struct SemgrepFile {
     pub rules: Vec<SemgrepRuleYaml>,
 }
 
+/// Value that can be either a plain string pattern or a complex block
+/// (e.g. `pattern-not-inside:` with a nested `patterns:` sub-block).
+///
+/// The string form is used directly as a pattern.  The block form is
+/// deserialized into a raw YAML `Value` and then examined for an inner
+/// `pattern:` string to extract; if none is found the constraint is
+/// warn-skipped (graceful degradation consistent with the rest of the loader).
+///
+/// This supports rules like `last-user-is-root` in the Dockerfile registry
+/// which use:
+/// ```yaml
+/// pattern-not-inside:
+///   patterns:
+///     - pattern: |
+///         USER root
+///         ...
+///         USER $X
+///     - metavariable-pattern:
+///         metavariable: $X
+///         patterns:
+///         - pattern-not: root
+/// ```
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum PatternOrBlock {
+    /// Plain string — the common `pattern-not-inside: "..."` form.
+    Literal(String),
+    /// Complex block — accept any map/sequence so the YAML deserializes
+    /// without error; we extract a usable `pattern:` string from it, if any.
+    Block(serde_yaml_ng::Value),
+}
+
+impl PatternOrBlock {
+    /// Extract a usable pattern string from this value.
+    ///
+    /// - `Literal(s)` → `Some(s)`
+    /// - `Block(v)` → looks for the first `pattern:` string nested under a
+    ///   `patterns:` list; returns `None` (with a warning) if nothing usable
+    ///   is found.  The returned string is the first concrete sub-pattern that
+    ///   can be compiled; more complex constraints (metavariable-pattern etc.)
+    ///   in the block are gracefully dropped.
+    pub fn into_pattern_string(self) -> Option<String> {
+        match self {
+            PatternOrBlock::Literal(s) => Some(s),
+            PatternOrBlock::Block(v) => {
+                // Try to extract the first `pattern:` string from a
+                // `patterns: [{ pattern: "..." }, ...]` block.
+                if let Some(clauses) = v
+                    .get("patterns")
+                    .and_then(serde_yaml_ng::Value::as_sequence)
+                {
+                    for clause in clauses {
+                        if let Some(pat) =
+                            clause.get("pattern").and_then(serde_yaml_ng::Value::as_str)
+                        {
+                            return Some(pat.to_string());
+                        }
+                    }
+                }
+                eprintln!(
+                    "Warning: pattern-not-inside block has no extractable `pattern:` string; \
+                     skipping constraint"
+                );
+                None
+            }
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SemgrepRuleYaml {
     pub id: String,
@@ -37,8 +106,10 @@ pub struct SemgrepRuleYaml {
     pub pattern_not_regex: Option<String>,
     #[serde(default, rename = "pattern-inside")]
     pub pattern_inside: Option<String>,
+    /// `pattern-not-inside:` accepts either a plain string or a complex block
+    /// (e.g. `patterns: [...]` sub-block).  See [`PatternOrBlock`].
     #[serde(default, rename = "pattern-not-inside")]
-    pub pattern_not_inside: Option<String>,
+    pub pattern_not_inside: Option<PatternOrBlock>,
     #[serde(default)]
     pub patterns: Option<Vec<PatternClause>>,
     pub message: String,
@@ -75,8 +146,10 @@ pub struct PatternClause {
     pub pattern_not_regex: Option<String>,
     #[serde(default, rename = "pattern-inside")]
     pub pattern_inside: Option<String>,
+    /// `pattern-not-inside:` inside a `patterns:` block can be either a plain
+    /// string or a nested block (`patterns: [...]`).  See [`PatternOrBlock`].
     #[serde(default, rename = "pattern-not-inside")]
-    pub pattern_not_inside: Option<String>,
+    pub pattern_not_inside: Option<PatternOrBlock>,
     #[serde(default, rename = "pattern-either")]
     pub pattern_either: Option<Vec<PatternEntry>>,
     #[serde(default, rename = "metavariable-regex")]
@@ -1810,28 +1883,43 @@ fn build_regex_mode_rules(
     let mut positives: Vec<Regex> = Vec::new();
     let mut negatives: Vec<Regex> = Vec::new();
 
+    // Helper: push a compiled regex or warn-skip if unsupported features are used.
+    // Consistent with MetavariableRegexConstraint::from_yaml graceful degradation.
+    macro_rules! push_regex {
+        ($dest:expr, $re:expr, $label:expr) => {
+            match compile_regex($re) {
+                Ok(r) => $dest.push(r),
+                Err(e) => eprintln!(
+                    "Warning: regex-mode rule '{}' {} has unsupported regex ({}); \
+                     skipping clause",
+                    yaml.id, $label, e
+                ),
+            }
+        };
+    }
+
     // Top-level pattern-regex / pattern-not-regex.
     if let Some(ref re) = yaml.pattern_regex {
-        positives.push(compile_regex(re)?);
+        push_regex!(positives, re, "pattern-regex");
     }
     if let Some(ref re) = yaml.pattern_not_regex {
-        negatives.push(compile_regex(re)?);
+        push_regex!(negatives, re, "pattern-not-regex");
     }
 
     // patterns: [...] blocks — collect pattern-regex / pattern-not-regex subclauses.
     if let Some(ref clauses) = yaml.patterns {
         for clause in clauses {
             if let Some(ref re) = clause.pattern_regex {
-                positives.push(compile_regex(re)?);
+                push_regex!(positives, re, "patterns[].pattern-regex");
             }
             if let Some(ref re) = clause.pattern_not_regex {
-                negatives.push(compile_regex(re)?);
+                push_regex!(negatives, re, "patterns[].pattern-not-regex");
             }
             // Nested pattern-either entries may also carry pattern-regex.
             if let Some(ref entries) = clause.pattern_either {
                 for entry in entries {
                     if let Some(ref re) = entry.pattern_regex {
-                        positives.push(compile_regex(re)?);
+                        push_regex!(positives, re, "patterns[].pattern-either[].pattern-regex");
                     }
                 }
             }
@@ -1842,7 +1930,7 @@ fn build_regex_mode_rules(
     if let Some(ref entries) = yaml.pattern_either {
         for entry in entries {
             if let Some(ref re) = entry.pattern_regex {
-                positives.push(compile_regex(re)?);
+                push_regex!(positives, re, "pattern-either[].pattern-regex");
             }
         }
     }
@@ -2013,7 +2101,19 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                 )));
             }
             if let Some(ref regex) = clause.pattern_regex {
-                positives.push(PatternMatcher::Regex(compile_regex(regex)?));
+                // Gracefully skip individual pattern-regex clauses that use
+                // unsupported features (lookahead/lookbehind, backreferences,
+                // etc.) — consistent with MetavariableRegexConstraint::from_yaml.
+                // The sibling clauses are unaffected; the rule loads with a
+                // broader but functional matcher.
+                match compile_regex(regex) {
+                    Ok(r) => positives.push(PatternMatcher::Regex(r)),
+                    Err(e) => eprintln!(
+                        "Warning: patterns: clause has unsupported pattern-regex ({}); \
+                         skipping clause",
+                        e
+                    ),
+                }
             }
             if let Some(ref pn) = clause.pattern_not {
                 negatives.push(NegativeMatcher::Pattern(CompiledAstPattern::new(
@@ -2022,13 +2122,25 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                 )));
             }
             if let Some(ref regex) = clause.pattern_not_regex {
-                negatives.push(NegativeMatcher::Regex(compile_regex(regex)?));
+                // Gracefully skip unsupported negative-regex clauses too.
+                match compile_regex(regex) {
+                    Ok(r) => negatives.push(NegativeMatcher::Regex(r)),
+                    Err(e) => eprintln!(
+                        "Warning: patterns: clause has unsupported pattern-not-regex ({}); \
+                         skipping clause",
+                        e
+                    ),
+                }
             }
             if let Some(ref pi) = clause.pattern_inside {
                 inside = Some(CompiledAstPattern::new(pi.clone(), lang));
             }
-            if let Some(ref pni) = clause.pattern_not_inside {
-                not_inside = Some(CompiledAstPattern::new(pni.clone(), lang));
+            if let Some(pni) = clause.pattern_not_inside.clone() {
+                if let Some(pat_str) = pni.into_pattern_string() {
+                    not_inside = Some(CompiledAstPattern::new(pat_str, lang));
+                }
+                // If into_pattern_string returns None it already printed a warning;
+                // the constraint is gracefully skipped.
             }
             if let Some(ref pe) = clause.pattern_either {
                 let matchers = build_either_matchers(pe, lang)?;
@@ -2089,7 +2201,15 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
         )));
     }
     if let Some(ref regex) = yaml.pattern_regex {
-        positives.push(PatternMatcher::Regex(compile_regex(regex)?));
+        // Gracefully skip unsupported top-level pattern-regex.
+        match compile_regex(regex) {
+            Ok(r) => positives.push(PatternMatcher::Regex(r)),
+            Err(e) => eprintln!(
+                "Warning: top-level pattern-regex uses unsupported features ({}); \
+                 skipping pattern",
+                e
+            ),
+        }
     }
     if let Some(ref either) = yaml.pattern_either {
         positives.push(PatternMatcher::Either(build_either_matchers(either, lang)?));
@@ -2101,13 +2221,30 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
         )));
     }
     if let Some(ref regex) = yaml.pattern_not_regex {
-        negatives.push(NegativeMatcher::Regex(compile_regex(regex)?));
+        // Gracefully skip unsupported top-level pattern-not-regex.
+        match compile_regex(regex) {
+            Ok(r) => negatives.push(NegativeMatcher::Regex(r)),
+            Err(e) => eprintln!(
+                "Warning: top-level pattern-not-regex uses unsupported features ({}); \
+                 skipping pattern",
+                e
+            ),
+        }
     }
+
+    // Extract the `pattern-not-inside` string from either the literal or block form.
+    // `PatternOrBlock::into_pattern_string` is a consuming method; we clone so
+    // the borrow checker is happy.
+    let not_inside_pat: Option<CompiledAstPattern> =
+        yaml.pattern_not_inside.clone().and_then(|pob| {
+            pob.into_pattern_string()
+                .map(|pat| CompiledAstPattern::new(pat, lang))
+        });
 
     if positives.len() == 1
         && negatives.is_empty()
         && yaml.pattern_inside.is_none()
-        && yaml.pattern_not_inside.is_none()
+        && not_inside_pat.is_none()
     {
         return Ok(positives.into_iter().next().expect("checked len == 1"));
     }
@@ -2120,10 +2257,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                 .pattern_inside
                 .as_ref()
                 .map(|pattern| CompiledAstPattern::new(pattern.clone(), lang)),
-            not_inside: yaml
-                .pattern_not_inside
-                .as_ref()
-                .map(|pattern| CompiledAstPattern::new(pattern.clone(), lang)),
+            not_inside: not_inside_pat,
             metavariable_regexes: Vec::new(),
             metavariable_comparisons: Vec::new(),
             metavariable_patterns: Vec::new(),
@@ -2150,7 +2284,19 @@ fn build_either_matchers(
             )));
         }
         if let Some(ref regex) = entry.pattern_regex {
-            matchers.push(PatternMatcher::Regex(compile_regex(regex)?));
+            // Gracefully skip individual pattern-regex entries that use
+            // unsupported features (lookahead/lookbehind, backreferences, etc.)
+            // — consistent with MetavariableRegexConstraint::from_yaml.  The
+            // remaining entries in the pattern-either list are still compiled;
+            // the rule loads with a broader but functional matcher.
+            match compile_regex(regex) {
+                Ok(r) => matchers.push(PatternMatcher::Regex(r)),
+                Err(e) => eprintln!(
+                    "Warning: pattern-either entry has unsupported pattern-regex ({}); \
+                     skipping entry",
+                    e
+                ),
+            }
         }
     }
 
@@ -2163,7 +2309,137 @@ fn compile_regex(pattern: &str) -> Result<Regex, String> {
     // `MULTILINE` flag off for the same semantics (match at absolute end).
     // We normalise it here so rules that use `\Z` load successfully.
     let normalised = pattern.replace(r"\Z", "$");
+
+    // The Rust `regex` crate is stricter than PCRE/Python `re` about bare `{`.
+    // In PCRE, a `{` not followed by a valid quantifier `{N}`, `{N,}`, or
+    // `{N,M}` is treated as a literal brace.  In Rust's `regex` crate it
+    // causes a hard parse error ("repetition operator missing expression" or
+    // "repetition quantifier expects a valid decimal").  Many Semgrep registry
+    // rules written for PCRE contain template-syntax patterns like `{{` or
+    // `{%` that use literal braces without escaping.  We apply a conservative
+    // normalisation pass that escapes any `{` not already escaped and not
+    // followed by a valid quantifier body.
+    let normalised = escape_bare_braces(&normalised);
+
     Regex::new(&normalised).map_err(|e| format!("Invalid pattern-regex '{}': {}", pattern, e))
+}
+
+/// Escape bare `{` characters that Rust's `regex` crate would reject as
+/// invalid quantifier-start tokens.
+///
+/// A `{` is a valid quantifier start when it is:
+/// - preceded by an even number of backslashes (i.e. not already escaped), and
+/// - followed by one or two decimal sequences matching `N` or `N,M`.
+///
+/// Any `{` not matching that shape is escaped to `\{`.  This converts
+/// PCRE-style template patterns like `{{` (Django/Flask/Jinja) or `{%`
+/// (template tag) into the `\{\{` / `\{%` forms that Rust's `regex` crate
+/// accepts without changing any valid quantifiers such as `{20}` or `{1,3}`.
+fn escape_bare_braces(s: &str) -> String {
+    // We walk byte-by-byte, tracking:
+    //   - whether the previous byte was a backslash (escape tracking)
+    //   - whether we're inside a character class `[...]` (quantifiers are
+    //     literal inside classes)
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+    let mut out = String::with_capacity(n + 8);
+    let mut i = 0;
+    let mut backslash_run = 0usize; // number of consecutive preceding backslashes
+    let mut in_class = false; // inside [...]
+
+    while i < n {
+        let b = bytes[i];
+
+        match b {
+            b'\\' => {
+                backslash_run += 1;
+                out.push(b as char);
+                i += 1;
+            }
+            b'[' if backslash_run.is_multiple_of(2) => {
+                in_class = true;
+                backslash_run = 0;
+                out.push('[');
+                i += 1;
+            }
+            b']' if backslash_run.is_multiple_of(2) => {
+                in_class = false;
+                backslash_run = 0;
+                out.push(']');
+                i += 1;
+            }
+            b'{' if backslash_run.is_multiple_of(2) && !in_class => {
+                backslash_run = 0;
+                // Peek ahead: is this a valid quantifier `{N}`, `{N,}`, `{N,M}`?
+                if looks_like_quantifier(bytes, i + 1) {
+                    out.push('{');
+                } else {
+                    // Not a valid quantifier — escape it.
+                    out.push_str(r"\{");
+                }
+                i += 1;
+            }
+            b'}' if backslash_run.is_multiple_of(2) && !in_class => {
+                backslash_run = 0;
+                // A `}` that closes a `{` we already escaped (or a stray `}`)
+                // should also be escaped.  We do this conservatively: only
+                // escape `}` when it is NOT immediately closing a valid
+                // quantifier opened in the pattern.  Since we rewrote all
+                // non-quantifier `{` above, any remaining unmatched `}` is
+                // also bare and should be `\}`.
+                //
+                // Simple heuristic: `}` not preceded by digits or `,` + digit
+                // is treated as a stray closing brace and escaped.
+                let prev = out.as_bytes().last().copied();
+                if matches!(prev, Some(b'0'..=b'9') | Some(b',') | Some(b'{')) {
+                    // Looks like it closes a quantifier we left open — leave as-is.
+                    out.push('}');
+                } else {
+                    out.push_str(r"\}");
+                }
+                i += 1;
+            }
+            _ => {
+                backslash_run = 0;
+                out.push(b as char);
+                i += 1;
+            }
+        }
+    }
+
+    out
+}
+
+/// Returns `true` when the bytes starting at `pos` look like the inside of a
+/// valid regex quantifier: `N}`, `N,}`, or `N,M}` where N and M are decimal
+/// integers.
+fn looks_like_quantifier(bytes: &[u8], pos: usize) -> bool {
+    let n = bytes.len();
+    let mut i = pos;
+
+    // At least one digit required.
+    if i >= n || !bytes[i].is_ascii_digit() {
+        return false;
+    }
+    while i < n && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i >= n {
+        return false;
+    }
+
+    match bytes[i] {
+        b'}' => true, // `{N}`
+        b',' => {
+            i += 1;
+            // Optional second number.
+            while i < n && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            i < n && bytes[i] == b'}'
+        }
+        _ => false,
+    }
 }
 
 fn compile_globset(patterns: &[String]) -> Result<Option<GlobSet>, String> {
@@ -3922,5 +4198,309 @@ rules:
         let rules =
             parse_semgrep_file(f.path()).expect("json language rule must load without error");
         assert!(!rules.is_empty(), "expected rules for json language");
+    }
+
+    // ─── Regression tests for the PR #fix-loader-rejected-2 batch ────────────
+    // Each test names the specific registry rule (or shape) that was previously
+    // rejected and now must load.
+
+    /// Bare `{{` in a `pattern-regex` (Flask/Django template rules).
+    ///
+    /// Regression for `template-unescaped-with-safe`, `template-autoescape-off`,
+    /// `template-var-unescaped-with-safeseq`, `debug-template-tag`, etc.
+    /// The Rust `regex` crate rejects bare `{` not forming a valid quantifier;
+    /// we now escape them in `compile_regex` via `escape_bare_braces`.
+    #[test]
+    fn test_bare_double_brace_in_pattern_regex_loads() {
+        let yaml = r#"
+rules:
+  - id: test/flask-template-safe-filter
+    pattern-regex: '{{.*?\|\s*safe(\s*}})?'
+    message: Jinja2 template uses |safe filter
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include:
+        - "*.html"
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path())
+            .expect("pattern-regex with bare {{ must load after brace normalisation");
+        assert!(
+            !rules.is_empty(),
+            "bare {{ pattern-regex rule must produce at least one rule instance"
+        );
+    }
+
+    /// Bare `{%` in a `pattern-regex` (Flask autoescape-off rule).
+    ///
+    /// Regression for `template-autoescape-off` (flask, django).
+    #[test]
+    fn test_bare_brace_percent_in_pattern_regex_loads() {
+        let yaml = r#"
+rules:
+  - id: test/flask-autoescape-off
+    pattern-regex: '{%\s*autoescape\s+false\s*%}'
+    message: Flask autoescape disabled
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include:
+        - "*.html"
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path())
+            .expect("pattern-regex with bare {% must load after brace normalisation");
+        assert!(
+            !rules.is_empty(),
+            "bare {{%}} pattern-regex rule must produce at least one rule instance"
+        );
+    }
+
+    /// `{` followed by `[` (not a digit) in a `pattern-regex` (slow-pattern-general-func).
+    ///
+    /// Regression for `slow-pattern-general-func` (yaml language).
+    #[test]
+    fn test_bare_brace_before_bracket_in_pattern_regex_loads() {
+        // `{[\s\n]*` — the `{` is not a valid quantifier start here.
+        let yaml = r#"
+rules:
+  - id: test/slow-pattern
+    pattern-regex: 'function[^{]*{[\s\n]*\.\.\.[\s\n]*}'
+    message: Slow pattern
+    severity: WARNING
+    languages: [yaml]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path())
+            .expect("pattern-regex with bare { before [ must load after brace normalisation");
+        assert!(
+            !rules.is_empty(),
+            "rule must produce at least one instance after brace normalisation"
+        );
+    }
+
+    /// `!{.*?}` in a `pattern-either` entry (Pug explicit-unescape rule).
+    ///
+    /// Regression for `template-explicit-unescape` (pug).  The rule uses two
+    /// `pattern-either` entries; the `!{.*?}` entry previously caused the
+    /// whole rule to fail.  After the brace-normalisation fix the entry loads
+    /// and the rule produces matchers for the remaining entry too.
+    #[test]
+    fn test_bare_brace_in_pattern_either_entry_loads() {
+        let yaml = r#"
+rules:
+  - id: test/pug-unescape
+    pattern-either:
+      - pattern-regex: '\w.*(!=)[^=].*'
+      - pattern-regex: '!{.*?}'
+    message: Pug explicit unescape
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include:
+        - "*.pug"
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path())
+            .expect("pattern-either with bare { entry must load after brace normalisation");
+        assert!(
+            !rules.is_empty(),
+            "rule with pattern-either including bare-brace regex must load"
+        );
+    }
+
+    /// Lookahead in a `pattern-either` entry must be gracefully skipped.
+    ///
+    /// Regression for `aws-lambda-environment-credentials` (hcl): its
+    /// `pattern-either:` block mixes `pattern-inside:` entries (which work)
+    /// with `pattern-regex:` entries that use lookbehind (which Rust's
+    /// `regex` crate rejects).  The bad `pattern-regex` entries should be
+    /// warn-skipped; the two `pattern-inside` entries should still compile,
+    /// and the rule should load.
+    #[test]
+    fn test_lookahead_in_pattern_either_entry_is_gracefully_skipped() {
+        let yaml = r#"
+rules:
+  - id: test/aws-credential-detection
+    patterns:
+      - pattern-inside: |
+          resource "$ANY" $ANYTHING {
+            ...
+          }
+      - pattern-either:
+          - pattern-inside: 'AWS_ACCESS_KEY_ID = "$Y"'
+          - pattern-regex: '(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])'
+          - pattern-inside: 'AWS_SECRET_ACCESS_KEY = "$Y"'
+      - focus-metavariable: $Y
+    message: Hardcoded AWS credential
+    severity: ERROR
+    languages: [hcl]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path())
+            .expect("rule with lookahead in pattern-either must load with the bad entry skipped");
+        // The rule loads (the two pattern-inside entries survive); it may not
+        // match the exact HCL shape but it must not be rejected entirely.
+        assert!(
+            !rules.is_empty(),
+            "rule must produce at least one rule instance"
+        );
+    }
+
+    /// `pattern-not-regex` with a backreference must be gracefully skipped.
+    ///
+    /// Regression for `detected-artifactory-password`: its `patterns:` block
+    /// has valid `pattern-regex` positives but a `pattern-not-regex` using
+    /// `\1` (backreference).  The bad negative should be warn-skipped and the
+    /// rule should load with the remaining patterns intact.
+    #[test]
+    fn test_backreference_in_pattern_not_regex_is_gracefully_skipped() {
+        let yaml = r#"
+rules:
+  - id: test/artifactory-password
+    patterns:
+      - pattern-regex: '\bAP[0-9A-F][a-zA-Z0-9]{8,}'
+      - pattern-regex: '(?i)artifactory'
+      - pattern-not-regex: '(\w|\.|\*)\1{4}'
+    languages: [regex]
+    message: Artifactory token detected
+    severity: ERROR
+    paths:
+      exclude:
+        - "*.svg"
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).expect(
+            "rule with backreference in pattern-not-regex must load with that entry skipped",
+        );
+        assert!(
+            !rules.is_empty(),
+            "rule must produce at least one rule instance"
+        );
+    }
+
+    /// `pattern-not-inside:` with a nested `patterns:` block must load.
+    ///
+    /// Regression for `last-user-is-root` (dockerfile): the rule uses
+    /// `pattern-not-inside:` with a map value (`patterns: [...]`) instead of
+    /// a plain string.  Previously the YAML deserializer rejected this with
+    /// "invalid type: map, expected a string".
+    ///
+    /// After the fix, the outermost `pattern:` string is extracted from the
+    /// nested block and used as the `not_inside` constraint; the inner
+    /// `metavariable-pattern:` sub-constraint is gracefully dropped.
+    #[test]
+    fn test_pattern_not_inside_nested_block_loads() {
+        let yaml = r#"
+rules:
+  - id: test/last-user-is-root
+    patterns:
+      - pattern: USER root
+      - pattern-not-inside:
+          patterns:
+            - pattern: |
+                USER root
+                ...
+                USER $X
+            - metavariable-pattern:
+                metavariable: $X
+                patterns:
+                  - pattern-not: root
+    message: Last container user is root
+    severity: ERROR
+    languages: [dockerfile]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path())
+            .expect("rule with nested patterns: block inside pattern-not-inside: must load");
+        assert!(
+            !rules.is_empty(),
+            "rule must produce at least one rule instance"
+        );
+    }
+
+    /// `{{{` triple brace in a `pattern-either` (Mustache explicit-unescape).
+    ///
+    /// Regression for `template-explicit-unescape` (mustache): its second
+    /// `pattern-either` entry `{{[\s]*&.*}}` should load after brace
+    /// normalisation.  The first entry (which also has a lookahead) is
+    /// gracefully skipped; the rule still loads from the second entry.
+    #[test]
+    fn test_double_brace_ampersand_pattern_in_pattern_either_loads() {
+        let yaml = r#"
+rules:
+  - id: test/mustache-unescape
+    pattern-either:
+      - pattern-regex: '{{{((?!include).)*?}}}'
+      - pattern-regex: '{{[\s]*&.*}}'
+    message: Mustache explicit unescape
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include:
+        - "*.mustache"
+        - "*.hbs"
+        - "*.html"
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).expect(
+            "mustache pattern-either with brace+lookahead entry must load (second entry survives)",
+        );
+        assert!(
+            !rules.is_empty(),
+            "rule must produce at least one rule instance from the second pattern-either entry"
+        );
+    }
+
+    /// `brace_normalisation` unit tests for the `escape_bare_braces` helper.
+    ///
+    /// Verifies that:
+    /// - `{N}`, `{N,}`, `{N,M}` quantifiers are left untouched.
+    /// - `{{`, `{%`, `{[`, `!{` (non-quantifier) are escaped to `\{`.
+    /// - Already-escaped `\{` is not double-escaped.
+    /// - Character classes `[{]` are left alone (the `{` inside is already
+    ///   literal in that context).
+    #[test]
+    fn test_escape_bare_braces_quantifiers_unchanged() {
+        // Valid quantifiers must pass through unchanged.
+        assert_eq!(escape_bare_braces(r"[A-Z]{20}"), r"[A-Z]{20}");
+        assert_eq!(escape_bare_braces(r"foo{1,3}bar"), r"foo{1,3}bar");
+        assert_eq!(escape_bare_braces(r"\w{8,}"), r"\w{8,}");
+    }
+
+    #[test]
+    fn test_escape_bare_braces_template_syntax_escaped() {
+        // Template syntax uses `{{` / `{%` without escaping — these must be
+        // rewritten to `\{` forms so Rust's `regex` crate accepts them.
+        let result = escape_bare_braces(r"{{.*?\|\s*safe(\s*}})?");
+        // The compiled regex must be accepted by Rust's regex crate.
+        Regex::new(&result).expect("normalised regex must compile");
+
+        let result2 = escape_bare_braces(r"{%\s*autoescape\s+false\s*%}");
+        Regex::new(&result2).expect("normalised regex must compile");
+
+        let result3 = escape_bare_braces(r"!{.*?}");
+        Regex::new(&result3).expect("normalised regex must compile");
+    }
+
+    #[test]
+    fn test_escape_bare_braces_already_escaped_not_doubled() {
+        // `\{` is already escaped; `escape_bare_braces` must not add another `\`.
+        let input = r"\{foo\}";
+        let result = escape_bare_braces(input);
+        assert_eq!(
+            result, input,
+            "already-escaped braces must not be double-escaped"
+        );
+    }
+
+    #[test]
+    fn test_escape_bare_braces_inside_char_class_unchanged() {
+        // `[{]` — `{` inside a character class is already literal; the
+        // normalisation should leave it (and its surrounding class) intact.
+        let input = r"[{}\s]*";
+        let result = escape_bare_braces(input);
+        Regex::new(&result).expect("normalised regex must compile");
     }
 }
