@@ -16,16 +16,19 @@
 //!
 //! ## Scope
 //!
-//! Supported: `pattern`, `pattern-either`, `pattern-not`, `pattern-regex`
-//! (passthrough), `...` ellipsis, `$METAVAR` binding with equality
-//! enforcement, and `paths.include` / `paths.exclude` scoping (handled by the
-//! shared [`PathFilter`] on the compat side).
+//! Supported: `pattern`, `pattern-either`, `patterns:` (AND-block with
+//! `pattern:`, `pattern-not:`, `pattern-regex:`, `pattern-not-regex:`, and
+//! nested `pattern-either:`), `pattern-regex:` / `pattern-not-regex:`
+//! (passthrough against raw text), `...` ellipsis, `$METAVAR` binding with
+//! equality enforcement, and `paths.include` / `paths.exclude` scoping
+//! (handled by the shared [`PathFilter`] on the compat side).
 //!
 //! Deliberately **not** implemented here: `metavariable-comparison` and
 //! `metavariable-pattern` (owned by other modules), `pattern-inside` /
-//! `pattern-not-inside` for generic mode, and the deep-vs-shallow ellipsis
-//! brace-aware matching semgrep applies to brace-delimited languages. Generic
-//! mode here treats the file as a flat token stream.
+//! `pattern-not-inside` for generic mode (warn-skipped gracefully), and the
+//! deep-vs-shallow ellipsis brace-aware matching semgrep applies to
+//! brace-delimited languages. Generic mode here treats the file as a flat
+//! token stream.
 
 use crate::rules::common::get_source_line;
 use crate::rules::semgrep_compat::PathFilter;
@@ -266,6 +269,15 @@ enum GenericMatcher {
         positive: Box<GenericMatcher>,
         negatives: Vec<GenericMatcher>,
     },
+    /// `patterns:` AND-block: all positives must produce at least one match;
+    /// matches from later positives are intersected (must overlap) with the
+    /// accumulated set; negatives exclude any overlapping matches.
+    ///
+    /// This mirrors the AST-engine `Combined` path but over generic tokens.
+    Combined {
+        positives: Vec<GenericMatcher>,
+        negatives: Vec<GenericMatcher>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -298,13 +310,71 @@ impl GenericMatcher {
             } => {
                 let mut matches = positive.find_all(source, tokens);
                 if !negatives.is_empty() {
-                    let neg: Vec<GenericMatch> = negatives
-                        .iter()
-                        .flat_map(|n| n.find_all(source, tokens))
-                        .collect();
-                    matches.retain(|m| !neg.iter().any(|n| overlaps(m, n)));
+                    apply_negatives(&mut matches, negatives, source, tokens);
                 }
                 matches
+            }
+            GenericMatcher::Combined {
+                positives,
+                negatives,
+            } => {
+                // AND semantics: start with all matches from the first positive,
+                // then intersect with each subsequent positive (keep only those
+                // that overlap at least one match from the next positive).
+                // Finally, apply negatives.
+                let mut candidates: Option<Vec<GenericMatch>> = None;
+                for pos in positives {
+                    let hits = pos.find_all(source, tokens);
+                    candidates = Some(match candidates {
+                        None => hits,
+                        Some(prev) => {
+                            // Intersect: keep prev matches that overlap ≥1 hit.
+                            prev.into_iter()
+                                .filter(|p| hits.iter().any(|h| overlaps(p, h)))
+                                .collect()
+                        }
+                    });
+                }
+                let mut results = candidates.unwrap_or_default();
+                if !negatives.is_empty() {
+                    apply_negatives(&mut results, negatives, source, tokens);
+                }
+                results
+            }
+        }
+    }
+}
+
+/// Apply negative matchers to a list of candidate matches.
+///
+/// Negative semantics:
+/// - `Pattern` negatives: span-overlap — a positive match is dropped if any
+///   negative *token-pattern* match overlaps its byte range.
+/// - `Regex` negatives: file-level — if the regex matches **anywhere** in the
+///   file, **all** positive matches are dropped. This mirrors Semgrep's
+///   `pattern-not-regex` semantics in generic/regex mode where the regex is
+///   evaluated against the whole file, not individual match spans.
+fn apply_negatives(
+    positives: &mut Vec<GenericMatch>,
+    negatives: &[GenericMatcher],
+    source: &str,
+    tokens: &[Token<'_>],
+) {
+    for neg in negatives {
+        if positives.is_empty() {
+            break;
+        }
+        match neg {
+            // Regex negative: file-level — if it matches anywhere, clear all.
+            GenericMatcher::Regex(re) => {
+                if re.is_match(source) {
+                    positives.clear();
+                }
+            }
+            // Pattern/Either/Filtered/Combined negatives: span-overlap.
+            _ => {
+                let neg_matches = neg.find_all(source, tokens);
+                positives.retain(|m| !neg_matches.iter().any(|n| overlaps(m, n)));
             }
         }
     }
@@ -501,43 +571,172 @@ fn byte_offset_to_position(source: &str, byte_offset: usize) -> (usize, usize) {
 
 // ─── Construction (called from the compat bridge) ──────────────────────────────
 
-/// Build the generic matcher tree from the flat fields of a generic rule.
-///
-/// `pattern`, `pattern-regex`, `pattern-either`, and `pattern-not` are the
-/// generic-mode subset we support; `patterns:` AND-blocks fall back to the
-/// first positive (semgrep generic packs in our scope do not use AND-blocks).
-fn build_matcher(
-    pattern: Option<&str>,
-    pattern_regex: Option<&str>,
-    pattern_either: &[String],
-    pattern_not: Option<&str>,
-) -> Result<GenericMatcher, String> {
-    let positive = if let Some(p) = pattern {
-        GenericMatcher::Pattern(compile_pattern(p))
-    } else if let Some(re) = pattern_regex {
-        GenericMatcher::Regex(compile_regex(re)?)
-    } else if !pattern_either.is_empty() {
-        let inner = pattern_either
-            .iter()
-            .map(|p| GenericMatcher::Pattern(compile_pattern(p)))
-            .collect();
-        GenericMatcher::Either(inner)
-    } else {
-        return Err("generic rule has no pattern / pattern-regex / pattern-either".to_string());
-    };
+// ─── Clause types for `patterns:` AND-blocks ────────────────────────────────
 
-    if let Some(pn) = pattern_not {
-        Ok(GenericMatcher::Filtered {
-            positive: Box::new(positive),
-            negatives: vec![GenericMatcher::Pattern(compile_pattern(pn))],
-        })
+/// A single entry inside a `patterns:` (AND) block for generic mode.
+///
+/// Supports `pattern:`, `pattern-not:`, `pattern-regex:`, `pattern-not-regex:`,
+/// and `pattern-either:` (OR of patterns). Unsupported sub-clauses such as
+/// `pattern-inside:` / `pattern-not-inside:` and constraint clauses are
+/// warn-skipped at the caller side; they do not abort sibling clauses.
+#[derive(Debug, Clone, Default)]
+pub struct GenericPatternsClause {
+    /// A positive spacegrep pattern that must match.
+    pub pattern: Option<String>,
+    /// A positive raw-text regex that must match.
+    pub pattern_regex: Option<String>,
+    /// OR-list of patterns to treat as a single positive sub-matcher.
+    pub pattern_either: Vec<GenericEitherEntry>,
+    /// A negative spacegrep pattern that must NOT overlap any positive match.
+    pub pattern_not: Option<String>,
+    /// A negative raw-text regex that must NOT match anywhere.
+    pub pattern_not_regex: Option<String>,
+}
+
+/// One arm inside a `pattern-either:` list.
+#[derive(Debug, Clone, Default)]
+pub struct GenericEitherEntry {
+    pub pattern: Option<String>,
+    pub pattern_regex: Option<String>,
+}
+
+// ─── Matcher builders ─────────────────────────────────────────────────────────
+
+/// Build a single `GenericMatcher` from a `pattern-either:` OR-list.
+fn build_either_matcher(entries: &[GenericEitherEntry]) -> Result<GenericMatcher, String> {
+    let mut inner = Vec::new();
+    for entry in entries {
+        if let Some(ref p) = entry.pattern {
+            inner.push(GenericMatcher::Pattern(compile_pattern(p)));
+        } else if let Some(ref re) = entry.pattern_regex {
+            inner.push(GenericMatcher::Regex(compile_regex(re)?));
+        }
+    }
+    if inner.is_empty() {
+        return Err(
+            "pattern-either: block has no supported pattern or pattern-regex entries".to_string(),
+        );
+    }
+    if inner.len() == 1 {
+        Ok(inner.into_iter().next().expect("checked len==1"))
     } else {
-        Ok(positive)
+        Ok(GenericMatcher::Either(inner))
     }
 }
 
+/// Build the generic matcher tree from the full rule spec.
+///
+/// Dispatch order:
+/// 1. `patterns:` AND-block if present → `Combined` matcher.
+/// 2. Top-level `pattern-either:` → `Either` matcher (with optional `pattern-not`).
+/// 3. Top-level `pattern:` → `Pattern` (with optional `pattern-not`).
+/// 4. Top-level `pattern-regex:` → `Regex` (with optional `pattern-not-regex`).
+/// 5. Else → error (no expressible matcher).
+fn build_matcher(spec: &GenericRuleSpec<'_>) -> Result<GenericMatcher, String> {
+    // ── 1. `patterns:` AND-block ──────────────────────────────────────────────
+    if !spec.patterns_clauses.is_empty() {
+        let mut positives: Vec<GenericMatcher> = Vec::new();
+        let mut negatives: Vec<GenericMatcher> = Vec::new();
+
+        for clause in &spec.patterns_clauses {
+            // Positive matchers (at most one per clause in practice).
+            if let Some(ref p) = clause.pattern {
+                positives.push(GenericMatcher::Pattern(compile_pattern(p)));
+            }
+            if let Some(ref re) = clause.pattern_regex {
+                match compile_regex(re) {
+                    Ok(r) => positives.push(GenericMatcher::Regex(r)),
+                    Err(e) => eprintln!("Warning: generic patterns clause has invalid pattern-regex: {e}; skipping clause"),
+                }
+            }
+            if !clause.pattern_either.is_empty() {
+                match build_either_matcher(&clause.pattern_either) {
+                    Ok(m) => positives.push(m),
+                    Err(e) => eprintln!("Warning: generic patterns clause has invalid pattern-either: {e}; skipping clause"),
+                }
+            }
+            // Negative matchers.
+            if let Some(ref pn) = clause.pattern_not {
+                negatives.push(GenericMatcher::Pattern(compile_pattern(pn)));
+            }
+            if let Some(ref re) = clause.pattern_not_regex {
+                match compile_regex(re) {
+                    Ok(r) => negatives.push(GenericMatcher::Regex(r)),
+                    Err(e) => eprintln!("Warning: generic patterns clause has invalid pattern-not-regex: {e}; skipping clause"),
+                }
+            }
+        }
+
+        if positives.is_empty() {
+            return Err(
+                "generic patterns: block has no supported positive matchers (pattern, pattern-regex, or pattern-either)"
+                    .to_string(),
+            );
+        }
+
+        // Simplify: a single positive with negatives → Filtered; multiple → Combined.
+        if positives.len() == 1 && negatives.is_empty() {
+            return Ok(positives.into_iter().next().expect("checked len==1"));
+        }
+        if positives.len() == 1 {
+            return Ok(GenericMatcher::Filtered {
+                positive: Box::new(positives.into_iter().next().expect("checked len==1")),
+                negatives,
+            });
+        }
+        return Ok(GenericMatcher::Combined {
+            positives,
+            negatives,
+        });
+    }
+
+    // ── 2–5. Top-level single-operator forms ──────────────────────────────────
+
+    // Helper: wrap in Filtered when there are negatives.
+    let wrap_with_negatives = |positive: GenericMatcher,
+                               pattern_not: Option<&str>,
+                               pattern_not_regex: Option<&str>|
+     -> Result<GenericMatcher, String> {
+        let mut negatives: Vec<GenericMatcher> = Vec::new();
+        if let Some(pn) = pattern_not {
+            negatives.push(GenericMatcher::Pattern(compile_pattern(pn)));
+        }
+        if let Some(re) = pattern_not_regex {
+            negatives.push(GenericMatcher::Regex(compile_regex(re)?));
+        }
+        if negatives.is_empty() {
+            Ok(positive)
+        } else {
+            Ok(GenericMatcher::Filtered {
+                positive: Box::new(positive),
+                negatives,
+            })
+        }
+    };
+
+    if !spec.pattern_either.is_empty() {
+        let positive = build_either_matcher(&spec.pattern_either)?;
+        return wrap_with_negatives(positive, spec.pattern_not, spec.pattern_not_regex);
+    }
+
+    if let Some(p) = spec.pattern {
+        let positive = GenericMatcher::Pattern(compile_pattern(p));
+        return wrap_with_negatives(positive, spec.pattern_not, spec.pattern_not_regex);
+    }
+
+    if let Some(re) = spec.pattern_regex {
+        let positive = GenericMatcher::Regex(compile_regex(re)?);
+        return wrap_with_negatives(positive, spec.pattern_not, spec.pattern_not_regex);
+    }
+
+    Err("generic rule has no expressible matcher (no pattern / pattern-regex / pattern-either / patterns)".to_string())
+}
+
 fn compile_regex(pattern: &str) -> Result<Regex, String> {
-    Regex::new(pattern).map_err(|e| format!("Invalid pattern-regex '{pattern}': {e}"))
+    // `\Z` is a Python/PCRE end-of-string anchor; normalise to `$` for the
+    // Rust `regex` crate (same semantics with MULTILINE off).
+    let normalised = pattern.replace(r"\Z", "$");
+    Regex::new(&normalised).map_err(|e| format!("Invalid pattern-regex '{pattern}': {e}"))
 }
 
 /// Parameters extracted from the compat YAML layer, kept as a small POD so the
@@ -547,10 +746,19 @@ pub struct GenericRuleSpec<'a> {
     pub message: &'a str,
     pub severity: Severity,
     pub cwe: Option<String>,
+    /// Top-level `pattern:`.
     pub pattern: Option<&'a str>,
+    /// Top-level `pattern-regex:`.
     pub pattern_regex: Option<&'a str>,
-    pub pattern_either: Vec<String>,
+    /// Top-level `pattern-either:` entries (may contain `pattern:` and/or
+    /// `pattern-regex:` arms).
+    pub pattern_either: Vec<GenericEitherEntry>,
+    /// Top-level `pattern-not:`.
     pub pattern_not: Option<&'a str>,
+    /// Top-level `pattern-not-regex:`.
+    pub pattern_not_regex: Option<&'a str>,
+    /// `patterns:` AND-block clauses.
+    pub patterns_clauses: Vec<GenericPatternsClause>,
     pub path_filter: Option<PathFilter>,
 }
 
@@ -558,12 +766,7 @@ pub struct GenericRuleSpec<'a> {
 /// detectable language. The compiled matcher and path filter are shared via
 /// `Arc` so the fan-out is cheap.
 pub fn build_generic_rules(spec: GenericRuleSpec<'_>) -> Result<Vec<Box<dyn Rule>>, String> {
-    let matcher = Arc::new(build_matcher(
-        spec.pattern,
-        spec.pattern_regex,
-        &spec.pattern_either,
-        spec.pattern_not,
-    )?);
+    let matcher = Arc::new(build_matcher(&spec)?);
     let path_filter = spec.path_filter.map(Arc::new);
 
     let rules = ALL_LANGUAGES
@@ -723,10 +926,353 @@ mod tests {
             pattern_regex: None,
             pattern_either: Vec::new(),
             pattern_not: None,
+            pattern_not_regex: None,
+            patterns_clauses: Vec::new(),
             path_filter: None,
         };
         let rules = build_generic_rules(spec).unwrap();
         assert_eq!(rules.len(), ALL_LANGUAGES.len());
         assert_eq!(rules[0].id(), "semgrep/generic-test");
+    }
+
+    // ─── New tests for patterns: AND-block, pattern-either, pattern-regex ────
+
+    /// Create a minimal dummy tree for rules that don't use the AST.
+    /// Generic-mode rules ignore the tree entirely; we parse Rust source
+    /// (which is always available as a test dependency) to get a valid tree
+    /// to satisfy the Rule::check() signature.
+    fn dummy_tree() -> tree_sitter::Tree {
+        use crate::engine::parser::parse_file;
+        parse_file("fn main() {}", Language::Rust).expect("Rust parser must succeed")
+    }
+
+    /// `patterns:` AND-block: pattern + pattern-not loads and fires only when
+    /// the positive matches but the negative does not overlap.
+    #[test]
+    fn generic_patterns_and_block_with_pattern_not() {
+        let spec = GenericRuleSpec {
+            id: "and-block-test",
+            message: "msg",
+            severity: Severity::High,
+            cwe: None,
+            pattern: None,
+            pattern_regex: None,
+            pattern_either: Vec::new(),
+            pattern_not: None,
+            pattern_not_regex: None,
+            patterns_clauses: vec![GenericPatternsClause {
+                pattern: Some("ssl_protocols ...".to_string()),
+                pattern_not: Some("ssl_protocols TLSv1_3".to_string()),
+                ..Default::default()
+            }],
+            path_filter: None,
+        };
+        let rules = build_generic_rules(spec).unwrap();
+        assert_eq!(rules.len(), ALL_LANGUAGES.len());
+
+        let tree = dummy_tree();
+
+        let findings = rules[0].check("ssl_protocols TLSv1;\n", &tree);
+        assert!(
+            !findings.is_empty(),
+            "expected a finding for ssl_protocols TLSv1"
+        );
+
+        let findings = rules[0].check("ssl_protocols TLSv1_3;\n", &tree);
+        assert!(
+            findings.is_empty(),
+            "expected no finding when pattern-not matches (ssl_protocols TLSv1_3)"
+        );
+    }
+
+    /// `patterns:` block with a `pattern-either:` clause: fires when any of the
+    /// OR-branches matches.
+    #[test]
+    fn generic_patterns_with_pattern_either_clause() {
+        let spec = GenericRuleSpec {
+            id: "either-in-patterns",
+            message: "msg",
+            severity: Severity::High,
+            cwe: None,
+            pattern: None,
+            pattern_regex: None,
+            pattern_either: Vec::new(),
+            pattern_not: None,
+            pattern_not_regex: None,
+            patterns_clauses: vec![GenericPatternsClause {
+                pattern_either: vec![
+                    GenericEitherEntry {
+                        pattern: Some("rewrite ... redirect".to_string()),
+                        pattern_regex: None,
+                    },
+                    GenericEitherEntry {
+                        pattern: Some("rewrite ... permanent".to_string()),
+                        pattern_regex: None,
+                    },
+                ],
+                ..Default::default()
+            }],
+            path_filter: None,
+        };
+        let rules = build_generic_rules(spec).unwrap();
+        assert_eq!(rules.len(), ALL_LANGUAGES.len());
+
+        let tree = dummy_tree();
+
+        let source_redirect = "rewrite ^/old$ /new redirect;\n";
+        let source_permanent = "rewrite ^/old$ /new permanent;\n";
+        let source_none = "location / { proxy_pass http://up; }\n";
+
+        assert!(
+            !rules[0].check(source_redirect, &tree).is_empty(),
+            "expected a finding for 'rewrite ... redirect'"
+        );
+        assert!(
+            !rules[0].check(source_permanent, &tree).is_empty(),
+            "expected a finding for 'rewrite ... permanent'"
+        );
+        assert!(
+            rules[0].check(source_none, &tree).is_empty(),
+            "expected no finding when neither branch matches"
+        );
+    }
+
+    /// Top-level `pattern-either:` generic rule: loads and fires on either branch
+    /// (both spacegrep `pattern:` and `pattern-regex:` arms are supported).
+    #[test]
+    fn generic_top_level_pattern_either() {
+        let spec = GenericRuleSpec {
+            id: "top-either",
+            message: "msg",
+            severity: Severity::High,
+            cwe: None,
+            pattern: None,
+            pattern_regex: None,
+            pattern_either: vec![
+                GenericEitherEntry {
+                    pattern: Some("ssl_protocols TLSv1".to_string()),
+                    pattern_regex: None,
+                },
+                GenericEitherEntry {
+                    pattern: Some("ssl_protocols TLSv1_1".to_string()),
+                    pattern_regex: None,
+                },
+            ],
+            pattern_not: None,
+            pattern_not_regex: None,
+            patterns_clauses: Vec::new(),
+            path_filter: None,
+        };
+        let rules = build_generic_rules(spec).unwrap();
+
+        let tree = dummy_tree();
+
+        assert!(!rules[0].check("ssl_protocols TLSv1;\n", &tree).is_empty());
+        assert!(!rules[0].check("ssl_protocols TLSv1_1;\n", &tree).is_empty());
+        assert!(rules[0].check("ssl_protocols TLSv1_3;\n", &tree).is_empty());
+    }
+
+    /// Top-level `pattern-either:` with `pattern-regex:` arms (not just `pattern:`)
+    /// loads correctly — this covers rules like mcp-tool-poisoning.
+    #[test]
+    fn generic_top_level_pattern_either_regex_arms() {
+        let spec = GenericRuleSpec {
+            id: "top-either-regex",
+            message: "msg",
+            severity: Severity::High,
+            cwe: None,
+            pattern: None,
+            pattern_regex: None,
+            pattern_either: vec![
+                GenericEitherEntry {
+                    pattern: None,
+                    pattern_regex: Some("ANTHROPIC_BASE_URL\\s*=".to_string()),
+                },
+                GenericEitherEntry {
+                    pattern: None,
+                    pattern_regex: Some("OPENAI_BASE_URL\\s*=".to_string()),
+                },
+            ],
+            pattern_not: None,
+            pattern_not_regex: None,
+            patterns_clauses: Vec::new(),
+            path_filter: None,
+        };
+        let rules = build_generic_rules(spec).unwrap();
+
+        let tree = dummy_tree();
+
+        assert!(!rules[0]
+            .check("ANTHROPIC_BASE_URL = https://evil.com\n", &tree)
+            .is_empty());
+        assert!(!rules[0]
+            .check("OPENAI_BASE_URL = https://evil.com\n", &tree)
+            .is_empty());
+        assert!(rules[0]
+            .check("SOME_OTHER_URL = https://safe.com\n", &tree)
+            .is_empty());
+    }
+
+    /// `pattern-regex:` in `patterns:` clause loads and fires on a raw-text match.
+    #[test]
+    fn generic_patterns_with_pattern_regex_clause() {
+        let spec = GenericRuleSpec {
+            id: "regex-in-patterns",
+            message: "msg",
+            severity: Severity::High,
+            cwe: None,
+            pattern: None,
+            pattern_regex: None,
+            pattern_either: Vec::new(),
+            pattern_not: None,
+            pattern_not_regex: None,
+            patterns_clauses: vec![GenericPatternsClause {
+                // Match baseURL = "..." where the URL does NOT start with 'h'
+                // (i.e., not http/https). Use explicit hex escape for the quote.
+                pattern_regex: Some("baseURL\\s*=\\s*\"[^h]".to_string()),
+                ..Default::default()
+            }],
+            path_filter: None,
+        };
+        let rules = build_generic_rules(spec).unwrap();
+
+        let tree = dummy_tree();
+
+        let match_src = "baseURL = \"/relative/path\"\n";
+        let no_match_src = "baseURL = \"https://example.com\"\n";
+
+        assert!(
+            !rules[0].check(match_src, &tree).is_empty(),
+            "expected a finding for non-http baseURL"
+        );
+        assert!(
+            rules[0].check(no_match_src, &tree).is_empty(),
+            "expected no finding for https baseURL"
+        );
+    }
+
+    /// `patterns:` block with `pattern-not-regex:` clause.
+    #[test]
+    fn generic_patterns_with_pattern_not_regex() {
+        let spec = GenericRuleSpec {
+            id: "not-regex-test",
+            message: "msg",
+            severity: Severity::High,
+            cwe: None,
+            pattern: None,
+            pattern_regex: None,
+            pattern_either: Vec::new(),
+            pattern_not: None,
+            pattern_not_regex: None,
+            patterns_clauses: vec![GenericPatternsClause {
+                pattern: Some("baseURL = ...".to_string()),
+                pattern_not_regex: Some("(?i)https://".to_string()),
+                ..Default::default()
+            }],
+            path_filter: None,
+        };
+        let rules = build_generic_rules(spec).unwrap();
+
+        let tree = dummy_tree();
+
+        // No https → fires.
+        let match_src = "baseURL = \"/relative\"\n";
+        // Has https → suppressed.
+        let no_match_src = "baseURL = \"https://example.com\"\n";
+
+        assert!(
+            !rules[0].check(match_src, &tree).is_empty(),
+            "expected finding when no https"
+        );
+        assert!(
+            rules[0].check(no_match_src, &tree).is_empty(),
+            "expected no finding when https present"
+        );
+    }
+
+    /// `pattern-regex:` at top level (outside patterns block) loads and fires.
+    #[test]
+    fn generic_top_level_pattern_regex() {
+        let spec = GenericRuleSpec {
+            id: "top-regex",
+            message: "msg",
+            severity: Severity::High,
+            cwe: None,
+            pattern: None,
+            pattern_regex: Some("ANTHROPIC_BASE_URL\\s*="),
+            pattern_either: Vec::new(),
+            pattern_not: None,
+            pattern_not_regex: None,
+            patterns_clauses: Vec::new(),
+            path_filter: None,
+        };
+        let rules = build_generic_rules(spec).unwrap();
+
+        let tree = dummy_tree();
+
+        assert!(!rules[0]
+            .check("ANTHROPIC_BASE_URL = https://evil.com\n", &tree)
+            .is_empty());
+        assert!(rules[0]
+            .check("ANTHROPIC_BASE_URL_EXTRA = something\n", &tree)
+            .is_empty());
+    }
+
+    /// A `patterns:` block with no expressible positive matcher must return an
+    /// error rather than producing a no-op rule.
+    #[test]
+    fn generic_patterns_empty_positives_returns_error() {
+        let spec = GenericRuleSpec {
+            id: "empty-positives",
+            message: "msg",
+            severity: Severity::High,
+            cwe: None,
+            pattern: None,
+            pattern_regex: None,
+            pattern_either: Vec::new(),
+            pattern_not: None,
+            pattern_not_regex: None,
+            // A clause with only a pattern-not and no positive — should fail.
+            patterns_clauses: vec![GenericPatternsClause {
+                pattern_not: Some("foo".to_string()),
+                ..Default::default()
+            }],
+            path_filter: None,
+        };
+        assert!(build_generic_rules(spec).is_err());
+    }
+
+    /// `paths:` filter is respected: `applies_to_path` returns false for paths
+    /// outside the include glob.
+    #[test]
+    fn generic_paths_filter_respected() {
+        use crate::rules::semgrep_compat::{PathFilter, SemgrepPaths};
+        use std::path::PathBuf;
+
+        let path_filter = PathFilter::from_yaml(Some(&SemgrepPaths {
+            include: vec!["*.conf".to_string()],
+            exclude: vec![],
+        }))
+        .unwrap()
+        .unwrap();
+
+        let spec = GenericRuleSpec {
+            id: "path-filter-test",
+            message: "msg",
+            severity: Severity::High,
+            cwe: None,
+            pattern: Some("ssl_protocols TLSv1"),
+            pattern_regex: None,
+            pattern_either: Vec::new(),
+            pattern_not: None,
+            pattern_not_regex: None,
+            patterns_clauses: Vec::new(),
+            path_filter: Some(path_filter),
+        };
+        let rules = build_generic_rules(spec).unwrap();
+        let rule = &rules[0];
+
+        assert!(rule.applies_to_path(&PathBuf::from("nginx/site.conf")));
+        assert!(!rule.applies_to_path(&PathBuf::from("nginx/site.py")));
     }
 }

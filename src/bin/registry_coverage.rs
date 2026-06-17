@@ -364,9 +364,11 @@ fn classify_rule(rule: &Yaml) -> Outcome {
     }
 
     // Generic mode (languages: [generic]) — tokenized spacegrep matching;
-    // foxguard routes these to `generic_mode.rs`.
+    // foxguard routes these to `generic_mode.rs`. We now attempt to load
+    // them via the real loader; rules that produce no live matcher are
+    // reported as skipped with a generic-mode reason.
     if langs.iter().any(|l| l.eq_ignore_ascii_case("generic")) {
-        return Outcome::Skipped("generic mode (languages: [generic])".to_string());
+        return ground_truth(rule, "generic mode (languages: [generic])");
     }
 
     // `languages: [regex]` rules with no pattern-regex anywhere cannot be compiled
@@ -864,7 +866,9 @@ rules:
     }
 
     #[test]
-    fn generic_mode_is_skipped() {
+    fn generic_mode_simple_pattern_now_loads() {
+        // A simple `pattern: foo` generic rule now goes through the real loader
+        // and produces a live rule — classify_rule should return Loaded.
         let r = rule(
             r#"
 rules:
@@ -875,10 +879,32 @@ rules:
     languages: [generic]
 "#,
         );
-        match classify_rule(&r) {
-            Outcome::Skipped(reason) => assert!(reason.starts_with("generic mode")),
-            other => panic!("expected skip, got {other:?}"),
-        }
+        // The loader produces live rules → Loaded (no longer hard-skipped).
+        assert!(
+            matches!(classify_rule(&r), Outcome::Loaded),
+            "simple generic pattern: rule should now load"
+        );
+    }
+
+    #[test]
+    fn generic_mode_patterns_block_now_loads() {
+        // A `patterns:` AND-block generic rule should now load.
+        let r = rule(
+            r#"
+rules:
+  - id: gen-patterns
+    patterns:
+      - pattern: ssl_protocols ...
+      - pattern-not: ssl_protocols TLSv1_3
+    message: m
+    severity: WARNING
+    languages: [generic]
+"#,
+        );
+        assert!(
+            matches!(classify_rule(&r), Outcome::Loaded),
+            "generic patterns: rule should now load"
+        );
     }
 
     #[test]
