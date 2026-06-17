@@ -40,6 +40,42 @@ pub enum NodeMatcher {
     /// regardless of receiver. Only meaningful as a sink matcher.
     MethodName { method: String, description: String },
 
+    /// Match any call whose callee's leftmost/root identifier equals
+    /// `receiver`, regardless of the method name — e.g. `os.$METHOD(...)`,
+    /// `subprocess.$FUNC(...)`, `Kernel.$X(...)`. Compiled from a Semgrep
+    /// callee of the form `receiver.$METAVAR` where `receiver` is a concrete
+    /// identifier and the method is a metavariable. Sink/sanitizer only.
+    ReceiverCall {
+        receiver: String,
+        description: String,
+    },
+
+    /// Match a member/property/attribute READ `<anything>.field` regardless
+    /// of receiver — e.g. `req.body`, `request.query`, `ctx.headers`.
+    /// Compiled from Semgrep patterns of the form `$METAVAR.field` (a
+    /// metavariable receiver and a plain identifier field).
+    ///
+    /// This is the any-receiver analogue of [`NodeMatcher::Attribute`]
+    /// (which requires a concrete `root`). Meaningful for object/property
+    /// languages (Python, JS/TS, Go, Java, Kotlin, Ruby, PHP, C#); for C the
+    /// matcher is carried in the spec but the engine no-ops it (no
+    /// property-read sources exist in plain C).
+    FieldName { field: String, description: String },
+
+    /// Match a subscript / index access `base[...]`.
+    ///
+    /// `base = Some(name)` matches a subscript whose indexed operand's final
+    /// segment equals `name` (e.g. `params[...]`, `request.POST[...]` →
+    /// `POST`, `flask.request.args[...]` → `args`). `base = None` matches any
+    /// subscript regardless of base (compiled from a metavariable base like
+    /// `$VALS[$INDEX]`).
+    ///
+    /// Meaningful for object/property languages; the C engine no-ops it.
+    Subscript {
+        base: Option<String>,
+        description: String,
+    },
+
     /// Match an assignment where the LHS is a member expression whose
     /// property name equals `field`. JS-specific: covers the
     /// `element.innerHTML = tainted` pattern, which is not a call and so
@@ -54,6 +90,9 @@ impl NodeMatcher {
             NodeMatcher::Call { description, .. } => description,
             NodeMatcher::ParamName { description, .. } => description,
             NodeMatcher::MethodName { description, .. } => description,
+            NodeMatcher::ReceiverCall { description, .. } => description,
+            NodeMatcher::FieldName { description, .. } => description,
+            NodeMatcher::Subscript { description, .. } => description,
             NodeMatcher::MemberAssign { description, .. } => description,
         }
     }
@@ -609,11 +648,20 @@ pub(super) fn match_call_sink(
         .rsplit('.')
         .next()
         .unwrap_or(resolved_callee);
+    let root_segment = resolved_callee.split('.').next().unwrap_or(resolved_callee);
     spec.sinks.iter().find_map(|matcher| match matcher {
         NodeMatcher::Call { canonical, .. } if canonical.as_str() == resolved_callee => {
             Some(matched_sink_for_matcher(matcher, sink_to_rules))
         }
         NodeMatcher::MethodName { method, .. } if method == final_segment => {
+            Some(matched_sink_for_matcher(matcher, sink_to_rules))
+        }
+        // `os.$METHOD(...)` etc.: match any call whose callee root identifier
+        // equals `receiver`. Requires a dotted callee (`receiver.method`) so a
+        // bare call to a function literally named `receiver` does not match.
+        NodeMatcher::ReceiverCall { receiver, .. }
+            if root_segment == receiver.as_str() && resolved_callee.contains('.') =>
+        {
             Some(matched_sink_for_matcher(matcher, sink_to_rules))
         }
         _ => None,
@@ -755,6 +803,18 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
             description,
         } => {
             format!("M|{method}|{description}")
+        }
+        NodeMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => {
+            format!("R|{receiver}|{description}")
+        }
+        NodeMatcher::FieldName { field, description } => {
+            format!("F|{field}|{description}")
+        }
+        NodeMatcher::Subscript { base, description } => {
+            format!("S|{}|{description}", base.as_deref().unwrap_or("*"))
         }
         NodeMatcher::MemberAssign { field, description } => {
             format!("MA|{field}|{description}")

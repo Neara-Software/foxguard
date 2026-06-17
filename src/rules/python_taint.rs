@@ -1133,6 +1133,24 @@ fn is_sanitizer_call(
     false
 }
 
+/// True when the indexed `value` of a subscript matches the requested base.
+/// `want = None` matches any base. For `Some(name)`, the final segment of the
+/// indexed expression must equal `name`: an `identifier` matches its own
+/// text, an `attribute` matches its final attribute name.
+fn subscript_base_matches(value: Node<'_>, source: &str, want: Option<&str>) -> bool {
+    let Some(want) = want else {
+        return true;
+    };
+    match value.kind() {
+        "identifier" => node_text(value, source) == want,
+        "attribute" => value
+            .child_by_field_name("attribute")
+            .map(|a| node_text(a, source) == want)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 fn match_source(
     node: Node<'_>,
     source: &str,
@@ -1193,12 +1211,43 @@ fn match_source(
                     }
                 }
             }
+            NodeMatcher::FieldName { field, description } => {
+                // Any-receiver attribute READ: `<anything>.field`. Matches an
+                // `attribute` node whose final attribute equals `field`,
+                // regardless of the root identifier. Covers web-request
+                // property sources like `req.body`, `request.query`.
+                if node.kind() != "attribute" {
+                    continue;
+                }
+                let Some(final_attr) = node.child_by_field_name("attribute") else {
+                    continue;
+                };
+                if node_text(final_attr, source) == field.as_str() {
+                    return Some(description.clone());
+                }
+            }
+            NodeMatcher::Subscript { base, description } => {
+                // Index access `base[...]`. Matches a `subscript` node whose
+                // indexed value's final segment equals `base` (or any when
+                // `base` is None). Covers `request.POST[...]`, `params[...]`.
+                if node.kind() != "subscript" {
+                    continue;
+                }
+                let Some(value) = node.child_by_field_name("value") else {
+                    continue;
+                };
+                if subscript_base_matches(value, source, base.as_deref()) {
+                    return Some(description.clone());
+                }
+            }
             NodeMatcher::ParamName { .. } => {
                 // ParamName matchers are applied when seeding the state
                 // from the function's parameter list, not when walking
                 // expressions.
             }
-            NodeMatcher::MethodName { .. } | NodeMatcher::MemberAssign { .. } => {
+            NodeMatcher::MethodName { .. }
+            | NodeMatcher::ReceiverCall { .. }
+            | NodeMatcher::MemberAssign { .. } => {
                 // Sink-only matchers; MemberAssign is JS-specific.
             }
         }

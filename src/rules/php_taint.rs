@@ -856,7 +856,55 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
                     }
                 }
             }
-            NodeMatcher::MethodName { .. } | NodeMatcher::MemberAssign { .. } => {
+            NodeMatcher::FieldName { field, description } => {
+                // Any-receiver property READ: `<anything>->field`. In PHP this
+                // is a `member_access_expression`. Match whose member/name
+                // equals `field`, regardless of the object. Covers
+                // `$request->body`, `$req->query`, etc.
+                if node.kind() == "member_access_expression" {
+                    let member_text = node
+                        .child_by_field_name("member")
+                        .or_else(|| node.child_by_field_name("name"))
+                        .map(|n| node_text(n, source))
+                        .unwrap_or("");
+                    if member_text == field.as_str() {
+                        return Some(description.clone());
+                    }
+                }
+            }
+            NodeMatcher::Subscript { base, description } => {
+                // Index access `base[...]` → `subscript_expression`. Matches
+                // when the indexed receiver's final segment equals `base` (or
+                // any when `base` is None). The receiver is the first named
+                // child. `$_GET[...]` is a `variable_name`; `$req->q[...]` is
+                // a `member_access_expression`.
+                if node.kind() == "subscript_expression" {
+                    let Some(receiver) = node.named_child(0) else {
+                        continue;
+                    };
+                    let Some(want) = base.as_deref() else {
+                        // Metavariable base → match any subscript.
+                        return Some(description.clone());
+                    };
+                    let final_seg = match receiver.kind() {
+                        "variable_name" => {
+                            Some(node_text(receiver, source).trim_start_matches('$'))
+                        }
+                        "member_access_expression" => receiver
+                            .child_by_field_name("member")
+                            .or_else(|| receiver.child_by_field_name("name"))
+                            .map(|n| node_text(n, source)),
+                        "name" => Some(node_text(receiver, source)),
+                        _ => None,
+                    };
+                    if final_seg == Some(want) {
+                        return Some(description.clone());
+                    }
+                }
+            }
+            NodeMatcher::MethodName { .. }
+            | NodeMatcher::ReceiverCall { .. }
+            | NodeMatcher::MemberAssign { .. } => {
                 // Sink-only matchers.
             }
         }

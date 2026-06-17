@@ -667,7 +667,45 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                     }
                 }
             }
-            NodeMatcher::MethodName { .. } | NodeMatcher::MemberAssign { .. } => {
+            NodeMatcher::FieldName { field, description } => {
+                // Any-receiver property READ: `<anything>.field`. Matches a
+                // `member_access_expression` whose `name` equals `field`,
+                // regardless of the receiver. Covers `req.Body`, `ctx.Request`.
+                if node.kind() == "member_access_expression" {
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        if node_text(name_node, source) == field.as_str() {
+                            return Some(description.clone());
+                        }
+                    }
+                }
+            }
+            NodeMatcher::Subscript { base, description } => {
+                // Index access `base[...]` → `element_access_expression`.
+                // Matches when the indexed expression's final segment equals
+                // `base` (or any when `base` is None).
+                if node.kind() == "element_access_expression" {
+                    if let Some(expr) = node.child_by_field_name("expression") {
+                        match base.as_deref() {
+                            None => return Some(description.clone()),
+                            Some(want) => {
+                                let final_seg = match expr.kind() {
+                                    "identifier" => Some(node_text(expr, source)),
+                                    "member_access_expression" => expr
+                                        .child_by_field_name("name")
+                                        .map(|n| node_text(n, source)),
+                                    _ => None,
+                                };
+                                if final_seg == Some(want) {
+                                    return Some(description.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            NodeMatcher::MethodName { .. }
+            | NodeMatcher::ReceiverCall { .. }
+            | NodeMatcher::MemberAssign { .. } => {
                 // Sink-only matchers, never a source.
             }
         }
@@ -719,6 +757,18 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
             }
             false
         }
+        NodeMatcher::ReceiverCall { receiver, .. } => {
+            // Match any invocation whose callee root identifier equals
+            // `receiver`, e.g. `Process.$METHOD(...)`.
+            if node.kind() == "invocation_expression" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let resolved = resolve_callee(func, source);
+                    return resolved.contains('.')
+                        && resolved.split('.').next() == Some(receiver.as_str());
+                }
+            }
+            false
+        }
         NodeMatcher::Attribute { root, field, .. } => {
             // Match a member-assignment sink: e.g. `psi.Arguments = tainted`
             // arrives as the LHS of an assignment_expression, not a call.
@@ -734,7 +784,10 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
             }
             false
         }
-        NodeMatcher::ParamName { .. } | NodeMatcher::MemberAssign { .. } => false,
+        NodeMatcher::FieldName { .. }
+        | NodeMatcher::Subscript { .. }
+        | NodeMatcher::ParamName { .. }
+        | NodeMatcher::MemberAssign { .. } => false,
     }
 }
 

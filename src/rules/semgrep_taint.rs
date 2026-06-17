@@ -104,6 +104,50 @@ enum GenericMatcher {
     /// skipped (no C OOP method calls exist).
     MethodName { method: String, description: String },
 
+    /// Matches any call whose callee root identifier equals `receiver`,
+    /// regardless of method — compiled from `receiver.$METAVAR(...)` where
+    /// `receiver` is a concrete identifier and the method is a metavariable
+    /// (e.g. `os.$METHOD(...)`, `subprocess.$FUNC(...)`, `Kernel.$X(...)`).
+    /// The symmetric counterpart of [`GenericMatcher::MethodName`]. Sink or
+    /// sanitizer only.
+    ReceiverCall {
+        receiver: String,
+        description: String,
+    },
+
+    /// Matches a member/property/attribute READ `<anything>.field`
+    /// regardless of the receiver. Compiled from patterns of the form
+    /// `$METAVAR.field` (a metavariable receiver, a plain-identifier field),
+    /// e.g. `$REQ.body`, `$REQ.query`, `$REQ.headers`, `$REQ.cookies`,
+    /// `$REQ.params`.
+    ///
+    /// This is the any-receiver analogue of [`GenericMatcher::Attribute`],
+    /// which requires a concrete `root` identifier and so rejects a
+    /// metavariable receiver like `$REQ.body`. It is the dominant rejected
+    /// source shape across the registry (web-request property reads).
+    ///
+    /// Meaningful for object/property languages (Python, JS/TS, Go, Java,
+    /// Kotlin, Ruby, PHP, C#) as a source, sink, or sanitizer. For C the
+    /// matcher is carried in the spec but the engine no-ops it (plain C has
+    /// no property-read sources).
+    FieldName { field: String, description: String },
+
+    /// Matches a subscript / index access `base[...]`. Compiled from patterns
+    /// like `params[...]`, `cookies[...]`, `request.POST[...]`,
+    /// `flask.request.args[...]`, or `$VALS[$INDEX]`.
+    ///
+    /// `base = Some(name)` matches a subscript whose indexed operand's final
+    /// segment equals `name` (the last identifier before the `[`). For a
+    /// metavariable base (`$M[...]`, `$VALS[$INDEX]`) `base = None` matches
+    /// any subscript. Web frameworks express request-map indexing this way
+    /// (`request.POST[...]`, `flask.request.args[...]`).
+    ///
+    /// Meaningful for object/property languages; the C engine no-ops it.
+    Subscript {
+        base: Option<String>,
+        description: String,
+    },
+
     /// Matches a property-assignment sink of the form `$EL.field = $X`.
     /// Compiled from Semgrep patterns like `$EL.innerHTML = $X` where the
     /// receiver is any Semgrep metavariable and `field` is a plain identifier.
@@ -163,6 +207,21 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => python_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => python_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => python_taint::NodeMatcher::Subscript {
+            base: base.clone(),
+            description: description.clone(),
+        },
         // MemberAssign is JS-specific; included in the spec for completeness but
         // the Python engine ignores it (no property-assignment sinks in Python).
         GenericMatcher::MemberAssign { field, description } => {
@@ -214,6 +273,25 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => javascript_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => {
+            javascript_taint::NodeMatcher::FieldName {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::Subscript { base, description } => {
+            javascript_taint::NodeMatcher::Subscript {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::MemberAssign { field, description } => {
             javascript_taint::NodeMatcher::MemberAssign {
                 field: field.clone(),
@@ -259,6 +337,21 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
             description,
         } => go_taint::NodeMatcher::MethodName {
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => go_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => go_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => go_taint::NodeMatcher::Subscript {
+            base: base.clone(),
             description: description.clone(),
         },
         // MemberAssign is JS-specific; included in the spec for completeness but
@@ -308,6 +401,21 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             description,
         } => java_taint::NodeMatcher::MethodName {
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => java_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => java_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => java_taint::NodeMatcher::Subscript {
+            base: base.clone(),
             description: description.clone(),
         },
         // MemberAssign is JS-specific; included in the spec for completeness but
@@ -361,6 +469,28 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        // ReceiverCall (`os.$METHOD(...)`) has no meaning in plain C; carried
+        // in the spec but the C engine no-ops it.
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => c_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        // FieldName (property read) is not meaningful in plain C; carried in
+        // the spec for completeness but the C engine no-ops it (like
+        // MemberAssign below).
+        GenericMatcher::FieldName { field, description } => c_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        // Subscript (index access) is not meaningful in plain C taint flow;
+        // carried in the spec but the C engine no-ops it.
+        GenericMatcher::Subscript { base, description } => c_taint::NodeMatcher::Subscript {
+            base: base.clone(),
+            description: description.clone(),
+        },
         // MemberAssign is JS-specific; included in the spec for completeness but
         // the C engine ignores it.
         GenericMatcher::MemberAssign { field, description } => c_taint::NodeMatcher::MemberAssign {
@@ -406,6 +536,21 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
             description,
         } => kotlin_taint::NodeMatcher::MethodName {
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => kotlin_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => kotlin_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => kotlin_taint::NodeMatcher::Subscript {
+            base: base.clone(),
             description: description.clone(),
         },
         // MemberAssign is JS-specific; included in the spec for completeness but
@@ -455,6 +600,21 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
             description,
         } => ruby_taint::NodeMatcher::MethodName {
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => ruby_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => ruby_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => ruby_taint::NodeMatcher::Subscript {
+            base: base.clone(),
             description: description.clone(),
         },
         // MemberAssign is JS-specific; included in the spec for completeness but
@@ -515,6 +675,21 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => csharp_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => csharp_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => csharp_taint::NodeMatcher::Subscript {
+            base: base.clone(),
+            description: description.clone(),
+        },
         // MemberAssign is JS-specific; included in the spec for completeness but
         // the C# engine ignores it.
         GenericMatcher::MemberAssign { field, description } => {
@@ -553,6 +728,21 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
             description,
         } => php_taint::NodeMatcher::MethodName {
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => php_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => php_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => php_taint::NodeMatcher::Subscript {
+            base: base.clone(),
             description: description.clone(),
         },
         // MemberAssign is JS-specific; included in the spec for completeness but
@@ -1265,6 +1455,30 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
         return None;
     }
 
+    // ── Subscript form: `base[...]` / `base[$K]` ─────────────────────────
+    //
+    // Semgrep taint rules express request-map indexing as a subscript:
+    // `params[...]`, `cookies[...]`, `request.POST[...]`,
+    // `flask.request.args[...]`, `$VALS[$INDEX]`, `$M[$K]`. The bridge
+    // compiles these to `Subscript { base }`, where `base` is the final
+    // identifier segment before the `[` (or `None` for a metavariable base).
+    //
+    // Detection: the pattern ends with `]`, contains a `[`, and the portion
+    // before the first `[` is a recognizable base (plain identifier, dotted
+    // attribute chain, or a metavariable / metavariable-tailed chain). No
+    // top-level `=` (that is a MemberAssign) and the base must not itself be
+    // a call. Valid as a source, sink, or sanitizer.
+    if let Some(base) = parse_subscript_base(pat) {
+        let desc = match &base {
+            Some(b) => describe(b, role),
+            None => describe(pat, role),
+        };
+        return Some(GenericMatcher::Subscript {
+            base,
+            description: desc,
+        });
+    }
+
     // ── MemberAssign form: `$METAVAR.field = $X` ────────────────────────
     //
     // Semgrep taint rules for DOM-XSS commonly express property-assignment
@@ -1321,6 +1535,24 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
             };
         }
 
+        // ── ReceiverCall shape: `receiver.$METHOD($X)` ──────────────────
+        //
+        // The symmetric counterpart of `MethodName`: a *concrete* receiver
+        // identifier followed by a *metavariable* method. Compiled to
+        // `ReceiverCall { receiver }`, matching any call whose callee root
+        // equals `receiver` regardless of the method name. Covers the common
+        // module-call sink shapes `os.$METHOD(...)`, `subprocess.$FUNC(...)`,
+        // `Kernel.$X(...)`, `Shell.$X(...)`. Sink/sanitizer only.
+        if let Some(receiver) = parse_receiver_dot_metavar(callee) {
+            return match role {
+                MatcherRole::Sink | MatcherRole::Sanitizer => Some(GenericMatcher::ReceiverCall {
+                    receiver: receiver.to_string(),
+                    description: describe(receiver, role),
+                }),
+                MatcherRole::Source => None,
+            };
+        }
+
         // Callee must be a plain identifier or dotted identifier chain.
         if !is_dotted_identifier(callee) {
             return None;
@@ -1349,6 +1581,26 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
             }),
             MatcherRole::Sink | MatcherRole::Sanitizer => None,
         };
+    }
+
+    // ── FieldName form: `$METAVAR.field` (any-receiver property read) ─────
+    //
+    // Semgrep taint rules overwhelmingly express web-request sources as a
+    // property read on a metavariable receiver: `$REQ.body`, `$REQ.query`,
+    // `$REQ.headers`, `$REQ.cookies`, `$REQ.params`, `$CTX.params`, etc.
+    // The `Attribute` shape requires a *concrete* root identifier, so it
+    // rejects a metavariable receiver. `FieldName` matches a property/
+    // attribute READ of `field` regardless of receiver.
+    //
+    // Detection: exactly `$METAVAR.plain_identifier` — a single metavariable
+    // segment, a single plain-identifier field, no call parens (handled
+    // above), and no assignment `=` (MemberAssign handled above). Valid as a
+    // source, sink, or sanitizer shape.
+    if let Some(field) = parse_metavar_dot_method(pat) {
+        return Some(GenericMatcher::FieldName {
+            field: field.to_string(),
+            description: describe(field, role),
+        });
     }
 
     // ── No parens: identifier or attribute chain ────────────────────────
@@ -1431,6 +1683,64 @@ fn find_single_assignment(s: &str) -> Option<usize> {
     None
 }
 
+/// If `pat` is a subscript / index access `base[...]`, return the matched
+/// base as `Some(Some(name))` (concrete base whose final segment is `name`)
+/// or `Some(None)` (metavariable base — match any subscript). Returns `None`
+/// when `pat` is not a subscript shape we can express.
+///
+/// The base is the substring before the FIRST `[`; the pattern must end with
+/// `]`. The base must be one of:
+/// - a plain identifier (`params` → `Some(Some("params"))`)
+/// - a dotted attribute chain (`request.POST` → `Some(Some("POST"))`,
+///   `flask.request.args` → `Some(Some("args"))` — final segment)
+/// - a bare metavariable (`$VALS` → `Some(None)`)
+/// - a chain whose final segment is a metavariable (`$REQ.$X` → `Some(None)`)
+///
+/// Anything else (empty base, base containing a call, nested brackets that
+/// don't close at the end, operators) returns `None`.
+fn parse_subscript_base(pat: &str) -> Option<Option<String>> {
+    if !pat.ends_with(']') {
+        return None;
+    }
+    let open = pat.find('[')?;
+    let base = pat[..open].trim();
+    if base.is_empty() {
+        return None;
+    }
+    // The base must not be a call or contain other brackets / operators.
+    if base.contains('(') || base.contains(')') || base.contains('[') || base.contains(' ') {
+        return None;
+    }
+    // Bare metavariable base → match any subscript.
+    if is_metavariable(base) {
+        return Some(None);
+    }
+    // Plain identifier base.
+    if is_identifier(base) {
+        return Some(Some(base.to_string()));
+    }
+    // Dotted chain: take the final segment. If it is a metavariable, the
+    // indexed property is unknown → match any subscript. Otherwise use the
+    // final identifier segment as the base name.
+    if let Some(dot) = base.rfind('.') {
+        let last = &base[dot + 1..];
+        if is_metavariable(last) {
+            return Some(None);
+        }
+        if is_identifier(last) {
+            // Require every preceding segment to be an identifier or a
+            // metavariable so we only accept genuine attribute chains.
+            let head_ok = base[..dot]
+                .split('.')
+                .all(|seg| is_identifier(seg) || is_metavariable(seg));
+            if head_ok {
+                return Some(Some(last.to_string()));
+            }
+        }
+    }
+    None
+}
+
 /// If `callee` has the shape `$METAVAR.plain_method` — exactly one
 /// `$`-prefixed metavariable segment followed by a plain identifier — return
 /// the method name. Returns `None` for all other shapes.
@@ -1457,6 +1767,36 @@ fn parse_metavar_dot_method(callee: &str) -> Option<&str> {
         return None;
     }
     Some(rest)
+}
+
+/// If `callee` has the shape `receiver.$METAVAR` — a concrete plain
+/// identifier receiver followed by a single metavariable method segment —
+/// return the receiver name. The symmetric counterpart of
+/// [`parse_metavar_dot_method`]. Returns `None` for all other shapes.
+///
+/// Examples:
+/// - `os.$METHOD` → `Some("os")`
+/// - `subprocess.$FUNC` → `Some("subprocess")`
+/// - `Kernel.$X` → `Some("Kernel")`
+/// - `$CONN.executeQuery` → `None` (metavar receiver — handled as MethodName)
+/// - `os.system` → `None` (concrete method — handled as Call)
+/// - `a.b.$X` → `None` (multi-segment receiver, ambiguous)
+fn parse_receiver_dot_metavar(callee: &str) -> Option<&str> {
+    let dot = callee.find('.')?;
+    let receiver = &callee[..dot];
+    let rest = &callee[dot + 1..];
+    // Receiver must be a single plain identifier (no further dots).
+    if !is_identifier(receiver) {
+        return None;
+    }
+    // The method segment must be a single metavariable (no more dots).
+    if rest.contains('.') {
+        return None;
+    }
+    if !is_metavariable(rest) {
+        return None;
+    }
+    Some(receiver)
 }
 
 /// True when `s` is a Semgrep metavariable: `$` followed by one or more
@@ -3408,6 +3748,345 @@ class App {
             findings.len(),
             1,
             "expected 1 finding for Console.ReadLine -> Process.Start, got {:?}",
+            findings
+        );
+    }
+
+    // ── Bridge-level tests: FieldName (any-receiver property read source) ────
+    //
+    // These compile a rule with a `$METAVAR.field` source through the SAME
+    // `parse_taint_rule` path the CLI uses, then run the compiled rule against
+    // a real vulnerable source string and assert it FIRES — proving the new
+    // shape is wired end-to-end through the bridge AND the engine. A safe
+    // variant (no tainted property read) must NOT fire.
+
+    /// Python: `$REQ.body` source → `os.system` sink. `req.body` is a property
+    /// read on a metavariable receiver — only `FieldName` can express it.
+    #[test]
+    fn python_bridge_fieldname_source_to_system_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-fieldname-cmdi
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request body reaches os.system"
+pattern-sources:
+  - pattern: $REQ.body
+pattern-sinks:
+  - pattern: os.system($X)
+"#,
+        );
+        // FieldName compiles a property read of `.body`.
+        assert!(matches!(
+            rule.spec.sources.as_slice(),
+            [GenericMatcher::FieldName { field, .. }] if field == "body"
+        ));
+
+        let src = r#"
+def handler(req):
+    data = req.body
+    os.system(data)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for req.body -> os.system, got {:?}",
+            findings
+        );
+    }
+
+    /// Python safe variant: a value that is NOT the `.body` property read must
+    /// not be flagged, proving FieldName is field-specific (not "any read").
+    #[test]
+    fn python_bridge_fieldname_safe_property_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-fieldname-cmdi-safe
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request body reaches os.system"
+pattern-sources:
+  - pattern: $REQ.body
+pattern-sinks:
+  - pattern: os.system($X)
+"#,
+        );
+
+        let src = r#"
+def handler(req):
+    data = req.session
+    os.system(data)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "req.session is not `.body`; expected no finding, got {:?}",
+            findings
+        );
+    }
+
+    /// JavaScript: `$REQ.query` source → `eval` sink, exercising the JS
+    /// `member_expression` FieldName path through the bridge.
+    #[test]
+    fn javascript_bridge_fieldname_source_to_eval_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: js-fieldname-eval
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "Tainted req.query reaches eval"
+pattern-sources:
+  - pattern: $REQ.query
+pattern-sinks:
+  - pattern: eval($X)
+"#,
+        );
+
+        let src = r#"
+function handler(req) {
+    const q = req.query;
+    eval(q);
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("js fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for req.query -> eval, got {:?}",
+            findings
+        );
+    }
+
+    // ── Bridge-level tests: Subscript (index/subscript access source) ────────
+
+    /// Python: `request.POST[...]` source → `os.system` sink. The subscript
+    /// base's final segment is `POST`.
+    #[test]
+    fn python_bridge_subscript_source_to_system_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-subscript-cmdi
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request.POST reaches os.system"
+pattern-sources:
+  - pattern: request.POST[...]
+pattern-sinks:
+  - pattern: os.system($X)
+"#,
+        );
+        assert!(matches!(
+            rule.spec.sources.as_slice(),
+            [GenericMatcher::Subscript { base: Some(b), .. }] if b == "POST"
+        ));
+
+        let src = r#"
+def handler(request):
+    cmd = request.POST["c"]
+    os.system(cmd)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for request.POST[...] -> os.system, got {:?}",
+            findings
+        );
+    }
+
+    /// Python safe variant: a subscript on a different base (`safe[...]`)
+    /// must not fire when the rule wants `request.POST[...]`.
+    #[test]
+    fn python_bridge_subscript_safe_base_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-subscript-cmdi-safe
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request.POST reaches os.system"
+pattern-sources:
+  - pattern: request.POST[...]
+pattern-sinks:
+  - pattern: os.system($X)
+"#,
+        );
+
+        let src = r#"
+def handler(config):
+    cmd = config.SETTINGS["c"]
+    os.system(cmd)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "config.SETTINGS[...] is not request.POST[...]; expected no finding, got {:?}",
+            findings
+        );
+    }
+
+    /// PHP: `$_GET[...]` subscript source → `system` sink via the bridge.
+    #[test]
+    fn php_bridge_subscript_source_to_system_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: php-subscript-cmdi
+mode: taint
+languages: [php]
+severity: ERROR
+message: "Tainted $_GET reaches system"
+pattern-sources:
+  - pattern: $_GET[...]
+pattern-sinks:
+  - pattern: system($X)
+"#,
+        );
+
+        let src = r#"<?php
+function handler() {
+    $cmd = $_GET["c"];
+    system($cmd);
+}
+"#;
+        let tree = parse_file(src, Language::Php).expect("php fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for $_GET[...] -> system, got {:?}",
+            findings
+        );
+    }
+
+    // ── Bridge-level tests: ReceiverCall (`receiver.$METHOD(...)` sink) ──────
+
+    /// Python: `request.args` source → `os.$METHOD(...)` sink. The sink is a
+    /// metavariable method on a concrete `os` receiver — only `ReceiverCall`
+    /// can express it.
+    #[test]
+    fn python_bridge_receivercall_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-receivercall-cmdi
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request reaches os.<any>"
+pattern-sources:
+  - pattern: $REQ.cmd
+pattern-sinks:
+  - pattern: os.$METHOD(...)
+"#,
+        );
+        assert!(matches!(
+            rule.spec.sinks.as_slice(),
+            [GenericMatcher::ReceiverCall { receiver, .. }] if receiver == "os"
+        ));
+
+        let src = r#"
+def handler(req):
+    c = req.cmd
+    os.system(c)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for req.cmd -> os.system (os.$METHOD), got {:?}",
+            findings
+        );
+    }
+
+    /// Python safe variant: a call on a DIFFERENT receiver (`safe.run`) must
+    /// not be flagged when the rule wants `os.$METHOD(...)`.
+    #[test]
+    fn python_bridge_receivercall_other_receiver_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-receivercall-cmdi-safe
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request reaches os.<any>"
+pattern-sources:
+  - pattern: $REQ.cmd
+pattern-sinks:
+  - pattern: os.$METHOD(...)
+"#,
+        );
+
+        let src = r#"
+def handler(req):
+    c = req.cmd
+    logger.info(c)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "logger.info is not os.$METHOD; expected no finding, got {:?}",
+            findings
+        );
+    }
+
+    /// Ruby: bare `params` source → `Kernel.$X(...)` ReceiverCall sink.
+    #[test]
+    fn ruby_bridge_receivercall_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: ruby-receivercall-cmdi
+mode: taint
+languages: [ruby]
+severity: ERROR
+message: "Tainted params reaches Kernel.<any>"
+pattern-sources:
+  - pattern: params
+pattern-sinks:
+  - pattern: Kernel.$X(...)
+"#,
+        );
+
+        let src = r#"
+def handler
+  cmd = params[:cmd]
+  Kernel.system(cmd)
+end
+"#;
+        let tree = parse_file(src, Language::Ruby).expect("ruby fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for params -> Kernel.system (Kernel.$X), got {:?}",
             findings
         );
     }

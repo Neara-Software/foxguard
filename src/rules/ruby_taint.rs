@@ -732,7 +732,53 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
                     _ => {}
                 }
             }
-            NodeMatcher::MethodName { .. } | NodeMatcher::MemberAssign { .. } => {
+            NodeMatcher::FieldName { field, description } => {
+                // Any-receiver attribute READ: `<anything>.field`. In Ruby a
+                // no-arg accessor like `request.params` parses as a `call`
+                // with a receiver and a method but no arguments. Match such a
+                // node whose method equals `field`, regardless of receiver.
+                if node.kind() == "call"
+                    && node.child_by_field_name("receiver").is_some()
+                    && node.child_by_field_name("arguments").is_none()
+                {
+                    if let Some(method) = node.child_by_field_name("method") {
+                        if node_text(method, source) == field.as_str() {
+                            return Some(description.clone());
+                        }
+                    }
+                }
+            }
+            NodeMatcher::Subscript { base, description } => {
+                // Index access `base[...]` → `element_reference` in Ruby
+                // (`params[:cmd]`, `request.GET["x"]`). Matches when the
+                // object's final segment equals `base` (or any if None).
+                if node.kind() == "element_reference" {
+                    if let Some(object) = node.child_by_field_name("object") {
+                        match base.as_deref() {
+                            None => return Some(description.clone()),
+                            Some(want) => match object.kind() {
+                                "identifier" | "constant" => {
+                                    if node_text(object, source) == want {
+                                        return Some(description.clone());
+                                    }
+                                }
+                                "call" => {
+                                    // `request.GET` accessor parsed as a call.
+                                    if let Some(method) = object.child_by_field_name("method") {
+                                        if node_text(method, source) == want {
+                                            return Some(description.clone());
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            },
+                        }
+                    }
+                }
+            }
+            NodeMatcher::MethodName { .. }
+            | NodeMatcher::ReceiverCall { .. }
+            | NodeMatcher::MemberAssign { .. } => {
                 // Sink-only matchers.
             }
         }

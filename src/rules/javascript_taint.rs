@@ -1784,6 +1784,12 @@ fn is_sanitizer_call(
             NodeMatcher::MethodName { method, .. } if method == final_segment => {
                 return true;
             }
+            NodeMatcher::ReceiverCall { receiver, .. }
+                if resolved.split('.').next() == Some(receiver.as_str())
+                    && resolved.contains('.') =>
+            {
+                return true;
+            }
             _ => {}
         }
     }
@@ -1844,15 +1850,64 @@ fn match_source(
                     }
                 }
             }
+            NodeMatcher::FieldName { field, description } => {
+                // Any-receiver property READ: `<anything>.field`. Matches a
+                // `member_expression` whose property equals `field`,
+                // regardless of the object. Covers `req.body`, `req.query`,
+                // `req.params`, `req.headers`, `req.cookies`.
+                if node.kind() != "member_expression" {
+                    continue;
+                }
+                let Some(prop) = node.child_by_field_name("property") else {
+                    continue;
+                };
+                if node_text(prop, source) == field.as_str() {
+                    return Some(description.clone());
+                }
+            }
+            NodeMatcher::Subscript { base, description } => {
+                // Index access `base[...]` → `subscript_expression`. Matches
+                // when the indexed object's final segment equals `base` (or
+                // any when `base` is None).
+                if node.kind() != "subscript_expression" {
+                    continue;
+                }
+                let Some(object) = node.child_by_field_name("object") else {
+                    continue;
+                };
+                if js_subscript_base_matches(object, source, base.as_deref()) {
+                    return Some(description.clone());
+                }
+            }
             NodeMatcher::ParamName { .. } => {
                 // Seeded at function entry, not matched on expressions.
             }
-            NodeMatcher::MethodName { .. } | NodeMatcher::MemberAssign { .. } => {
+            NodeMatcher::MethodName { .. }
+            | NodeMatcher::ReceiverCall { .. }
+            | NodeMatcher::MemberAssign { .. } => {
                 // Sink-only matchers.
             }
         }
     }
     None
+}
+
+/// True when the indexed object of a `subscript_expression` matches the
+/// requested base. `want = None` matches any. For `Some(name)`, an
+/// `identifier` matches its text and a `member_expression` matches its final
+/// property name.
+fn js_subscript_base_matches(object: Node<'_>, source: &str, want: Option<&str>) -> bool {
+    let Some(want) = want else {
+        return true;
+    };
+    match object.kind() {
+        "identifier" => node_text(object, source) == want,
+        "member_expression" => object
+            .child_by_field_name("property")
+            .map(|p| node_text(p, source) == want)
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 /// Canonical set of untrusted-input sources for JavaScript/TypeScript web
