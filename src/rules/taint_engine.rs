@@ -94,6 +94,32 @@ pub enum NodeMatcher {
     /// operand is a string literal/format; a plain numeric or variable-only
     /// concatenation never fires. Sink/sanitizer only.
     BinopFormat { description: String },
+
+    /// Match an object/dictionary literal *construction* one of whose value
+    /// positions is a tainted expression — e.g. the JS object literal
+    /// `{ role: "system", content: tainted }` or the Python dict
+    /// `{"role": "system", "content": tainted}`.
+    ///
+    /// Compiled from Semgrep sink patterns such as
+    /// `{role: "system", content: $SINK}` (LLM system-prompt-injection rules).
+    /// The bridge drops the literal key/value constraints (`role: "system"`),
+    /// so the compiled sink fires whenever an object/dict literal is built with
+    /// a tainted value in any field. Only meaningful as a sink/sanitizer shape
+    /// for JavaScript/TypeScript (`object`) and Python (`dictionary`); for all
+    /// other engines the matcher is carried in the spec but never queried.
+    ObjectLiteralValue { description: String },
+
+    /// Match a `return` statement whose returned expression is tainted — e.g.
+    /// `return tainted`. Compiled from Semgrep sink patterns of the form
+    /// `return $METAVAR` (LLM "unsanitized return" / directly-returned-format
+    /// rules where the sink is the function's return value).
+    ///
+    /// The bridge drops the surrounding `pattern-inside` constraints, so the
+    /// compiled sink fires whenever a `return` statement returns a tainted
+    /// value. Bounded to return position (not a universal bare-metavar sink).
+    /// Only meaningful as a sink/sanitizer shape for Python; for other engines
+    /// the matcher is carried in the spec but never queried.
+    ReturnValue { description: String },
 }
 
 impl NodeMatcher {
@@ -108,6 +134,8 @@ impl NodeMatcher {
             NodeMatcher::Subscript { description, .. } => description,
             NodeMatcher::MemberAssign { description, .. } => description,
             NodeMatcher::BinopFormat { description, .. } => description,
+            NodeMatcher::ObjectLiteralValue { description, .. } => description,
+            NodeMatcher::ReturnValue { description, .. } => description,
         }
     }
 }
@@ -709,6 +737,35 @@ pub(super) fn match_binop_format_sink(
     })
 }
 
+/// Return the first `ObjectLiteralValue` sink matcher in `spec`, if any. The
+/// engine calls this when it has already confirmed (by inspecting the AST node)
+/// that an object/dict literal is being constructed with at least one tainted
+/// value position.
+pub(super) fn match_object_literal_sink(
+    spec: &TaintSpec,
+    sink_to_rules: Option<&HashMap<String, Vec<String>>>,
+) -> Option<MatchedSink> {
+    spec.sinks.iter().find_map(|matcher| match matcher {
+        NodeMatcher::ObjectLiteralValue { .. } => {
+            Some(matched_sink_for_matcher(matcher, sink_to_rules))
+        }
+        _ => None,
+    })
+}
+
+/// Return the first `ReturnValue` sink matcher in `spec`, if any. The engine
+/// calls this when it has confirmed (by inspecting the AST node) that a
+/// `return` statement returns a tainted value.
+pub(super) fn match_return_value_sink(
+    spec: &TaintSpec,
+    sink_to_rules: Option<&HashMap<String, Vec<String>>>,
+) -> Option<MatchedSink> {
+    spec.sinks.iter().find_map(|matcher| match matcher {
+        NodeMatcher::ReturnValue { .. } => Some(matched_sink_for_matcher(matcher, sink_to_rules)),
+        _ => None,
+    })
+}
+
 fn matched_sink_for_matcher(
     matcher: &NodeMatcher,
     sink_to_rules: Option<&HashMap<String, Vec<String>>>,
@@ -849,6 +906,12 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
         }
         NodeMatcher::BinopFormat { description } => {
             format!("BF|{description}")
+        }
+        NodeMatcher::ObjectLiteralValue { description } => {
+            format!("OL|{description}")
+        }
+        NodeMatcher::ReturnValue { description } => {
+            format!("RV|{description}")
         }
     }
 }

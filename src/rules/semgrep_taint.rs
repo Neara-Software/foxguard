@@ -172,6 +172,27 @@ enum GenericMatcher {
     /// (a non-tainted or literal-only concatenation never fires). Maps to
     /// SQL-injection / command-string sinks. Sink/sanitizer only.
     BinopFormat { description: String },
+
+    /// Matches an object/dict literal SINK one of whose value positions holds a
+    /// tainted expression. Compiled from Semgrep sink patterns such as
+    /// `{role: "system", content: $SINK}` (JS object literal) or
+    /// `{"role": "system", "content": $SINK}` (Python dict) — the LLM
+    /// system-prompt-injection rules (`openai`/`mistral`).
+    ///
+    /// Semantics: a SINK that is an object/dict literal construction where some
+    /// field's value is the tainted value. Conservative (only fires when a
+    /// literal is actually constructed AND a tainted value reaches a value
+    /// slot). Sink/sanitizer only — a literal construction is a destination,
+    /// not a taint origin. JS/TS and Python engines match it; others carry it.
+    ObjectLiteralValue { description: String },
+
+    /// Matches a `return $METAVAR` SINK: a `return` statement whose returned
+    /// value is tainted. Compiled from Semgrep sink patterns of the form
+    /// `return $SINK` / `return $X` (LLM "unsanitized return" and Flask
+    /// directly-returned-format rules). Bounded to return position — only fires
+    /// when a `return` returns a tainted value, not a universal bare-metavar
+    /// sink. Sink/sanitizer only. Matched by the Python engine.
+    ReturnValue { description: String },
 }
 
 #[derive(Clone, Debug)]
@@ -245,6 +266,14 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
         GenericMatcher::BinopFormat { description } => python_taint::NodeMatcher::BinopFormat {
             description: description.clone(),
         },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            python_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => python_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
     }
 }
 
@@ -316,6 +345,14 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
         GenericMatcher::BinopFormat { description } => javascript_taint::NodeMatcher::BinopFormat {
             description: description.clone(),
         },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            javascript_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => javascript_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
     }
 }
 
@@ -383,6 +420,14 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
         GenericMatcher::BinopFormat { description } => go_taint::NodeMatcher::BinopFormat {
             description: description.clone(),
         },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            go_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => go_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
     }
 }
 
@@ -448,6 +493,14 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             }
         }
         GenericMatcher::BinopFormat { description } => java_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            java_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => java_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
     }
@@ -524,6 +577,14 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
         GenericMatcher::BinopFormat { description } => c_taint::NodeMatcher::BinopFormat {
             description: description.clone(),
         },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            c_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => c_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
     }
 }
 
@@ -591,6 +652,14 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
         GenericMatcher::BinopFormat { description } => kotlin_taint::NodeMatcher::BinopFormat {
             description: description.clone(),
         },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            kotlin_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => kotlin_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
     }
 }
 
@@ -656,6 +725,14 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
             }
         }
         GenericMatcher::BinopFormat { description } => ruby_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            ruby_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => ruby_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
     }
@@ -734,6 +811,14 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
         GenericMatcher::BinopFormat { description } => csharp_taint::NodeMatcher::BinopFormat {
             description: description.clone(),
         },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            csharp_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => csharp_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
     }
 }
 
@@ -790,6 +875,14 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
             }
         }
         GenericMatcher::BinopFormat { description } => php_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            php_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => php_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
     }
@@ -1494,6 +1587,45 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
         return None;
     }
 
+    // ── ObjectLiteralValue form: tainted value in an object/dict literal ──
+    //
+    // LLM system-prompt-injection rules (`openai`/`mistral`) express their sink
+    // as an object/dict literal whose value field carries tainted text:
+    //   `{role: "system", content: $SINK}`        (JS object literal)
+    //   `{"role": "system", "content": $SINK}`    (Python dict)
+    // The bridge compiles these to an `ObjectLiteralValue` sink; the JS/Python
+    // engines fire only when an object/dict literal is actually constructed AND
+    // a tainted value reaches one of its value positions. Sink/sanitizer only —
+    // a literal construction is a data-flow destination, not a taint origin.
+    if is_object_literal_value_pattern(pat) {
+        return match role {
+            MatcherRole::Sink | MatcherRole::Sanitizer => {
+                Some(GenericMatcher::ObjectLiteralValue {
+                    description: describe(pat, role),
+                })
+            }
+            MatcherRole::Source => None,
+        };
+    }
+
+    // ── ReturnValue form: `return $METAVAR` (tainted return value) ────────
+    //
+    // LLM "unsanitized return" and Flask directly-returned-format rules express
+    // their sink as a `return` statement returning a tainted value:
+    //   `return $SINK`   /   `return $X`
+    // The bridge compiles these to a `ReturnValue` sink; the Python engine fires
+    // only when a `return` statement actually returns a tainted value. Bounded
+    // to return position (NOT a universal bare-metavar sink). Sink/sanitizer
+    // only — a return is a data-flow destination, not a taint origin.
+    if let Some(()) = parse_return_metavar(pat) {
+        return match role {
+            MatcherRole::Sink | MatcherRole::Sanitizer => Some(GenericMatcher::ReturnValue {
+                description: describe(pat, role),
+            }),
+            MatcherRole::Source => None,
+        };
+    }
+
     // ── BinopFormat form: string-building sinks ──────────────────────────
     //
     // Semgrep SQL/command-string sinks express tainted concatenation as a
@@ -1847,6 +1979,85 @@ fn parse_subscript_base(pat: &str) -> Option<Option<String>> {
         }
     }
     None
+}
+
+/// True when `pat` is an object/dict literal sink shape: a brace-delimited
+/// literal `{ ... }` that contains at least one `key: $METAVAR` value position.
+///
+/// Recognises the LLM system-prompt-injection sinks
+/// `{role: "system", content: $SINK}` (JS) and
+/// `{"role": "system", "content": $SINK}` (Python). The compile-time check
+/// only recognises the *shape* (a literal-construction sink whose value slot is
+/// a metavariable); the engine enforces the "literal is actually constructed
+/// AND a tainted value reaches a value slot" guard at match time.
+///
+/// Discipline: must start with `{` and end with `}` (a real literal, not a set
+/// comprehension or a block) and must contain a `:` immediately followed
+/// (ignoring whitespace) by a `$` metavariable somewhere — i.e. a tainted value
+/// position. This refuses bare `{$X}` set/dict-key shapes and `{...}` ellipsis
+/// blobs that carry no metavariable value.
+fn is_object_literal_value_pattern(pat: &str) -> bool {
+    let p = pat.trim();
+    if !(p.starts_with('{') && p.ends_with('}')) {
+        return false;
+    }
+    // Need at least one `:` whose value side begins with a `$` metavariable.
+    let bytes = p.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b':' {
+            // Skip whitespace after the colon.
+            let mut j = i + 1;
+            while j < bytes.len() && (bytes[j] as char).is_whitespace() {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'$' {
+                // The metavariable must be a real `$NAME`, not `${` (a JS
+                // template-substitution would not appear at a value head here,
+                // but guard anyway) and not the end of the literal.
+                let mut k = j + 1;
+                if k < bytes.len() && (bytes[k].is_ascii_alphabetic() || bytes[k] == b'_') {
+                    while k < bytes.len() && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'_')
+                    {
+                        k += 1;
+                    }
+                    return true;
+                }
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// True (as `Some(())`) when `pat` is exactly `return $METAVAR` — the keyword
+/// `return`, whitespace, then a single bare Semgrep metavariable and nothing
+/// else. This is the LLM "unsanitized return" / directly-returned sink shape.
+/// Refuses `return "...".format(...)`, `return $X + $Y`, `return f"..."`, etc.
+/// (those are handled — or not — by other shapes), and refuses a bare `return`.
+fn parse_return_metavar(pat: &str) -> Option<()> {
+    let rest = pat.strip_prefix("return")?;
+    // Require whitespace right after `return` (so `returnx` is not matched).
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let v = rest.trim();
+    // Must be a single bare metavariable `$NAME` (uppercase Semgrep convention,
+    // but accept any valid identifier after `$`) with no trailing tokens.
+    let name = v.strip_prefix('$')?;
+    if name.is_empty() {
+        return None;
+    }
+    let mut chars = name.chars();
+    let first = chars.next()?;
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Some(())
+    } else {
+        None
+    }
 }
 
 /// True when `pat` is a string-building sink shape the engine should match as
@@ -4967,5 +5178,274 @@ def view(config):
             "non-request root must not be a source; expected no finding, got {:?}",
             findings
         );
+    }
+
+    // ── Bridge-level tests: ObjectLiteralValue (LLM system-prompt sink) ──────
+
+    /// Python: `request.data` source → `{"role": "system", "content": $SINK}`
+    /// dict-literal sink. Only `ObjectLiteralValue` can express a dict-literal
+    /// whose value position carries the tainted value.
+    #[test]
+    fn python_bridge_object_literal_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-objlit-prompt-injection
+mode: taint
+languages: [python]
+severity: ERROR
+message: "User input flows into a system-prompt dict literal"
+pattern-sources:
+  - pattern: request.data
+pattern-sinks:
+  - patterns:
+      - pattern: |
+          {"role": "system", "content": $SINK}
+      - focus-metavariable: $SINK
+"#,
+        );
+        assert!(
+            matches!(
+                rule.spec.sinks.as_slice(),
+                [GenericMatcher::ObjectLiteralValue { .. }]
+            ),
+            "sink should compile to ObjectLiteralValue, got {:?}",
+            rule.spec.sinks
+        );
+
+        let src = r#"
+def handler():
+    user = request.data
+    msg = {"role": "system", "content": user}
+    return msg
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for request.data -> dict literal value, got {:?}",
+            findings
+        );
+    }
+
+    /// Python near-miss: a dict literal with only literal values must NOT fire.
+    #[test]
+    fn python_bridge_object_literal_clean_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-objlit-prompt-injection-safe
+mode: taint
+languages: [python]
+severity: ERROR
+message: "User input flows into a system-prompt dict literal"
+pattern-sources:
+  - pattern: request.data
+pattern-sinks:
+  - patterns:
+      - pattern: |
+          {"role": "system", "content": $SINK}
+      - focus-metavariable: $SINK
+"#,
+        );
+
+        let src = r#"
+def handler():
+    user = request.data
+    msg = {"role": "system", "content": "you are a helpful assistant"}
+    return msg
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a dict literal with only literal values must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// JavaScript: `req.body` source → `{role: "system", content: $SINK}`
+    /// object-literal sink.
+    #[test]
+    fn javascript_bridge_object_literal_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: js-objlit-prompt-injection
+mode: taint
+languages: [javascript, typescript]
+severity: ERROR
+message: "User input flows into a system-prompt object literal"
+pattern-sources:
+  - pattern: $REQ.body
+pattern-sinks:
+  - patterns:
+      - pattern: |
+          {role: "system", content: $SINK}
+      - focus-metavariable: $SINK
+"#,
+        );
+        assert!(
+            matches!(
+                rule.spec.sinks.as_slice(),
+                [GenericMatcher::ObjectLiteralValue { .. }]
+            ),
+            "sink should compile to ObjectLiteralValue, got {:?}",
+            rule.spec.sinks
+        );
+
+        let src = r#"
+function handler(req) {
+    const user = req.body;
+    const msg = { role: "system", content: user };
+    return msg;
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("js fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for req.body -> object literal value, got {:?}",
+            findings
+        );
+    }
+
+    /// JavaScript near-miss: an object literal with only literal values must
+    /// NOT fire.
+    #[test]
+    fn javascript_bridge_object_literal_clean_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: js-objlit-prompt-injection-safe
+mode: taint
+languages: [javascript, typescript]
+severity: ERROR
+message: "User input flows into a system-prompt object literal"
+pattern-sources:
+  - pattern: $REQ.body
+pattern-sinks:
+  - patterns:
+      - pattern: |
+          {role: "system", content: $SINK}
+      - focus-metavariable: $SINK
+"#,
+        );
+
+        let src = r#"
+function handler(req) {
+    const user = req.body;
+    const msg = { role: "system", content: "fixed instructions" };
+    return msg;
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("js fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "an object literal with only literal values must not fire, got {:?}",
+            findings
+        );
+    }
+
+    // ── Bridge-level tests: ReturnValue (`return $SINK` tainted-return sink) ──
+
+    /// Python: `requests.get(...)` source → `return $SINK` sink. Only
+    /// `ReturnValue` can express a sink that is the function's return value.
+    #[test]
+    fn python_bridge_return_value_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-return-value-sink
+mode: taint
+languages: [python]
+severity: ERROR
+message: "External response returned unsanitized"
+pattern-sources:
+  - pattern: requests.get(...)
+pattern-sinks:
+  - patterns:
+      - pattern: return $SINK
+      - focus-metavariable: $SINK
+"#,
+        );
+        assert!(
+            matches!(
+                rule.spec.sinks.as_slice(),
+                [GenericMatcher::ReturnValue { .. }]
+            ),
+            "sink should compile to ReturnValue, got {:?}",
+            rule.spec.sinks
+        );
+
+        let src = r#"
+def fetch():
+    data = requests.get("http://api")
+    return data
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for requests.get -> return, got {:?}",
+            findings
+        );
+    }
+
+    /// Python near-miss: returning a clean literal must NOT fire.
+    #[test]
+    fn python_bridge_return_value_clean_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-return-value-sink-safe
+mode: taint
+languages: [python]
+severity: ERROR
+message: "External response returned unsanitized"
+pattern-sources:
+  - pattern: requests.get(...)
+pattern-sinks:
+  - patterns:
+      - pattern: return $SINK
+      - focus-metavariable: $SINK
+"#,
+        );
+
+        let src = r#"
+def fetch():
+    data = requests.get("http://api")
+    return "ok"
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "returning a clean literal must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// The `return $X` shape compiles to `ReturnValue`, but a non-bare return
+    /// (`return foo(bar)`) is NOT this shape and must reject.
+    #[test]
+    fn return_value_shape_rejects_non_bare_return() {
+        assert!(parse_return_metavar("return $X").is_some());
+        assert!(parse_return_metavar("return $SINK").is_some());
+        assert!(parse_return_metavar("return foo($X)").is_none());
+        assert!(parse_return_metavar("return \"...\".format(...)").is_none());
+        assert!(parse_return_metavar("return").is_none());
+        assert!(parse_return_metavar("returnx").is_none());
+        assert!(parse_return_metavar("$X").is_none());
     }
 }

@@ -35,8 +35,9 @@ use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary};
 use crate::rules::taint_engine::{
     analyze_function_generic, attribution_hint_for_sink, build_batched_taint_groups,
     cross_file_taint_finding, extract_cross_file_summary_for_function, match_binop_format_sink,
-    match_call_sink, node_text, push_attributed_findings, summarize_function_return_generic,
-    taint_finding_for_node, AnalysisContext, TaintLanguageAdapter, TaintState,
+    match_call_sink, match_object_literal_sink, match_return_value_sink, node_text,
+    push_attributed_findings, summarize_function_return_generic, taint_finding_for_node,
+    AnalysisContext, TaintLanguageAdapter, TaintState,
 };
 pub use crate::rules::taint_engine::{
     BatchedRule, NodeMatcher, ReturnSummary, ReturnTaintSummary, RuleFilter, TaintFinding,
@@ -377,6 +378,12 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for PyTaintAdapter {
         }
         if node.kind() == "binary_operator" || node.kind() == "string" {
             handle_binop_format_sink(node, ctx, state, findings);
+        }
+        if node.kind() == "dictionary" {
+            handle_dict_literal_sink(node, ctx, state, findings);
+        }
+        if node.kind() == "return_statement" {
+            handle_return_value_sink(node, ctx, state, findings);
         }
     }
 
@@ -752,6 +759,70 @@ fn handle_binop_format_sink(
             rule_hint,
             1,
         ));
+    }
+}
+
+/// Dict-literal sink: `{"role": "system", "content": tainted}`. Fires when the
+/// spec carries an `ObjectLiteralValue` sink and at least one `pair` value in
+/// this `dictionary` literal is tainted. Reports once on the whole literal.
+fn handle_dict_literal_sink(
+    node: Node<'_>,
+    ctx: &PyCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let Some(sink) = match_object_literal_sink(ctx.spec, ctx.sink_to_rules) else {
+        return;
+    };
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() != "pair" {
+            continue;
+        }
+        let Some(value) = child.child_by_field_name("value") else {
+            continue;
+        };
+        if let Some((source_desc, src_line)) = expression_taint(value, ctx, state) {
+            let rule_hint = attribution_hint_for_sink(&sink);
+            findings.push(taint_finding_for_node(
+                node,
+                source_desc,
+                sink.description,
+                src_line,
+                rule_hint,
+                1,
+            ));
+            return;
+        }
+    }
+}
+
+/// Return-value sink: `return tainted`. Fires when the spec carries a
+/// `ReturnValue` sink and the `return_statement`'s returned expression is
+/// tainted. Reports once on the return statement.
+fn handle_return_value_sink(
+    node: Node<'_>,
+    ctx: &PyCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let Some(sink) = match_return_value_sink(ctx.spec, ctx.sink_to_rules) else {
+        return;
+    };
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some((source_desc, src_line)) = expression_taint(child, ctx, state) {
+            let rule_hint = attribution_hint_for_sink(&sink);
+            findings.push(taint_finding_for_node(
+                node,
+                source_desc,
+                sink.description,
+                src_line,
+                rule_hint,
+                1,
+            ));
+            return;
+        }
     }
 }
 
@@ -1362,7 +1433,9 @@ fn match_source(
             NodeMatcher::MethodName { .. }
             | NodeMatcher::ReceiverCall { .. }
             | NodeMatcher::MemberAssign { .. }
-            | NodeMatcher::BinopFormat { .. } => {
+            | NodeMatcher::BinopFormat { .. }
+            | NodeMatcher::ObjectLiteralValue { .. }
+            | NodeMatcher::ReturnValue { .. } => {
                 // Sink-only matchers; MemberAssign is JS-specific; BinopFormat is
                 // matched on binop/format nodes, not here.
             }
