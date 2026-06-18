@@ -58,6 +58,11 @@ fn language_slug(language: Language) -> &'static str {
         Language::Scala => "scala",
         Language::Elixir => "elixir",
         Language::Json => "json",
+        Language::Apex => "apex",
+        Language::Clojure => "clojure",
+        Language::Html => "html",
+        Language::Xml => "xml",
+        Language::Dart => "dart",
         // Regex-mode rules fan out per language; this binary generates rules
         // for concrete languages only.
         Language::Regex => "regex",
@@ -90,6 +95,11 @@ fn language_display_name(language: Language) -> &'static str {
         Language::Scala => "Scala",
         Language::Elixir => "Elixir",
         Language::Json => "JSON",
+        Language::Apex => "Apex",
+        Language::Clojure => "Clojure",
+        Language::Html => "HTML",
+        Language::Xml => "XML",
+        Language::Dart => "Dart",
         Language::Regex => "Regex",
     }
 }
@@ -120,6 +130,11 @@ fn language_array_name(language: Language) -> &'static str {
         Language::Scala => "scalaRules",
         Language::Elixir => "elixirRules",
         Language::Json => "jsonRules",
+        Language::Apex => "apexRules",
+        Language::Clojure => "clojureRules",
+        Language::Html => "htmlRules",
+        Language::Xml => "xmlRules",
+        Language::Dart => "dartRules",
         Language::Regex => "regexRules",
     }
 }

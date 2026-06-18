@@ -145,6 +145,20 @@ fn language_supported(lang: &str) -> bool {
             | "exs"
             // JSON grammar (tree-sitter-json).
             | "json"
+            // Apex grammar (tree-sitter-sfapex).
+            | "apex"
+            // Clojure grammar (tree-sitter-clojure-orchard).
+            | "clojure"
+            | "clj"
+            | "cljs"
+            | "cljc"
+            // HTML grammar (tree-sitter-html).
+            | "html"
+            | "htm"
+            // XML grammar (tree-sitter-xml).
+            | "xml"
+            // Dart grammar (tree-sitter-dart).
+            | "dart"
     )
 }
 
@@ -915,21 +929,38 @@ rules:
 
     #[test]
     fn unsupported_language_is_skipped() {
-        // Apex has no supported grammar — it must be skipped.
+        // COBOL has no supported grammar — it must be skipped.
+        let r = rule(
+            r#"
+rules:
+  - id: cobol-rule
+    pattern: foo
+    message: m
+    severity: INFO
+    languages: [cobol]
+"#,
+        );
+        match classify_rule(&r) {
+            Outcome::Skipped(reason) => assert_eq!(reason, "unsupported language: cobol"),
+            other => panic!("expected skip, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apex_language_loads() {
+        // Apex now has a real grammar (tree-sitter-sfapex), so search-mode
+        // Apex rules must load.
         let r = rule(
             r#"
 rules:
   - id: apex-rule
-    pattern: foo
+    pattern-regex: 'System\.debug'
     message: m
     severity: INFO
     languages: [apex]
 "#,
         );
-        match classify_rule(&r) {
-            Outcome::Skipped(reason) => assert_eq!(reason, "unsupported language: apex"),
-            other => panic!("expected skip, got {other:?}"),
-        }
+        assert!(matches!(classify_rule(&r), Outcome::Loaded));
     }
 
     #[test]

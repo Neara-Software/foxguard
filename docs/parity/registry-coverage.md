@@ -12,10 +12,10 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 | Rule files scanned | 2070 |
 | Files with YAML parse errors | 0 |
 | Total rules | 2144 |
-| Rules loaded OK | 1982 (92.4%) |
-| Rules skipped | 162 (7.6%) |
+| Rules loaded OK | 2002 (93.4%) |
+| Rules skipped | 142 (6.6%) |
 
-**Headline load rate: 92.4%** (1982 / 2144 rules).
+**Headline load rate: 93.4%** (2002 / 2144 rules).
 
 ## Skip-reason histogram
 
@@ -23,16 +23,11 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 126 | 77.8% | 5.9% |
-| `unsupported language: apex` | 9 | 5.6% | 0.4% |
-| `generic mode (languages: [generic])` | 7 | 4.3% | 0.3% |
-| `taint: pattern-propagators` | 5 | 3.1% | 0.2% |
-| `unsupported language: clojure` | 5 | 3.1% | 0.2% |
-| `unsupported language: html` | 4 | 2.5% | 0.2% |
-| `mode: taint (unsupported language: apex)` | 3 | 1.9% | 0.1% |
-| `mode: taint (unsupported language: swift)` | 1 | 0.6% | 0.0% |
-| `unsupported language: dart` | 1 | 0.6% | 0.0% |
-| `unsupported language: xml` | 1 | 0.6% | 0.0% |
+| `mode: taint (unsupported shape)` | 126 | 88.7% | 5.9% |
+| `generic mode (languages: [generic])` | 7 | 4.9% | 0.3% |
+| `taint: pattern-propagators` | 5 | 3.5% | 0.2% |
+| `mode: taint (unsupported language: apex)` | 3 | 2.1% | 0.1% |
+| `mode: taint (unsupported language: swift)` | 1 | 0.7% | 0.0% |
 
 ## Priority order — operator/feature backlog
 
@@ -51,16 +46,11 @@ Rules foxguard cannot run because it has no tree-sitter grammar for the target l
 
 | Rank | Language to add | Rules unlocked |
 |---:|---|---:|
-| 1 | `unsupported language: apex` | 9 |
-| 2 | `generic mode (languages: [generic])` | 7 |
-| 3 | `unsupported language: clojure` | 5 |
-| 4 | `unsupported language: html` | 4 |
-| 5 | `mode: taint (unsupported language: apex)` | 3 |
-| 6 | `mode: taint (unsupported language: swift)` | 1 |
-| 7 | `unsupported language: dart` | 1 |
-| 8 | `unsupported language: xml` | 1 |
+| 1 | `generic mode (languages: [generic])` | 7 |
+| 2 | `mode: taint (unsupported language: apex)` | 3 |
+| 3 | `mode: taint (unsupported language: swift)` | 1 |
 
-Missing-grammar gaps account for **31 rules** (1.4% of all rules).
+Missing-grammar gaps account for **11 rules** (0.5% of all rules).
 
 ## Per-language breakdown
 
@@ -86,26 +76,23 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 | c | 16 | 16 | 0 | 100.0% |
 | kotlin | 15 | 15 | 0 | 100.0% |
 | bash | 13 | 13 | 0 | 100.0% |
-| apex | 12 | 0 | 12 | 0.0% |
+| apex | 12 | 9 | 3 | 75.0% |
 | rust | 10 | 10 | 0 | 100.0% |
 | elixir | 7 | 7 | 0 | 100.0% |
 | json | 7 | 7 | 0 | 100.0% |
 | swift | 6 | 5 | 1 | 83.3% |
-| clojure | 5 | 0 | 5 | 0.0% |
+| clojure | 5 | 5 | 0 | 100.0% |
 | terraform | 5 | 5 | 0 | 100.0% |
-| html | 4 | 0 | 4 | 0.0% |
-| dart | 1 | 0 | 1 | 0.0% |
-| xml | 1 | 0 | 1 | 0.0% |
+| html | 4 | 4 | 0 | 100.0% |
+| dart | 1 | 1 | 0 | 100.0% |
+| xml | 1 | 1 | 0 | 100.0% |
 
 ## Top skip reasons per language
 
-- **apex**: `unsupported language: apex` (9), `mode: taint (unsupported language: apex)` (3)
-- **clojure**: `unsupported language: clojure` (5)
+- **apex**: `mode: taint (unsupported language: apex)` (3)
 - **csharp**: `mode: taint (unsupported shape)` (9), `taint: pattern-propagators` (1)
-- **dart**: `unsupported language: dart` (1)
 - **generic**: `generic mode (languages: [generic])` (7)
 - **go**: `mode: taint (unsupported shape)` (13)
-- **html**: `unsupported language: html` (4)
 - **java**: `mode: taint (unsupported shape)` (17), `taint: pattern-propagators` (3)
 - **javascript**: `mode: taint (unsupported shape)` (35)
 - **php**: `mode: taint (unsupported shape)` (14)
@@ -113,7 +100,6 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **ruby**: `mode: taint (unsupported shape)` (15), `taint: pattern-propagators` (1)
 - **solidity**: `mode: taint (unsupported shape)` (1)
 - **swift**: `mode: taint (unsupported language: swift)` (1)
-- **xml**: `unsupported language: xml` (1)
 
 ---
 

@@ -358,6 +358,11 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "scala" | "sc" => Some(Language::Scala),
         "ex" | "exs" => Some(Language::Elixir),
         "json" => Some(Language::Json),
+        "cls" | "trigger" => Some(Language::Apex),
+        "clj" | "cljs" | "cljc" | "edn" => Some(Language::Clojure),
+        "html" | "htm" => Some(Language::Html),
+        "xml" => Some(Language::Xml),
+        "dart" => Some(Language::Dart),
         _ => None,
     }
 }
@@ -738,6 +743,9 @@ fn comment_markers(language: Language) -> &'static [&'static str] {
         Language::Scala => &["//"],
         Language::Elixir => &["#"],
         Language::Json => &[],
+        Language::Apex | Language::Dart => &["//", "/*"],
+        Language::Clojure => &[";"],
+        Language::Html | Language::Xml => &["<!--"],
         // Regex-mode rules run against raw text with no guaranteed comment syntax.
         // Use `#` as a safe fallback (it works for most config/script files).
         Language::Regex => &["#"],
