@@ -171,6 +171,12 @@ fn taint_language_supported(lang: &str) -> bool {
             | "csharp"
             | "cs"
             | "c#"
+            | "bash"
+            | "sh"
+            | "shell"
+            | "solidity"
+            | "sol"
+            | "scala"
     )
 }
 
