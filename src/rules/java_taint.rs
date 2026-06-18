@@ -253,11 +253,17 @@ fn collect_param_sources(
 ) {
     let mut annotation_names: Vec<&str> = Vec::new();
     let mut bare_names: Vec<&str> = Vec::new();
+    // `$`-prefixed name (`$PARAM`) is the any-parameter wildcard compiled from a
+    // Semgrep `pattern-inside: function(...,$ARG,...) + focus-metavariable: $ARG`
+    // source block: seed *every* parameter of the enclosing scope.
+    let mut wildcard = false;
     for matcher in &spec.sources {
         if let NodeMatcher::ParamName { names, .. } = matcher {
             for name in names {
                 if let Some(rest) = name.strip_prefix('@') {
                     annotation_names.push(rest);
+                } else if name == crate::rules::taint_engine::ANY_PARAM_WILDCARD {
+                    wildcard = true;
                 } else {
                     bare_names.push(name.as_str());
                 }
@@ -283,7 +289,7 @@ fn collect_param_sources(
                     hops: 0,
                 },
             );
-        } else if bare_names.contains(&name) {
+        } else if bare_names.contains(&name) || wildcard {
             state.taint(
                 name.to_string(),
                 TaintInfo {

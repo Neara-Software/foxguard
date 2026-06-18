@@ -621,6 +621,40 @@ pub(super) fn node_text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
     &source[node.byte_range()]
 }
 
+/// Sentinel name used by the bridge to compile an "any function parameter"
+/// taint source. Chosen to be a string no real identifier (including a PHP
+/// `$`-variable like `$_GET`) can equal, so the use-site matchers never fire
+/// on it — only `seed_params` interprets it (via [`param_names_are_wildcard`]).
+pub const ANY_PARAM_WILDCARD: &str = "$<any-param>";
+
+/// True when a `ParamName` matcher's name list designates the
+/// "any function parameter" wildcard — i.e. it contains the
+/// [`ANY_PARAM_WILDCARD`] sentinel.
+///
+/// This is the seed-time semantics for the Semgrep taint source shape
+///
+/// ```yaml
+/// pattern-sources:
+///   - patterns:
+///       - pattern-inside: |
+///           function ... (..., $ARG, ...) { ... }
+///       - focus-metavariable: $ARG
+/// ```
+///
+/// which means "every parameter of the enclosing function is a taint source".
+/// The bridge ([`semgrep_taint`]) compiles such a block to
+/// `ParamName { names: ["$PARAM"], .. }`; each engine's `seed_params` calls
+/// this helper so a `$`-prefixed name seeds *all* parameters of the function
+/// being analyzed, rather than only a literally-named one.
+///
+/// Discipline: the wildcard fires ONLY at parameter-seeding time. Use-site
+/// matchers (`match_source`) compare against the literal name `$PARAM`, which
+/// no real identifier equals, so the wildcard never broadens an expression-
+/// position match — only function parameters become sources.
+pub(super) fn param_names_are_wildcard(names: &[String]) -> bool {
+    names.iter().any(|n| n == ANY_PARAM_WILDCARD)
+}
+
 pub(super) fn build_batched_taint_groups(rules: &[BatchedRule<'_>]) -> Vec<BatchedTaintGroup> {
     let mut groups: Vec<Vec<usize>> = Vec::new();
     for (i, r) in rules.iter().enumerate() {

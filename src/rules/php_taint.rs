@@ -392,7 +392,9 @@ fn seed_param_sources(params: Node<'_>, source: &str, spec: &TaintSpec, state: &
             let name = node_text(v, source);
             for matcher in &spec.sources {
                 if let NodeMatcher::ParamName { names, description } = matcher {
-                    if names.iter().any(|n| n == name) {
+                    if names.iter().any(|n| n == name)
+                        || crate::rules::taint_engine::param_names_are_wildcard(names)
+                    {
                         let line = v.start_position().row + 1;
                         state.taint(name.to_string(), description.clone(), line);
                         break;
