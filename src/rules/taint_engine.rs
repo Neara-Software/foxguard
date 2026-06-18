@@ -81,6 +81,19 @@ pub enum NodeMatcher {
     /// `element.innerHTML = tainted` pattern, which is not a call and so
     /// cannot be expressed as `Call`.
     MemberAssign { field: String, description: String },
+
+    /// Match a string-building SINK: a binary `+`/`%` concatenation, an
+    /// interpolated/format string (`f"...{x}..."`), or a format call
+    /// (`fmt.Sprintf("...", x)`, `sprintf("...", x)`) where one operand is a
+    /// string literal/format AND a tainted value flows into another operand.
+    ///
+    /// Compiled from Semgrep sink patterns such as `"$SQL" + $EXPR`,
+    /// `$M % $M`, `$A + $B`, `f"...{$X}..."`, `Kernel::sprintf("$FMT", ...)`.
+    /// This maps to SQL-injection / command-string sinks. To avoid false
+    /// positives the engine only treats a node as a `BinopFormat` sink when one
+    /// operand is a string literal/format; a plain numeric or variable-only
+    /// concatenation never fires. Sink/sanitizer only.
+    BinopFormat { description: String },
 }
 
 impl NodeMatcher {
@@ -94,6 +107,7 @@ impl NodeMatcher {
             NodeMatcher::FieldName { description, .. } => description,
             NodeMatcher::Subscript { description, .. } => description,
             NodeMatcher::MemberAssign { description, .. } => description,
+            NodeMatcher::BinopFormat { description, .. } => description,
         }
     }
 }
@@ -681,6 +695,20 @@ pub(super) fn match_member_assign_sink(
     })
 }
 
+/// Return the first `BinopFormat` sink matcher in `spec`, if any. The engine
+/// calls this when it has already confirmed (by inspecting the AST node) that a
+/// string-building concatenation/format with a literal operand and a tainted
+/// operand is present.
+pub(super) fn match_binop_format_sink(
+    spec: &TaintSpec,
+    sink_to_rules: Option<&HashMap<String, Vec<String>>>,
+) -> Option<MatchedSink> {
+    spec.sinks.iter().find_map(|matcher| match matcher {
+        NodeMatcher::BinopFormat { .. } => Some(matched_sink_for_matcher(matcher, sink_to_rules)),
+        _ => None,
+    })
+}
+
 fn matched_sink_for_matcher(
     matcher: &NodeMatcher,
     sink_to_rules: Option<&HashMap<String, Vec<String>>>,
@@ -818,6 +846,9 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
         }
         NodeMatcher::MemberAssign { field, description } => {
             format!("MA|{field}|{description}")
+        }
+        NodeMatcher::BinopFormat { description } => {
+            format!("BF|{description}")
         }
     }
 }

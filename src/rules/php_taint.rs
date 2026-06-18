@@ -904,8 +904,10 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             }
             NodeMatcher::MethodName { .. }
             | NodeMatcher::ReceiverCall { .. }
-            | NodeMatcher::MemberAssign { .. } => {
-                // Sink-only matchers.
+            | NodeMatcher::MemberAssign { .. }
+            | NodeMatcher::BinopFormat { .. } => {
+                // Sink-only matchers; BinopFormat is carried but not yet matched
+                // in the PHP engine (no-op).
             }
         }
     }

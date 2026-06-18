@@ -34,9 +34,9 @@ use crate::rules::common::AliasTable;
 use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary};
 use crate::rules::taint_engine::{
     analyze_function_generic, attribution_hint_for_sink, build_batched_taint_groups,
-    cross_file_taint_finding, extract_cross_file_summary_for_function, match_call_sink, node_text,
-    push_attributed_findings, summarize_function_return_generic, taint_finding_for_node,
-    AnalysisContext, TaintLanguageAdapter, TaintState,
+    cross_file_taint_finding, extract_cross_file_summary_for_function, match_binop_format_sink,
+    match_call_sink, node_text, push_attributed_findings, summarize_function_return_generic,
+    taint_finding_for_node, AnalysisContext, TaintLanguageAdapter, TaintState,
 };
 pub use crate::rules::taint_engine::{
     BatchedRule, NodeMatcher, ReturnSummary, ReturnTaintSummary, RuleFilter, TaintFinding,
@@ -375,6 +375,9 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for PyTaintAdapter {
         if node.kind() == "with_statement" {
             handle_with_statement(node, ctx, state);
         }
+        if node.kind() == "binary_operator" || node.kind() == "string" {
+            handle_binop_format_sink(node, ctx, state, findings);
+        }
     }
 
     fn dispatch_summary_node(
@@ -690,6 +693,117 @@ fn handle_call(
     if let Some(cross_file) = ctx.cross_file {
         handle_cross_file_call(node, func, callee_text, ctx, state, findings, cross_file);
     }
+}
+
+/// Handle a `BinopFormat` string-building sink: a binary `+`/`%` concatenation
+/// or an f-string interpolation that mixes a string literal/format with a
+/// tainted operand. Fires only when (a) the spec has a `BinopFormat` sink,
+/// (b) at least one operand is a string literal/f-string, and (c) at least one
+/// operand is tainted. The literal guard keeps this from firing on pure
+/// numeric/variable arithmetic.
+///
+/// To avoid double-reporting on a nested concat chain (`"a" + "b" + tainted`),
+/// the handler skips a `binary_operator` whose parent is itself a `+`/`%`
+/// `binary_operator` — the finding is reported once on the outermost node.
+fn handle_binop_format_sink(
+    node: Node<'_>,
+    ctx: &PyCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let Some(sink) = match_binop_format_sink(ctx.spec, ctx.sink_to_rules) else {
+        return;
+    };
+
+    // Skip inner nodes of a chain to report once on the outermost.
+    if node.kind() == "binary_operator" {
+        if let Some(parent) = node.parent() {
+            if parent.kind() == "binary_operator" && binop_is_concat(parent, ctx.source) {
+                return;
+            }
+        }
+        if !binop_is_concat(node, ctx.source) {
+            return;
+        }
+    }
+
+    // Only an f-string (`string` node carrying `interpolation`) is a relevant
+    // format node; plain string literals are not sinks on their own.
+    if node.kind() == "string" && !python_string_is_fstring(node) {
+        return;
+    }
+
+    let has_string_literal = match node.kind() {
+        "string" => true, // the f-string itself supplies the format/literal
+        "binary_operator" => binop_has_string_literal_operand(node, ctx.source),
+        _ => false,
+    };
+    if !has_string_literal {
+        return;
+    }
+
+    if let Some((source_desc, src_line)) = expression_taint(node, ctx, state) {
+        let rule_hint = attribution_hint_for_sink(&sink);
+        findings.push(taint_finding_for_node(
+            node,
+            source_desc,
+            sink.description,
+            src_line,
+            rule_hint,
+            1,
+        ));
+    }
+}
+
+/// True when `node` is a `binary_operator` whose operator is `+` or `%`.
+fn binop_is_concat(node: Node<'_>, source: &str) -> bool {
+    node.child_by_field_name("operator")
+        .map(|op| {
+            let t = node_text(op, source);
+            t == "+" || t == "%"
+        })
+        .unwrap_or(false)
+}
+
+/// True when the `string` node is an f-string (carries an `interpolation`).
+fn python_string_is_fstring(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    let mut has_interp = false;
+    for c in node.children(&mut cursor) {
+        if c.kind() == "interpolation" {
+            has_interp = true;
+            break;
+        }
+    }
+    has_interp
+}
+
+/// True when a `+`/`%` concat chain contains at least one string-literal
+/// operand (a `string` or `concatenated_string` node), recursing into nested
+/// `+`/`%` operators.
+fn binop_has_string_literal_operand(node: Node<'_>, source: &str) -> bool {
+    fn operand_has_string(n: Node<'_>, source: &str) -> bool {
+        match n.kind() {
+            "string" | "concatenated_string" => true,
+            "binary_operator" => {
+                if !binop_is_concat(n, source) {
+                    return false;
+                }
+                let left = n.child_by_field_name("left");
+                let right = n.child_by_field_name("right");
+                left.map(|l| operand_has_string(l, source)).unwrap_or(false)
+                    || right
+                        .map(|r| operand_has_string(r, source))
+                        .unwrap_or(false)
+            }
+            "parenthesized_expression" => n
+                .named_child(0)
+                .map(|c| operand_has_string(c, source))
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+    operand_has_string(node, source)
 }
 
 /// Check if a call targets an imported function with cross-file summaries.
@@ -1247,8 +1361,10 @@ fn match_source(
             }
             NodeMatcher::MethodName { .. }
             | NodeMatcher::ReceiverCall { .. }
-            | NodeMatcher::MemberAssign { .. } => {
-                // Sink-only matchers; MemberAssign is JS-specific.
+            | NodeMatcher::MemberAssign { .. }
+            | NodeMatcher::BinopFormat { .. } => {
+                // Sink-only matchers; MemberAssign is JS-specific; BinopFormat is
+                // matched on binop/format nodes, not here.
             }
         }
     }

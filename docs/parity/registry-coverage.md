@@ -12,10 +12,10 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 | Rule files scanned | 2070 |
 | Files with YAML parse errors | 0 |
 | Total rules | 2144 |
-| Rules loaded OK | 1950 (91.0%) |
-| Rules skipped | 194 (9.0%) |
+| Rules loaded OK | 1957 (91.3%) |
+| Rules skipped | 187 (8.7%) |
 
-**Headline load rate: 91.0%** (1950 / 2144 rules).
+**Headline load rate: 91.3%** (1957 / 2144 rules).
 
 ## Skip-reason histogram
 
@@ -23,16 +23,16 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 147 | 75.8% | 6.9% |
-| `unsupported language: apex` | 9 | 4.6% | 0.4% |
-| `generic mode (languages: [generic])` | 7 | 3.6% | 0.3% |
-| `mode: taint (unsupported language: scala)` | 5 | 2.6% | 0.2% |
-| `taint: pattern-propagators` | 5 | 2.6% | 0.2% |
-| `unsupported language: clojure` | 5 | 2.6% | 0.2% |
+| `mode: taint (unsupported shape)` | 140 | 74.9% | 6.5% |
+| `unsupported language: apex` | 9 | 4.8% | 0.4% |
+| `generic mode (languages: [generic])` | 7 | 3.7% | 0.3% |
+| `mode: taint (unsupported language: scala)` | 5 | 2.7% | 0.2% |
+| `taint: pattern-propagators` | 5 | 2.7% | 0.2% |
+| `unsupported language: clojure` | 5 | 2.7% | 0.2% |
 | `unsupported language: html` | 4 | 2.1% | 0.2% |
-| `mode: taint (unsupported language: apex)` | 3 | 1.5% | 0.1% |
-| `mode: taint (unsupported language: bash)` | 3 | 1.5% | 0.1% |
-| `mode: taint (unsupported language: solidity)` | 3 | 1.5% | 0.1% |
+| `mode: taint (unsupported language: apex)` | 3 | 1.6% | 0.1% |
+| `mode: taint (unsupported language: bash)` | 3 | 1.6% | 0.1% |
+| `mode: taint (unsupported language: solidity)` | 3 | 1.6% | 0.1% |
 | `mode: taint (unsupported language: swift)` | 1 | 0.5% | 0.0% |
 | `unsupported language: dart` | 1 | 0.5% | 0.0% |
 | `unsupported language: xml` | 1 | 0.5% | 0.0% |
@@ -43,10 +43,10 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 
 | Rank | Capability to add | Rules unlocked |
 |---:|---|---:|
-| 1 | `mode: taint (unsupported shape)` | 147 |
+| 1 | `mode: taint (unsupported shape)` | 140 |
 | 2 | `taint: pattern-propagators` | 5 |
 
-Operator/feature gaps account for **152 rules** (7.1% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **145 rules** (6.8% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
 
 ## Priority order — missing language grammars
 
@@ -74,15 +74,15 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 
 | Language | Total | Loaded | Skipped | Load rate |
 |---|---:|---:|---:|---:|
-| python | 423 | 388 | 35 | 91.7% |
+| python | 423 | 391 | 32 | 92.4% |
 | hcl | 359 | 359 | 0 | 100.0% |
-| javascript | 243 | 202 | 41 | 83.1% |
+| javascript | 243 | 203 | 40 | 83.5% |
 | regex | 237 | 237 | 0 | 100.0% |
 | java | 131 | 111 | 20 | 84.7% |
 | generic | 103 | 96 | 7 | 93.2% |
 | yaml | 100 | 100 | 0 | 100.0% |
 | go | 97 | 84 | 13 | 86.6% |
-| ruby | 92 | 73 | 19 | 79.3% |
+| ruby | 92 | 76 | 16 | 82.6% |
 | php | 63 | 49 | 14 | 77.8% |
 | solidity | 50 | 47 | 3 | 94.0% |
 | csharp | 48 | 38 | 10 | 79.2% |
@@ -114,10 +114,10 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **go**: `mode: taint (unsupported shape)` (13)
 - **html**: `unsupported language: html` (4)
 - **java**: `mode: taint (unsupported shape)` (17), `taint: pattern-propagators` (3)
-- **javascript**: `mode: taint (unsupported shape)` (41)
+- **javascript**: `mode: taint (unsupported shape)` (40)
 - **php**: `mode: taint (unsupported shape)` (14)
-- **python**: `mode: taint (unsupported shape)` (35)
-- **ruby**: `mode: taint (unsupported shape)` (18), `taint: pattern-propagators` (1)
+- **python**: `mode: taint (unsupported shape)` (32)
+- **ruby**: `mode: taint (unsupported shape)` (15), `taint: pattern-propagators` (1)
 - **scala**: `mode: taint (unsupported language: scala)` (5)
 - **solidity**: `mode: taint (unsupported language: solidity)` (3)
 - **swift**: `mode: taint (unsupported language: swift)` (1)

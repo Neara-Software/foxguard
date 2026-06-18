@@ -160,6 +160,18 @@ enum GenericMatcher {
     /// property-assignment sinks). Only valid as a sink or sanitizer shape;
     /// rejected as a source.
     MemberAssign { field: String, description: String },
+
+    /// Matches a string-building SINK containing a tainted value. Compiled
+    /// from Semgrep sink patterns such as `"$SQL" + $EXPR`, `$M % $M`,
+    /// `$A + $B`, f-strings `f"...{$X}..."`, and format calls
+    /// `fmt.Sprintf("$FMT", ...)`, `sprintf($FMT, ...)`.
+    ///
+    /// Semantics: a SINK that is a binary `+`/`%` expression, an interpolated/
+    /// format string, or a format call where one operand is a string literal/
+    /// format AND the tainted value flows into another operand. Conservative
+    /// (a non-tainted or literal-only concatenation never fires). Maps to
+    /// SQL-injection / command-string sinks. Sink/sanitizer only.
+    BinopFormat { description: String },
 }
 
 #[derive(Clone, Debug)]
@@ -230,6 +242,9 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::BinopFormat { description } => python_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
     }
 }
 
@@ -298,6 +313,9 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::BinopFormat { description } => javascript_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
     }
 }
 
@@ -362,6 +380,9 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::BinopFormat { description } => go_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
     }
 }
 
@@ -426,6 +447,9 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::BinopFormat { description } => java_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
     }
 }
 
@@ -497,6 +521,9 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             field: field.clone(),
             description: description.clone(),
         },
+        GenericMatcher::BinopFormat { description } => c_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
     }
 }
 
@@ -561,6 +588,9 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::BinopFormat { description } => kotlin_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
     }
 }
 
@@ -625,6 +655,9 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::BinopFormat { description } => ruby_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
     }
 }
 
@@ -698,6 +731,9 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::BinopFormat { description } => csharp_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
     }
 }
 
@@ -753,6 +789,9 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::BinopFormat { description } => php_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1455,6 +1494,26 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
         return None;
     }
 
+    // ── BinopFormat form: string-building sinks ──────────────────────────
+    //
+    // Semgrep SQL/command-string sinks express tainted concatenation as a
+    // binary `+`/`%` expression or an f-string interpolation: `"$SQL" + $EXPR`,
+    // `$A + $B`, `$M % $M`, `f"...{$X}..."`. The bridge compiles these to a
+    // `BinopFormat` sink; the engine fires only when one operand is a string
+    // literal/format AND another operand is tainted, so a literal-only or
+    // numeric concatenation never fires (conservative — avoids FPs).
+    //
+    // Sink/sanitizer only — a concatenation is a data-flow destination, and the
+    // `BinopFormat` literal-guard makes it nonsensical as a taint origin.
+    if is_binop_format_pattern(pat) {
+        return match role {
+            MatcherRole::Sink | MatcherRole::Sanitizer => Some(GenericMatcher::BinopFormat {
+                description: describe(pat, role),
+            }),
+            MatcherRole::Source => None,
+        };
+    }
+
     // ── Subscript form: `base[...]` / `base[$K]` ─────────────────────────
     //
     // Semgrep taint rules express request-map indexing as a subscript:
@@ -1739,6 +1798,116 @@ fn parse_subscript_base(pat: &str) -> Option<Option<String>> {
         }
     }
     None
+}
+
+/// True when `pat` is a string-building sink shape the engine should match as
+/// a `BinopFormat`: a binary `+`/`%` concatenation or an f-string
+/// interpolation. The compile-time check only recognises the *shape*; the
+/// engine enforces the literal-operand + tainted-operand guard at match time.
+///
+/// Recognised:
+/// - f-string interpolation: `f"...{$X}..."` / `f'...{$X}...'`
+/// - binary `+`/`%`: `"$SQL" + $EXPR`, `$A + $B`, `$M % $M`, `... + $X`
+///   — split on top-level ` + ` / ` % ` operators (outside quotes/brackets);
+///   every operand must be a quoted string literal, a metavariable, the
+///   `...` ellipsis, or a plain/dotted identifier chain, and at least two
+///   operands must be present.
+///
+/// Rejected (returns false): plain calls, attribute chains, subscripts,
+/// assignments, and any binop whose operands include unrecognised tokens.
+fn is_binop_format_pattern(pat: &str) -> bool {
+    // f-string interpolation: `f"...{$...}..."`.
+    if (pat.starts_with("f\"") || pat.starts_with("f'")) && pat.contains("{$") {
+        return true;
+    }
+
+    // Binary `+` / `%` concatenation. Split on top-level operators, skipping
+    // anything inside quotes or brackets so `"a + b"` and `f($x + $y)` don't
+    // confuse the scan.
+    let operands = split_top_level_binop(pat);
+    let Some(operands) = operands else {
+        return false;
+    };
+    if operands.len() < 2 {
+        return false;
+    }
+    operands.iter().all(|o| is_binop_operand(o))
+}
+
+/// Split `pat` on top-level ` + ` / ` % ` operators, returning the operand
+/// substrings, or `None` if there is no such top-level operator (so the caller
+/// can reject the shape). "Top-level" means not inside `"`/`'` quotes or
+/// `(`/`[`/`{` brackets.
+fn split_top_level_binop(pat: &str) -> Option<Vec<&str>> {
+    let bytes = pat.as_bytes();
+    let mut operands = Vec::new();
+    let mut start = 0usize;
+    let mut depth: i32 = 0;
+    let mut quote: Option<u8> = None;
+    let mut found_op = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = quote {
+            if b == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'"' | b'\'' => quote = Some(b),
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'+' | b'%' if depth == 0 => {
+                // Require surrounding spaces to be a binary operator (Semgrep
+                // formatting always uses `a + b`, never `a+b` in these rules).
+                let space_before = i > 0 && bytes[i - 1] == b' ';
+                let space_after = i + 1 < bytes.len() && bytes[i + 1] == b' ';
+                if space_before && space_after {
+                    operands.push(pat[start..i].trim());
+                    start = i + 1;
+                    found_op = true;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if !found_op {
+        return None;
+    }
+    operands.push(pat[start..].trim());
+    Some(operands)
+}
+
+/// True when `o` is an acceptable operand of a `BinopFormat` concatenation: a
+/// quoted string literal, a Semgrep metavariable (`$X`), the `...` ellipsis, a
+/// plain/dotted identifier chain, or such a chain wrapped in a single call /
+/// subscript. Anything containing further unbalanced operators is rejected.
+fn is_binop_operand(o: &str) -> bool {
+    let o = o.trim();
+    if o.is_empty() {
+        return false;
+    }
+    if o == "..." {
+        return true;
+    }
+    // Quoted string literal (possibly an f-string).
+    if (o.starts_with('"') && o.ends_with('"') && o.len() >= 2)
+        || (o.starts_with('\'') && o.ends_with('\'') && o.len() >= 2)
+        || (o.starts_with("f\"") && o.ends_with('"'))
+        || (o.starts_with("f'") && o.ends_with('\''))
+    {
+        return true;
+    }
+    if is_metavariable(o) {
+        return true;
+    }
+    if is_dotted_identifier(o) {
+        return true;
+    }
+    false
 }
 
 /// If `callee` has the shape `$METAVAR.plain_method` — exactly one
@@ -4087,6 +4256,253 @@ end
             findings.len(),
             1,
             "expected 1 finding for params -> Kernel.system (Kernel.$X), got {:?}",
+            findings
+        );
+    }
+
+    // ── Bridge-level tests: BinopFormat (`"$SQL" + $X` / f-string sink) ──────
+
+    /// Python: `request.args` source → `"$SQLSTR" + ...` concatenation sink.
+    /// The sink is a string-building binary `+` — only `BinopFormat` can
+    /// express it.
+    #[test]
+    fn python_bridge_binop_format_concat_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-binop-sqli
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request flows into a built SQL string"
+pattern-sources:
+  - pattern: $REQ.args
+pattern-sinks:
+  - pattern: '"$SQLSTR" + ...'
+"#,
+        );
+        assert!(
+            matches!(
+                rule.spec.sinks.as_slice(),
+                [GenericMatcher::BinopFormat { .. }]
+            ),
+            "sink should compile to BinopFormat, got {:?}",
+            rule.spec.sinks
+        );
+
+        let src = r#"
+def handler(req):
+    name = req.args
+    query = "SELECT * FROM t WHERE n = " + name
+    db.execute(query)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for req.args -> \"...\" + name, got {:?}",
+            findings
+        );
+    }
+
+    /// Python safe variant: a literal-only concatenation with NO tainted
+    /// operand must not fire, proving `BinopFormat` is not over-broad.
+    #[test]
+    fn python_bridge_binop_format_untainted_concat_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-binop-sqli-safe
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request flows into a built SQL string"
+pattern-sources:
+  - pattern: $REQ.args
+pattern-sinks:
+  - pattern: '"$SQLSTR" + ...'
+"#,
+        );
+
+        let src = r#"
+def handler(req):
+    name = req.args
+    query = "SELECT * FROM t WHERE n = " + "constant"
+    db.execute(query)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "literal-only concat has no tainted operand; expected no finding, got {:?}",
+            findings
+        );
+    }
+
+    /// Python: f-string interpolation sink `f"...{$X}..."` with a tainted
+    /// interpolated value fires.
+    #[test]
+    fn python_bridge_binop_format_fstring_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-binop-fstring-sqli
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request flows into an f-string SQL"
+pattern-sources:
+  - pattern: $REQ.args
+pattern-sinks:
+  - pattern: 'f"...{$X}..."'
+"#,
+        );
+        assert!(
+            matches!(
+                rule.spec.sinks.as_slice(),
+                [GenericMatcher::BinopFormat { .. }]
+            ),
+            "f-string sink should compile to BinopFormat, got {:?}",
+            rule.spec.sinks
+        );
+
+        let src = r#"
+def handler(req):
+    name = req.args
+    query = f"SELECT * FROM t WHERE n = {name}"
+    db.execute(query)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for req.args -> f-string, got {:?}",
+            findings
+        );
+    }
+
+    /// Python: percent-format sink `"$HTMLSTR" % ...` with a tainted operand
+    /// fires (old-style string formatting).
+    #[test]
+    fn python_bridge_binop_format_percent_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-binop-percent-html
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request flows into a percent-formatted string"
+pattern-sources:
+  - pattern: $REQ.args
+pattern-sinks:
+  - pattern: '"$HTMLSTR" % ...'
+"#,
+        );
+
+        let src = r#"
+def handler(req):
+    name = req.args
+    page = "<b>%s</b>" % name
+    render(page)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for req.args -> \"...\" % name, got {:?}",
+            findings
+        );
+    }
+
+    /// Go: a request field-read source → `"$SQLSTR" + ...` concat sink.
+    /// Confirms the Go engine matches `BinopFormat` on `binary_expression`.
+    #[test]
+    fn go_bridge_binop_format_concat_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: go-binop-sqli
+mode: taint
+languages: [go]
+severity: ERROR
+message: "Tainted request value flows into a built SQL string"
+pattern-sources:
+  - pattern: $REQ.Body
+pattern-sinks:
+  - pattern: '"$SQLSTR" + ...'
+"#,
+        );
+        assert!(
+            matches!(
+                rule.spec.sinks.as_slice(),
+                [GenericMatcher::BinopFormat { .. }]
+            ),
+            "go sink should compile to BinopFormat, got {:?}",
+            rule.spec.sinks
+        );
+
+        let src = r#"
+package main
+
+func handler(r *Request) {
+    name := r.Body
+    query := "SELECT * FROM t WHERE n = " + name
+    db.Exec(query)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for r.Body -> \"...\" + name, got {:?}",
+            findings
+        );
+    }
+
+    /// Go safe variant: a literal-only concatenation with no tainted operand
+    /// must not fire.
+    #[test]
+    fn go_bridge_binop_format_untainted_concat_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: go-binop-sqli-safe
+mode: taint
+languages: [go]
+severity: ERROR
+message: "Tainted request value flows into a built SQL string"
+pattern-sources:
+  - pattern: $REQ.Body
+pattern-sinks:
+  - pattern: '"$SQLSTR" + ...'
+"#,
+        );
+
+        let src = r#"
+package main
+
+func handler(r *Request) {
+    _ = r.Body
+    query := "SELECT * FROM t WHERE n = " + "constant"
+    db.Exec(query)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "literal-only concat has no tainted operand; expected no finding, got {:?}",
             findings
         );
     }
