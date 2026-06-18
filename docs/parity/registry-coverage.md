@@ -12,10 +12,10 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 | Rule files scanned | 2070 |
 | Files with YAML parse errors | 0 |
 | Total rules | 2144 |
-| Rules loaded OK | 1953 (91.1%) |
-| Rules skipped | 191 (8.9%) |
+| Rules loaded OK | 1957 (91.3%) |
+| Rules skipped | 187 (8.7%) |
 
-**Headline load rate: 91.1%** (1953 / 2144 rules).
+**Headline load rate: 91.3%** (1957 / 2144 rules).
 
 ## Skip-reason histogram
 
@@ -23,13 +23,12 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 140 | 73.3% | 6.5% |
-| `unsupported language: apex` | 9 | 4.7% | 0.4% |
+| `mode: taint (unsupported shape)` | 140 | 74.9% | 6.5% |
+| `unsupported language: apex` | 9 | 4.8% | 0.4% |
 | `generic mode (languages: [generic])` | 7 | 3.7% | 0.3% |
-| `mode: taint (unsupported language: scala)` | 5 | 2.6% | 0.2% |
-| `taint: pattern-propagators` | 5 | 2.6% | 0.2% |
-| `unsupported language: clojure` | 5 | 2.6% | 0.2% |
-| `loader rejected (other)` | 4 | 2.1% | 0.2% |
+| `mode: taint (unsupported language: scala)` | 5 | 2.7% | 0.2% |
+| `taint: pattern-propagators` | 5 | 2.7% | 0.2% |
+| `unsupported language: clojure` | 5 | 2.7% | 0.2% |
 | `unsupported language: html` | 4 | 2.1% | 0.2% |
 | `mode: taint (unsupported language: apex)` | 3 | 1.6% | 0.1% |
 | `mode: taint (unsupported language: bash)` | 3 | 1.6% | 0.1% |
@@ -46,9 +45,8 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 |---:|---|---:|
 | 1 | `mode: taint (unsupported shape)` | 140 |
 | 2 | `taint: pattern-propagators` | 5 |
-| 3 | `loader rejected (other)` | 4 |
 
-Operator/feature gaps account for **149 rules** (6.9% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **145 rules** (6.8% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
 
 ## Priority order — missing language grammars
 
@@ -79,7 +77,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 | python | 423 | 391 | 32 | 92.4% |
 | hcl | 359 | 359 | 0 | 100.0% |
 | javascript | 243 | 203 | 40 | 83.5% |
-| regex | 237 | 233 | 4 | 98.3% |
+| regex | 237 | 237 | 0 | 100.0% |
 | java | 131 | 111 | 20 | 84.7% |
 | generic | 103 | 96 | 7 | 93.2% |
 | yaml | 100 | 100 | 0 | 100.0% |
@@ -119,7 +117,6 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **javascript**: `mode: taint (unsupported shape)` (40)
 - **php**: `mode: taint (unsupported shape)` (14)
 - **python**: `mode: taint (unsupported shape)` (32)
-- **regex**: `loader rejected (other)` (4)
 - **ruby**: `mode: taint (unsupported shape)` (15), `taint: pattern-propagators` (1)
 - **scala**: `mode: taint (unsupported language: scala)` (5)
 - **solidity**: `mode: taint (unsupported language: solidity)` (3)
