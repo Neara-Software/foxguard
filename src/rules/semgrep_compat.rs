@@ -36,6 +36,16 @@ pub enum CompiledRegex {
 }
 
 impl CompiledRegex {
+    /// Returns the original (normalised) regex source string of whichever
+    /// backend compiled it. Used for stable fingerprinting/dedup of compiled
+    /// matchers that embed a regex.
+    pub fn as_str(&self) -> &str {
+        match self {
+            CompiledRegex::Fast(re) => re.as_str(),
+            CompiledRegex::Fancy(re) => re.as_str(),
+        }
+    }
+
     /// Returns `true` if the pattern matches anywhere in `text`.
     ///
     /// For the fancy-regex backend, a matcher error (such as exceeding the
@@ -2370,7 +2380,7 @@ fn build_either_matchers(
     Ok(matchers)
 }
 
-fn compile_regex(pattern: &str) -> Result<CompiledRegex, String> {
+pub(crate) fn compile_regex(pattern: &str) -> Result<CompiledRegex, String> {
     // `\Z` is a Python/PCRE end-of-string anchor meaning "end of string before
     // optional trailing newline".  The Rust `regex` crate uses `$` with the
     // `MULTILINE` flag off for the same semantics (match at absolute end).

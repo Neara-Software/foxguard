@@ -905,6 +905,8 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
                 }
             }
             NodeMatcher::MethodName { .. }
+            | NodeMatcher::CallRegex { .. }
+            | NodeMatcher::MethodNameRegex { .. }
             | NodeMatcher::ReceiverCall { .. }
             | NodeMatcher::MemberAssign { .. }
             | NodeMatcher::BinopFormat { .. }

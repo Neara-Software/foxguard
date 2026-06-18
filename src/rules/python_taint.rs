@@ -1433,6 +1433,8 @@ fn match_source(
                 // expressions.
             }
             NodeMatcher::MethodName { .. }
+            | NodeMatcher::CallRegex { .. }
+            | NodeMatcher::MethodNameRegex { .. }
             | NodeMatcher::ReceiverCall { .. }
             | NodeMatcher::MemberAssign { .. }
             | NodeMatcher::BinopFormat { .. }

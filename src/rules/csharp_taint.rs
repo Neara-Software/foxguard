@@ -704,6 +704,8 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 }
             }
             NodeMatcher::MethodName { .. }
+            | NodeMatcher::CallRegex { .. }
+            | NodeMatcher::MethodNameRegex { .. }
             | NodeMatcher::ReceiverCall { .. }
             | NodeMatcher::MemberAssign { .. } => {
                 // Sink-only matchers, never a source.
@@ -771,6 +773,28 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
                     let resolved = resolve_callee(func, source);
                     return resolved.contains('.')
                         && resolved.split('.').next() == Some(receiver.as_str());
+                }
+            }
+            false
+        }
+        NodeMatcher::CallRegex { regex, .. } => {
+            // `$F(...)` + metavariable-regex on `$F`: callee text matches regex.
+            if node.kind() == "invocation_expression" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    let resolved = resolve_callee(func, source);
+                    return regex.is_match(resolved);
+                }
+            }
+            false
+        }
+        NodeMatcher::MethodNameRegex { regex, .. } => {
+            // `$OBJ.$M(...)` + metavariable-regex on `$M`: final method name
+            // matches regex, any receiver.
+            if node.kind() == "invocation_expression" {
+                if let Some(func) = node.child_by_field_name("function") {
+                    if let Some(method_name) = final_name_segment(func, source) {
+                        return regex.is_match(method_name);
+                    }
                 }
             }
             false

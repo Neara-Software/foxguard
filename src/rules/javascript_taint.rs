@@ -1926,6 +1926,8 @@ fn match_source(
                 // Seeded at function entry, not matched on expressions.
             }
             NodeMatcher::MethodName { .. }
+            | NodeMatcher::CallRegex { .. }
+            | NodeMatcher::MethodNameRegex { .. }
             | NodeMatcher::ReceiverCall { .. }
             | NodeMatcher::MemberAssign { .. }
             | NodeMatcher::BinopFormat { .. }
