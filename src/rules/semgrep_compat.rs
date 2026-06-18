@@ -15,6 +15,56 @@ const RESERVED_RULE_ID_NAMESPACES: &[&str] = &[
     "config", "manifest",
 ];
 
+/// A compiled regex that prefers the fast `regex` crate but transparently falls
+/// back to `fancy-regex` (a backtracking engine) for patterns the `regex` crate
+/// cannot compile — most importantly PCRE features such as lookahead
+/// `(?=...)` / `(?!...)`, lookbehind `(?<=...)` / `(?<!...)`, and named
+/// backreferences, which many Semgrep registry rules rely on.
+///
+/// The `regex` crate remains the primary path: `fancy-regex` is only used when
+/// the `regex` crate rejects the pattern, so the common case keeps the linear,
+/// allocation-free matching of the fast engine.
+#[derive(Debug, Clone)]
+pub enum CompiledRegex {
+    /// Compiled with the fast, linear-time `regex` crate (the common case).
+    Fast(Regex),
+    /// Compiled with the backtracking `fancy-regex` engine (lookaround /
+    /// backreferences). `fancy_regex::Regex::is_match` returns a `Result`; any
+    /// error (e.g. backtrack-limit exceeded) is treated as "no match" rather
+    /// than panicking.
+    Fancy(fancy_regex::Regex),
+}
+
+impl CompiledRegex {
+    /// Returns `true` if the pattern matches anywhere in `text`.
+    ///
+    /// For the fancy-regex backend, a matcher error (such as exceeding the
+    /// backtrack limit) is treated as no-match.
+    pub fn is_match(&self, text: &str) -> bool {
+        match self {
+            CompiledRegex::Fast(re) => re.is_match(text),
+            CompiledRegex::Fancy(re) => re.is_match(text).unwrap_or(false),
+        }
+    }
+
+    /// Returns the non-overlapping byte ranges `(start, end)` of every match in
+    /// `text`, left-to-right — the same iteration order as
+    /// [`regex::Regex::find_iter`].
+    ///
+    /// For the fancy-regex backend, iteration stops at the first matcher error
+    /// (errors are treated as "no further matches" rather than panicking).
+    pub fn find_matches(&self, text: &str) -> Vec<(usize, usize)> {
+        match self {
+            CompiledRegex::Fast(re) => re.find_iter(text).map(|m| (m.start(), m.end())).collect(),
+            CompiledRegex::Fancy(re) => re
+                .find_iter(text)
+                .map_while(Result::ok)
+                .map(|m| (m.start(), m.end()))
+                .collect(),
+        }
+    }
+}
+
 // ─── YAML Schema ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -304,7 +354,7 @@ pub enum PatternMatcher {
     /// Single pattern
     Single(CompiledAstPattern),
     /// Regex match against source text
-    Regex(Regex),
+    Regex(CompiledRegex),
     /// Match any of these patterns (OR)
     Either(Vec<PatternMatcher>),
     /// Combine multiple clauses (AND): positives must all match, negatives must not
@@ -327,7 +377,7 @@ pub enum PatternMatcher {
 #[derive(Debug, Clone)]
 pub enum NegativeMatcher {
     Pattern(CompiledAstPattern),
-    Regex(Regex),
+    Regex(CompiledRegex),
 }
 
 #[derive(Clone)]
@@ -356,7 +406,7 @@ pub struct PathFilter {
 #[derive(Debug, Clone)]
 pub struct MetavariableRegexConstraint {
     metavariable: String,
-    regex: Regex,
+    regex: CompiledRegex,
 }
 
 /// Comparison operator for `metavariable-comparison`.
@@ -1114,20 +1164,21 @@ fn match_single_pattern(
     results
 }
 
-fn match_regex_pattern(regex: &Regex, source: &str) -> MatchResult {
+fn match_regex_pattern(regex: &CompiledRegex, source: &str) -> MatchResult {
     regex
-        .find_iter(source)
-        .map(|matched| {
-            let (line, column) = byte_offset_to_position(source, matched.start());
-            let (end_line, end_column) = byte_offset_to_position(source, matched.end());
+        .find_matches(source)
+        .into_iter()
+        .map(|(start, end)| {
+            let (line, column) = byte_offset_to_position(source, start);
+            let (end_line, end_column) = byte_offset_to_position(source, end);
             MatchRange {
-                start_byte: matched.start(),
-                end_byte: matched.end(),
+                start_byte: start,
+                end_byte: end,
                 line,
                 column,
                 end_line,
                 end_column,
-                snippet: get_source_line(source, matched.start()),
+                snippet: get_source_line(source, start),
                 bindings: HashMap::new(),
                 binding_ranges: HashMap::new(),
             }
@@ -1760,9 +1811,9 @@ struct RegexModeRule {
     lang: Language,
     /// The positive regex(es) — all must match at least once (AND semantics when
     /// multiple are present, matching Semgrep's `patterns:` AND-block behaviour).
-    positives: std::sync::Arc<Vec<Regex>>,
+    positives: std::sync::Arc<Vec<CompiledRegex>>,
     /// Negative regexes — if any match the entire file, the finding is suppressed.
-    negatives: std::sync::Arc<Vec<Regex>>,
+    negatives: std::sync::Arc<Vec<CompiledRegex>>,
     path_filter: Option<std::sync::Arc<PathFilter>>,
 }
 
@@ -1880,8 +1931,8 @@ fn build_regex_mode_rules(
     path_filter: &Option<PathFilter>,
 ) -> Result<Vec<Box<dyn Rule>>, String> {
     // Collect all pattern-regex clauses from top-level AND from patterns: blocks.
-    let mut positives: Vec<Regex> = Vec::new();
-    let mut negatives: Vec<Regex> = Vec::new();
+    let mut positives: Vec<CompiledRegex> = Vec::new();
+    let mut negatives: Vec<CompiledRegex> = Vec::new();
 
     // Helper: push a compiled regex or warn-skip if unsupported features are used.
     // Consistent with MetavariableRegexConstraint::from_yaml graceful degradation.
@@ -2303,7 +2354,7 @@ fn build_either_matchers(
     Ok(matchers)
 }
 
-fn compile_regex(pattern: &str) -> Result<Regex, String> {
+fn compile_regex(pattern: &str) -> Result<CompiledRegex, String> {
     // `\Z` is a Python/PCRE end-of-string anchor meaning "end of string before
     // optional trailing newline".  The Rust `regex` crate uses `$` with the
     // `MULTILINE` flag off for the same semantics (match at absolute end).
@@ -2321,7 +2372,23 @@ fn compile_regex(pattern: &str) -> Result<Regex, String> {
     // followed by a valid quantifier body.
     let normalised = escape_bare_braces(&normalised);
 
-    Regex::new(&normalised).map_err(|e| format!("Invalid pattern-regex '{}': {}", pattern, e))
+    // Fast path: the linear-time `regex` crate handles the overwhelming
+    // majority of patterns.  Keep it as the primary engine.
+    match Regex::new(&normalised) {
+        Ok(re) => Ok(CompiledRegex::Fast(re)),
+        // Fallback path: the `regex` crate rejected the pattern.  This is the
+        // case for PCRE features it deliberately does not support —
+        // lookahead `(?=...)`/`(?!...)`, lookbehind `(?<=...)`/`(?<!...)`, and
+        // named/numeric backreferences.  The backtracking `fancy-regex`
+        // engine supports these, so we retry there before giving up.
+        Err(fast_err) => match fancy_regex::Regex::new(&normalised) {
+            Ok(re) => Ok(CompiledRegex::Fancy(re)),
+            Err(fancy_err) => Err(format!(
+                "Invalid pattern-regex '{}': {} (fancy-regex fallback also failed: {})",
+                pattern, fast_err, fancy_err
+            )),
+        },
+    }
 }
 
 /// Escape bare `{` characters that Rust's `regex` crate would reject as
@@ -4502,5 +4569,107 @@ rules:
         let input = r"[{}\s]*";
         let result = escape_bare_braces(input);
         Regex::new(&result).expect("normalised regex must compile");
+    }
+
+    /// `compile_regex` must keep using the fast `regex` crate for ordinary
+    /// patterns that contain no PCRE-only features — the fancy-regex fallback
+    /// is reserved for patterns the fast engine rejects.
+    #[test]
+    fn test_compile_regex_fast_path_for_plain_pattern() {
+        let compiled = compile_regex(r"password\s*=").expect("plain pattern must compile");
+        assert!(
+            matches!(compiled, CompiledRegex::Fast(_)),
+            "a pattern with no lookaround/backref must compile on the fast `regex` crate"
+        );
+        assert!(
+            compiled.is_match("password = 'hunter2'"),
+            "fast-path regex must match the obvious case"
+        );
+        assert!(
+            !compiled.is_match("token = 'hunter2'"),
+            "fast-path regex must not match unrelated text"
+        );
+        // The fast engine reports byte ranges just like the fancy one.
+        assert_eq!(
+            compiled.find_matches("x; password=1"),
+            vec![(3, 12)],
+            "fast-path find_matches must return the matched byte range"
+        );
+    }
+
+    /// `compile_regex` must transparently fall back to the backtracking
+    /// `fancy-regex` engine when the fast `regex` crate rejects a PCRE
+    /// lookahead, and the resulting matcher must honour the lookahead.
+    #[test]
+    fn test_compile_regex_fancy_path_for_lookahead() {
+        // Anchored negative lookahead: at the start of the string, match
+        // `password =` only when it is NOT prefixed by `test_`. Anchoring with
+        // `^` ties the negative lookahead to the whole-line result so the
+        // exclusion is observable. The fast `regex` crate rejects `(?!...)`.
+        let pattern = r"^(?!test_)password\s*=";
+        assert!(
+            Regex::new(pattern).is_err(),
+            "sanity: the fast `regex` crate must reject this lookahead pattern"
+        );
+
+        let compiled = compile_regex(pattern).expect("lookahead pattern must compile via fallback");
+        assert!(
+            matches!(compiled, CompiledRegex::Fancy(_)),
+            "a lookahead pattern must compile on the fancy-regex fallback engine"
+        );
+
+        // Real password assignment → the negative lookahead allows the match.
+        assert!(
+            compiled.is_match("password = 'secret'"),
+            "fancy-path regex must match a non-test password assignment"
+        );
+        // `test_password =` → the `^` anchor pins the match attempt to position
+        // 0, where the negative lookahead `(?!test_)` fails, so there is no
+        // match anywhere.
+        assert!(
+            !compiled.is_match("test_password = 'secret'"),
+            "fancy-path regex must reject a `test_`-prefixed password assignment"
+        );
+    }
+
+    /// End-to-end: a `languages: [regex]` rule whose `pattern-regex` uses a PCRE
+    /// lookahead now LOADS (previously warn-skipped as `loader rejected
+    /// (other)`) and fires on the right source while sparing the excluded one.
+    #[test]
+    fn regex_lang_rule_with_lookahead_loads_and_matches() {
+        let yaml = r#"
+rules:
+  - id: test/lookahead-password
+    pattern-regex: '^(?!test_)password\s*='
+    languages: [regex]
+    message: Hardcoded password assignment
+    severity: ERROR
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path())
+            .expect("lookahead pattern-regex rule must load via the fancy-regex fallback");
+        assert!(
+            !rules.is_empty(),
+            "lookahead regex-mode rule must produce at least one rule instance"
+        );
+
+        // Source the rule SHOULD flag (real password assignment).
+        let hit_src = "password = 'hunter2'\n";
+        let tree = parse_file(hit_src, Language::Python).unwrap();
+        let findings = rules[0].check(hit_src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "rule must fire on a non-test password assignment"
+        );
+
+        // Source the rule should NOT flag (the `test_` prefix is excluded by the
+        // negative lookahead).
+        let miss_src = "test_password = 'hunter2'\n";
+        let tree = parse_file(miss_src, Language::Python).unwrap();
+        let findings = rules[0].check(miss_src, &tree);
+        assert!(
+            findings.is_empty(),
+            "rule must NOT fire when the negative lookahead excludes the match"
+        );
     }
 }
