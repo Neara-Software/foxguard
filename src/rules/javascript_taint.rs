@@ -1884,8 +1884,10 @@ fn match_source(
             }
             NodeMatcher::MethodName { .. }
             | NodeMatcher::ReceiverCall { .. }
-            | NodeMatcher::MemberAssign { .. } => {
-                // Sink-only matchers.
+            | NodeMatcher::MemberAssign { .. }
+            | NodeMatcher::BinopFormat { .. } => {
+                // Sink-only matchers; BinopFormat sinks are carried in the spec
+                // but the JS engine does not yet match them as a source (no-op).
             }
         }
     }

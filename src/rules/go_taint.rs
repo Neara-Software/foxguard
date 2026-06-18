@@ -37,9 +37,9 @@
 use super::common::AliasTable;
 use super::taint_engine::{
     analyze_function_generic, attribution_hint_for_sink, build_batched_taint_groups,
-    cross_file_taint_finding, extract_cross_file_summary_for_function, match_call_sink, node_text,
-    push_attributed_findings, summarize_function_return_generic, taint_finding_for_node,
-    AnalysisContext, TaintLanguageAdapter, TaintState,
+    cross_file_taint_finding, extract_cross_file_summary_for_function, match_binop_format_sink,
+    match_call_sink, node_text, push_attributed_findings, summarize_function_return_generic,
+    taint_finding_for_node, AnalysisContext, TaintLanguageAdapter, TaintState,
 };
 pub use super::taint_engine::{
     BatchedRule, NodeMatcher, ReturnSummary, ReturnTaintSummary, RuleFilter, TaintFinding,
@@ -446,6 +446,9 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for GoTaintAdapter {
             "call_expression" => {
                 handle_call(node, ctx, state, findings);
             }
+            "binary_expression" => {
+                handle_binop_format_sink(node, ctx, state, findings);
+            }
             _ => {}
         }
     }
@@ -753,6 +756,83 @@ fn handle_call(
     if let Some(cross_file) = ctx.cross_file {
         handle_cross_file_call(node, callee_raw.as_ref(), ctx, state, findings, cross_file);
     }
+}
+
+/// Handle a `BinopFormat` string-building sink: a `binary_expression` `+`
+/// concatenation that mixes a Go string literal with a tainted operand
+/// (`"SELECT ... " + tainted`). Fires only when (a) the spec has a
+/// `BinopFormat` sink, (b) at least one operand is a string literal, and (c) at
+/// least one operand is tainted. The literal guard keeps numeric `+` clean.
+///
+/// To report once on a nested chain (`"a" + "b" + tainted`), the handler skips
+/// a `binary_expression` whose parent is also a `+` `binary_expression`.
+fn handle_binop_format_sink(
+    node: Node<'_>,
+    ctx: &GoCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let Some(sink) = match_binop_format_sink(ctx.spec, ctx.sink_to_rules) else {
+        return;
+    };
+    if !go_binop_is_concat(node, ctx.source) {
+        return;
+    }
+    if let Some(parent) = node.parent() {
+        if parent.kind() == "binary_expression" && go_binop_is_concat(parent, ctx.source) {
+            return;
+        }
+    }
+    if !go_binop_has_string_literal_operand(node, ctx.source) {
+        return;
+    }
+    if let Some((source_desc, src_line)) = expression_taint(node, ctx, state) {
+        let rule_hint = attribution_hint_for_sink(&sink);
+        findings.push(taint_finding_for_node(
+            node,
+            source_desc,
+            sink.description,
+            src_line,
+            rule_hint,
+            1,
+        ));
+    }
+}
+
+/// True when `node` is a `binary_expression` whose operator is `+` (Go string
+/// concatenation; Go has no `%` string-format operator).
+fn go_binop_is_concat(node: Node<'_>, source: &str) -> bool {
+    node.child_by_field_name("operator")
+        .map(|op| node_text(op, source) == "+")
+        .unwrap_or(false)
+}
+
+/// True when a `+` concat chain contains at least one Go string-literal
+/// operand (`interpreted_string_literal` / `raw_string_literal`), recursing
+/// into nested `+` operators.
+fn go_binop_has_string_literal_operand(node: Node<'_>, source: &str) -> bool {
+    fn operand_has_string(n: Node<'_>, source: &str) -> bool {
+        match n.kind() {
+            "interpreted_string_literal" | "raw_string_literal" => true,
+            "binary_expression" => {
+                if !go_binop_is_concat(n, source) {
+                    return false;
+                }
+                let left = n.child_by_field_name("left");
+                let right = n.child_by_field_name("right");
+                left.map(|l| operand_has_string(l, source)).unwrap_or(false)
+                    || right
+                        .map(|r| operand_has_string(r, source))
+                        .unwrap_or(false)
+            }
+            "parenthesized_expression" => n
+                .named_child(0)
+                .map(|c| operand_has_string(c, source))
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+    operand_has_string(node, source)
 }
 
 /// Check if a call targets a same-package function with cross-file summaries.
@@ -1180,8 +1260,10 @@ fn match_source(
             }
             NodeMatcher::MethodName { .. }
             | NodeMatcher::ReceiverCall { .. }
-            | NodeMatcher::MemberAssign { .. } => {
-                // Sink-only matcher; MemberAssign is JS-specific.
+            | NodeMatcher::MemberAssign { .. }
+            | NodeMatcher::BinopFormat { .. } => {
+                // Sink-only matcher; MemberAssign is JS-specific; BinopFormat is
+                // matched on binary-expression nodes, not as a source.
             }
         }
     }
