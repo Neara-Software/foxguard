@@ -1594,6 +1594,33 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
             };
         }
 
+        // ── CALL-ON-MEMBER shape: `<root>.<field>.method($X)` ──────────────
+        //
+        // A method call whose receiver is itself a member-access chain with a
+        // metavariable somewhere (so it is NOT a fully-concrete dotted path,
+        // which the `Call` branch already handles). Examples:
+        //   `$CLIENT.chat.completions.create(...)` → field `completions`
+        //   `$CLIENT.messages.create(...)`         → field `messages`
+        //   `$REQ.POST.get(...)`                   → field `POST`
+        //
+        // The compiled matcher is a `FieldName` on the *penultimate* segment
+        // (the field read immediately before the final method). The engine
+        // taints that member-read; the trailing `.method(...)` propagates the
+        // taint via the existing method-call-on-tainted-root rule. This reuses
+        // the FieldName machinery with no new engine variant.
+        //
+        // Discipline: we only accept this when the penultimate segment is a
+        // *concrete* identifier (so we never compile a bare `.get(...)` /
+        // `.method(...)` any-receiver matcher, which would be far too broad).
+        // The root may be a metavariable or a concrete identifier; any
+        // intermediate segments may be metavariables or identifiers.
+        if let Some(field) = parse_member_call_penultimate(callee) {
+            return Some(GenericMatcher::FieldName {
+                field: field.to_string(),
+                description: describe(field, role),
+            });
+        }
+
         // ── ReceiverCall shape: `receiver.$METHOD($X)` ──────────────────
         //
         // The symmetric counterpart of `MethodName`: a *concrete* receiver
@@ -1660,6 +1687,28 @@ fn compile_pattern(pattern: &str, role: MatcherRole) -> Option<GenericMatcher> {
             field: field.to_string(),
             description: describe(field, role),
         });
+    }
+
+    // ── Concrete-root, metavar-field source: `request.$ANYTHING` ─────────
+    //
+    // Django/Flask express "any attribute of the request object is untrusted"
+    // as `request.$ANYTHING` (a *concrete* root identifier followed by a
+    // metavariable field). We seed taint on the concrete root identifier as a
+    // `ParamName` source: because the engine propagates taint from a tainted
+    // root through attribute reads (`request.GET`, `request.POST`, …), seeding
+    // the root covers every `request.<field>` access — exactly the intent of
+    // the wildcard field. Only meaningful as a SOURCE.
+    //
+    // Discipline: the ROOT must be a concrete identifier (we refuse a
+    // metavariable root like `$REQ.$ANYTHING`, which would taint every member
+    // access on every receiver — a universal matcher with severe FP risk).
+    if let MatcherRole::Source = role {
+        if let Some(root) = parse_concrete_root_metavar_field(pat) {
+            return Some(GenericMatcher::ParamName {
+                names: vec![root.to_string()],
+                description: format!("untrusted `{}` request object", root),
+            });
+        }
     }
 
     // ── No parens: identifier or attribute chain ────────────────────────
@@ -1938,6 +1987,85 @@ fn parse_metavar_dot_method(callee: &str) -> Option<&str> {
     Some(rest)
 }
 
+/// If `pat` has the shape `root.$METAVAR` — a *concrete* plain-identifier root
+/// followed by a single metavariable field — return the root identifier.
+/// Used to compile `request.$ANYTHING` (Django/Flask "any request attribute")
+/// to a `ParamName` source on the concrete root. Returns `None` for a
+/// metavariable root (`$REQ.$ANYTHING` — too broad), a concrete field
+/// (`request.GET` — that is a plain `Attribute`), or any chain that is not
+/// exactly two dot-separated segments.
+///
+/// Examples:
+/// - `request.$ANYTHING` → `Some("request")`
+/// - `req.$X`            → `Some("req")`
+/// - `$REQ.$ANYTHING`    → `None` (metavar root)
+/// - `request.GET`       → `None` (concrete field — handled by `Attribute`)
+/// - `a.b.$X`            → `None` (more than two segments)
+fn parse_concrete_root_metavar_field(pat: &str) -> Option<&str> {
+    let dot = pat.find('.')?;
+    let root = &pat[..dot];
+    let field = &pat[dot + 1..];
+    // Exactly two segments: the field must not contain a further dot.
+    if field.contains('.') {
+        return None;
+    }
+    if !is_identifier(root) {
+        return None;
+    }
+    if !is_metavariable(field) {
+        return None;
+    }
+    Some(root)
+}
+
+/// If `callee` is a CALL-ON-MEMBER receiver chain — a dotted path of three or
+/// more segments where (a) at least one segment is a Semgrep metavariable
+/// (otherwise the fully-concrete chain is already handled by the `Call`
+/// branch), (b) the *final* segment (the method name) is a concrete
+/// identifier, and (c) the *penultimate* segment (the field read just before
+/// the method) is a concrete identifier — return the penultimate field name.
+///
+/// Every other segment may be an identifier or a metavariable. Returns `None`
+/// for two-segment callees (handled by [`parse_metavar_dot_method`] /
+/// [`parse_receiver_dot_metavar`]), for chains whose penultimate or final
+/// segment is a metavariable (we refuse to compile an any-field/any-method
+/// matcher — too broad), and for fully-concrete chains.
+///
+/// Examples:
+/// - `$CLIENT.chat.completions.create` → `Some("completions")`
+/// - `$CLIENT.messages.create`         → `Some("messages")`
+/// - `$REQ.POST.get`                   → `Some("POST")`
+/// - `request.$PROPERTY.get`           → `None` (penultimate is a metavar)
+/// - `$CONN.executeQuery`              → `None` (two segments)
+/// - `flask.request.form.get`          → `None` (fully concrete → `Call`)
+fn parse_member_call_penultimate(callee: &str) -> Option<&str> {
+    let segments: Vec<&str> = callee.split('.').collect();
+    if segments.len() < 3 {
+        return None;
+    }
+    let method = segments[segments.len() - 1];
+    let field = segments[segments.len() - 2];
+    // Final method and penultimate field must both be concrete identifiers.
+    if !is_identifier(method) || !is_identifier(field) {
+        return None;
+    }
+    // Every other (prefix) segment must be an identifier or a metavariable.
+    let mut has_metavar = false;
+    for seg in &segments[..segments.len() - 2] {
+        if is_metavariable(seg) {
+            has_metavar = true;
+        } else if !is_identifier(seg) {
+            return None;
+        }
+    }
+    // A fully-concrete chain is already compiled by the `Call` branch; only
+    // engage when a metavariable is present in the receiver prefix.
+    if !has_metavar {
+        return None;
+    }
+    Some(field)
+}
+
 /// If `callee` has the shape `receiver.$METAVAR` — a concrete plain
 /// identifier receiver followed by a single metavariable method segment —
 /// return the receiver name. The symmetric counterpart of
@@ -2111,6 +2239,75 @@ mod tests {
             GenericMatcher::Call { canonical, .. } => assert_eq!(canonical, "eval"),
             _ => panic!("expected Call"),
         }
+    }
+
+    // ── CALL-ON-MEMBER shape unit tests ─────────────────────────────────────
+
+    #[test]
+    fn compile_member_call_metavar_root_yields_fieldname_on_penultimate() {
+        // `$CLIENT.chat.completions.create(...)` → FieldName { field: "completions" }
+        let m = compile("$CLIENT.chat.completions.create(...)", MatcherRole::Source)
+            .expect("member-call source");
+        match m {
+            GenericMatcher::FieldName { field, .. } => assert_eq!(field, "completions"),
+            other => panic!("expected FieldName, got {other:?}"),
+        }
+        let m = compile("$CLIENT.messages.create(...)", MatcherRole::Source).expect("member-call");
+        match m {
+            GenericMatcher::FieldName { field, .. } => assert_eq!(field, "messages"),
+            other => panic!("expected FieldName, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_member_call_metavar_root_concrete_field_as_sink() {
+        // `$CLIENT.calls.create(...)` (twiml sink) → FieldName { field: "calls" }.
+        let m = compile("$CLIENT.calls.create(...)", MatcherRole::Sink).expect("member-call sink");
+        match m {
+            GenericMatcher::FieldName { field, .. } => assert_eq!(field, "calls"),
+            other => panic!("expected FieldName, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_member_call_metavar_penultimate_is_rejected() {
+        // `request.$PROPERTY.get(...)` has a metavar penultimate → we refuse to
+        // compile an any-field `.get(...)` matcher (too broad). It must NOT
+        // become a FieldName.
+        let m = compile("request.$PROPERTY.get(...)", MatcherRole::Source);
+        assert!(
+            !matches!(m, Some(GenericMatcher::FieldName { .. })),
+            "metavar penultimate must not compile to FieldName, got {m:?}"
+        );
+    }
+
+    #[test]
+    fn compile_member_call_fully_concrete_stays_call() {
+        // A fully-concrete chain must keep using `Call`, not the member-call path.
+        let m = compile("flask.request.form.get(...)", MatcherRole::Source).expect("concrete call");
+        match m {
+            GenericMatcher::Call { canonical, .. } => {
+                assert_eq!(canonical, "flask.request.form.get")
+            }
+            other => panic!("expected Call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_member_call_penultimate_edge_cases() {
+        assert_eq!(
+            parse_member_call_penultimate("$CLIENT.chat.completions.create"),
+            Some("completions")
+        );
+        assert_eq!(parse_member_call_penultimate("$REQ.POST.get"), Some("POST"));
+        // two-segment → handled elsewhere.
+        assert_eq!(parse_member_call_penultimate("$CONN.executeQuery"), None);
+        // metavar method → reject.
+        assert_eq!(parse_member_call_penultimate("$REQ.POST.$M"), None);
+        // metavar penultimate → reject.
+        assert_eq!(parse_member_call_penultimate("request.$PROP.get"), None);
+        // fully concrete → reject (Call handles it).
+        assert_eq!(parse_member_call_penultimate("a.b.c"), None);
     }
 
     #[test]
@@ -3137,10 +3334,17 @@ pattern-sinks:
     }
 
     #[test]
-    fn metavar_with_multi_segment_rest_is_rejected() {
-        // `$OBJ.a.b($X)` is ambiguous — only single-segment method names
-        // are valid for the MethodName shape.
-        assert!(compile("$OBJ.a.b($X)", MatcherRole::Sink).is_none());
+    fn metavar_with_multi_segment_rest_compiles_as_member_call() {
+        // `$OBJ.a.b($X)` is no longer rejected: it is a CALL-ON-MEMBER shape
+        // (metavar root, concrete penultimate `a`, concrete method `b`) and
+        // compiles to a FieldName on the penultimate field `a`.
+        match compile("$OBJ.a.b($X)", MatcherRole::Sink) {
+            Some(GenericMatcher::FieldName { field, .. }) => assert_eq!(field, "a"),
+            other => panic!("expected FieldName{{a}}, got {other:?}"),
+        }
+        // But a metavar penultimate (`$OBJ.$F.b($X)`) stays rejected — we never
+        // compile an any-field `.b(...)` matcher.
+        assert!(compile("$OBJ.$F.b($X)", MatcherRole::Sink).is_none());
     }
 
     #[test]
@@ -4503,6 +4707,264 @@ func handler(r *Request) {
         assert!(
             findings.is_empty(),
             "literal-only concat has no tainted operand; expected no finding, got {:?}",
+            findings
+        );
+    }
+
+    // ── CALL-ON-MEMBER bridge (end-to-end) tests ─────────────────────────────
+    //
+    // A method call whose receiver is a member-access chain with a metavar root
+    // (e.g. `$CLIENT.chat.completions.create(...)`) is compiled to a FieldName
+    // on the penultimate field (`completions`). The engine taints that member
+    // read; the trailing `.create(...)` propagates the taint. These go through
+    // `parse_taint_rule` → `check`, the same path the CLI uses, on a real
+    // fixture wrapped in a function (taint engines analyze inside functions).
+
+    /// Python: `$CLIENT.chat.completions.create(...)` LLM-output source flows
+    /// into `eval(...)` and fires. Mirrors `llm-output-to-exec-python`.
+    #[test]
+    fn python_bridge_member_call_llm_source_to_eval_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-llm-output-to-exec
+mode: taint
+languages: [python]
+severity: ERROR
+message: "LLM output reaches eval"
+pattern-sources:
+  - pattern: $CLIENT.chat.completions.create(...)
+pattern-sinks:
+  - pattern: eval($SINK)
+"#,
+        );
+        assert!(
+            matches!(rule.spec.sources.as_slice(), [GenericMatcher::FieldName { field, .. }] if field == "completions"),
+            "source should compile to FieldName{{completions}}, got {:?}",
+            rule.spec.sources
+        );
+
+        let src = r#"
+def run(client):
+    out = client.chat.completions.create(model="gpt-4")
+    eval(out)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for completions.create -> eval, got {:?}",
+            findings
+        );
+    }
+
+    /// Python near-miss: a DIFFERENT penultimate field (`other.create`) must
+    /// NOT be tainted, so no finding fires.
+    #[test]
+    fn python_bridge_member_call_different_field_near_miss_no_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-llm-output-to-exec
+mode: taint
+languages: [python]
+severity: ERROR
+message: "LLM output reaches eval"
+pattern-sources:
+  - pattern: $CLIENT.chat.completions.create(...)
+pattern-sinks:
+  - pattern: eval($SINK)
+"#,
+        );
+
+        let src = r#"
+def run(client):
+    out = client.chat.other.create(model="gpt-4")
+    eval(out)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "different penultimate field must not taint; expected no finding, got {:?}",
+            findings
+        );
+    }
+
+    /// JavaScript: `$CLIENT.messages.create(...)` flows into `eval(...)`.
+    /// Mirrors `llm-output-to-exec-javascript`.
+    #[test]
+    fn javascript_bridge_member_call_llm_source_to_eval_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: js-llm-output-to-exec
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "LLM output reaches eval"
+pattern-sources:
+  - pattern: $CLIENT.messages.create(...)
+pattern-sinks:
+  - pattern: eval($SINK)
+"#,
+        );
+        assert!(
+            matches!(rule.spec.sources.as_slice(), [GenericMatcher::FieldName { field, .. }] if field == "messages"),
+            "source should compile to FieldName{{messages}}, got {:?}",
+            rule.spec.sources
+        );
+
+        let src = r#"
+function run(client) {
+    const out = client.messages.create({model: "claude"});
+    eval(out);
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("js fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for messages.create -> eval, got {:?}",
+            findings
+        );
+    }
+
+    /// JavaScript near-miss: a different penultimate field does not fire.
+    #[test]
+    fn javascript_bridge_member_call_different_field_near_miss_no_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: js-llm-output-to-exec
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "LLM output reaches eval"
+pattern-sources:
+  - pattern: $CLIENT.messages.create(...)
+pattern-sinks:
+  - pattern: eval($SINK)
+"#,
+        );
+
+        let src = r#"
+function run(client) {
+    const out = client.completions.create({model: "claude"});
+    eval(out);
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("js fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "different penultimate field must not taint; expected no finding, got {:?}",
+            findings
+        );
+    }
+
+    // ── Concrete-root metavar-field bridge tests: `request.$ANYTHING` ────────
+    //
+    // A concrete request root with a wildcard field (`request.$ANYTHING`) is
+    // compiled to a `ParamName` source on the root `request`; the engine then
+    // taints every attribute read on that root. Mirrors the Django
+    // `tainted-sql-string` / `tainted-url-host` / `raw-html-format` rules.
+
+    #[test]
+    fn compile_concrete_root_metavar_field_yields_paramname_root() {
+        let m = compile("request.$ANYTHING", MatcherRole::Source).expect("request source");
+        match m {
+            GenericMatcher::ParamName { names, .. } => {
+                assert_eq!(names, vec!["request".to_string()])
+            }
+            other => panic!("expected ParamName[request], got {other:?}"),
+        }
+        // Metavar root is rejected (too broad).
+        assert!(parse_concrete_root_metavar_field("$REQ.$ANYTHING").is_none());
+        // Concrete field is NOT this shape (it is a plain Attribute).
+        assert!(parse_concrete_root_metavar_field("request.GET").is_none());
+        // Three segments rejected.
+        assert!(parse_concrete_root_metavar_field("a.b.$X").is_none());
+    }
+
+    /// Python: `request.$ANYTHING` source flows into a `"..." + ...` SQL string
+    /// and fires. Mirrors `tainted-sql-string` (django).
+    #[test]
+    fn python_bridge_request_anything_source_to_binop_sink_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-django-tainted-sql
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request attribute reaches a built SQL string"
+pattern-sources:
+  - pattern: request.$ANYTHING
+pattern-sinks:
+  - pattern: '"$SQLSTR" + ...'
+"#,
+        );
+        assert!(
+            matches!(rule.spec.sources.as_slice(), [GenericMatcher::ParamName { names, .. }] if names == &["request".to_string()]),
+            "source should compile to ParamName[request], got {:?}",
+            rule.spec.sources
+        );
+
+        let src = r#"
+def view(request):
+    name = request.GET
+    query = "SELECT * FROM t WHERE n = " + name
+    cursor.execute(query)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected 1 finding for request.GET -> \"...\" + name, got {:?}",
+            findings
+        );
+    }
+
+    /// Python near-miss: a non-request root (`config.GET`) is NOT a source, so a
+    /// literal-built string from it does not fire.
+    #[test]
+    fn python_bridge_request_anything_non_request_root_near_miss_no_finding() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-django-tainted-sql
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted request attribute reaches a built SQL string"
+pattern-sources:
+  - pattern: request.$ANYTHING
+pattern-sinks:
+  - pattern: '"$SQLSTR" + ...'
+"#,
+        );
+
+        let src = r#"
+def view(config):
+    name = config.GET
+    query = "SELECT * FROM t WHERE n = " + name
+    cursor.execute(query)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "non-request root must not be a source; expected no finding, got {:?}",
             findings
         );
     }

@@ -12,10 +12,10 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 | Rule files scanned | 2070 |
 | Files with YAML parse errors | 0 |
 | Total rules | 2144 |
-| Rules loaded OK | 1957 (91.3%) |
-| Rules skipped | 187 (8.7%) |
+| Rules loaded OK | 1966 (91.7%) |
+| Rules skipped | 178 (8.3%) |
 
-**Headline load rate: 91.3%** (1957 / 2144 rules).
+**Headline load rate: 91.7%** (1966 / 2144 rules).
 
 ## Skip-reason histogram
 
@@ -23,19 +23,19 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 140 | 74.9% | 6.5% |
-| `unsupported language: apex` | 9 | 4.8% | 0.4% |
-| `generic mode (languages: [generic])` | 7 | 3.7% | 0.3% |
-| `mode: taint (unsupported language: scala)` | 5 | 2.7% | 0.2% |
-| `taint: pattern-propagators` | 5 | 2.7% | 0.2% |
-| `unsupported language: clojure` | 5 | 2.7% | 0.2% |
-| `unsupported language: html` | 4 | 2.1% | 0.2% |
-| `mode: taint (unsupported language: apex)` | 3 | 1.6% | 0.1% |
-| `mode: taint (unsupported language: bash)` | 3 | 1.6% | 0.1% |
-| `mode: taint (unsupported language: solidity)` | 3 | 1.6% | 0.1% |
-| `mode: taint (unsupported language: swift)` | 1 | 0.5% | 0.0% |
-| `unsupported language: dart` | 1 | 0.5% | 0.0% |
-| `unsupported language: xml` | 1 | 0.5% | 0.0% |
+| `mode: taint (unsupported shape)` | 131 | 73.6% | 6.1% |
+| `unsupported language: apex` | 9 | 5.1% | 0.4% |
+| `generic mode (languages: [generic])` | 7 | 3.9% | 0.3% |
+| `mode: taint (unsupported language: scala)` | 5 | 2.8% | 0.2% |
+| `taint: pattern-propagators` | 5 | 2.8% | 0.2% |
+| `unsupported language: clojure` | 5 | 2.8% | 0.2% |
+| `unsupported language: html` | 4 | 2.2% | 0.2% |
+| `mode: taint (unsupported language: apex)` | 3 | 1.7% | 0.1% |
+| `mode: taint (unsupported language: bash)` | 3 | 1.7% | 0.1% |
+| `mode: taint (unsupported language: solidity)` | 3 | 1.7% | 0.1% |
+| `mode: taint (unsupported language: swift)` | 1 | 0.6% | 0.0% |
+| `unsupported language: dart` | 1 | 0.6% | 0.0% |
+| `unsupported language: xml` | 1 | 0.6% | 0.0% |
 
 ## Priority order — operator/feature backlog
 
@@ -43,10 +43,10 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 
 | Rank | Capability to add | Rules unlocked |
 |---:|---|---:|
-| 1 | `mode: taint (unsupported shape)` | 140 |
+| 1 | `mode: taint (unsupported shape)` | 131 |
 | 2 | `taint: pattern-propagators` | 5 |
 
-Operator/feature gaps account for **145 rules** (6.8% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **136 rules** (6.3% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
 
 ## Priority order — missing language grammars
 
@@ -74,9 +74,9 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 
 | Language | Total | Loaded | Skipped | Load rate |
 |---|---:|---:|---:|---:|
-| python | 423 | 391 | 32 | 92.4% |
+| python | 423 | 397 | 26 | 93.9% |
 | hcl | 359 | 359 | 0 | 100.0% |
-| javascript | 243 | 203 | 40 | 83.5% |
+| javascript | 243 | 206 | 37 | 84.8% |
 | regex | 237 | 237 | 0 | 100.0% |
 | java | 131 | 111 | 20 | 84.7% |
 | generic | 103 | 96 | 7 | 93.2% |
@@ -114,9 +114,9 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **go**: `mode: taint (unsupported shape)` (13)
 - **html**: `unsupported language: html` (4)
 - **java**: `mode: taint (unsupported shape)` (17), `taint: pattern-propagators` (3)
-- **javascript**: `mode: taint (unsupported shape)` (40)
+- **javascript**: `mode: taint (unsupported shape)` (37)
 - **php**: `mode: taint (unsupported shape)` (14)
-- **python**: `mode: taint (unsupported shape)` (32)
+- **python**: `mode: taint (unsupported shape)` (26)
 - **ruby**: `mode: taint (unsupported shape)` (15), `taint: pattern-propagators` (1)
 - **scala**: `mode: taint (unsupported language: scala)` (5)
 - **solidity**: `mode: taint (unsupported language: solidity)` (3)
