@@ -67,6 +67,11 @@ pub enum Language {
     Scala,
     Elixir,
     Json,
+    Apex,
+    Clojure,
+    Html,
+    Xml,
+    Dart,
     /// Pseudo-language for Semgrep `languages: [regex]` rules.
     ///
     /// A `Regex`-language rule carries only `pattern-regex` / `pattern-not-regex`
@@ -104,6 +109,11 @@ impl std::fmt::Display for Language {
             Language::Scala => write!(f, "scala"),
             Language::Elixir => write!(f, "elixir"),
             Language::Json => write!(f, "json"),
+            Language::Apex => write!(f, "apex"),
+            Language::Clojure => write!(f, "clojure"),
+            Language::Html => write!(f, "html"),
+            Language::Xml => write!(f, "xml"),
+            Language::Dart => write!(f, "dart"),
             Language::Regex => write!(f, "regex"),
         }
     }

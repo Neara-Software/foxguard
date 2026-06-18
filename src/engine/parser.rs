@@ -42,6 +42,11 @@ fn parse_source_for_path(
         Language::Scala => tree_sitter_scala::LANGUAGE.into(),
         Language::Elixir => tree_sitter_elixir::LANGUAGE.into(),
         Language::Json => tree_sitter_json::LANGUAGE.into(),
+        Language::Apex => tree_sitter_sfapex::apex::LANGUAGE.into(),
+        Language::Clojure => tree_sitter_clojure_orchard::LANGUAGE.into(),
+        Language::Html => tree_sitter_html::LANGUAGE.into(),
+        Language::Xml => tree_sitter_xml::LANGUAGE_XML.into(),
+        Language::Dart => tree_sitter_dart::LANGUAGE.into(),
         // Regex-mode rules never use a tree-sitter parser — they match raw text
         // only. Return `None` immediately so the scanner skips the tree build.
         Language::Regex => return None,
@@ -143,6 +148,52 @@ contract Token {
         let source = "#!/bin/bash\necho \"Hello, world\"\nif [ -z \"$1\" ]; then\n  exit 1\nfi\n";
         let tree = parse_path(source, Language::Bash, Path::new("script.sh"))
             .expect("Bash parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_apex_without_errors() {
+        let source =
+            "public class Hello {\n  public void greet() {\n    String x = 'hi';\n  }\n}\n";
+        let tree = parse_path(source, Language::Apex, Path::new("Hello.cls"))
+            .expect("Apex parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_clojure_without_errors() {
+        let source = "(defn greet [name]\n  (println \"hello\" name))\n";
+        let tree = parse_path(source, Language::Clojure, Path::new("core.clj"))
+            .expect("Clojure parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_html_without_errors() {
+        let source = "<html>\n  <body>\n    <a href=\"/x\">link</a>\n  </body>\n</html>\n";
+        let tree = parse_path(source, Language::Html, Path::new("index.html"))
+            .expect("HTML parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_xml_without_errors() {
+        let source = "<?xml version=\"1.0\"?>\n<root>\n  <child id=\"1\">text</child>\n</root>\n";
+        let tree = parse_path(source, Language::Xml, Path::new("data.xml"))
+            .expect("XML parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_dart_without_errors() {
+        let source = "void main() {\n  print('hello');\n}\n";
+        let tree = parse_path(source, Language::Dart, Path::new("main.dart"))
+            .expect("Dart parser should produce a tree");
 
         assert!(!tree.root_node().has_error());
     }

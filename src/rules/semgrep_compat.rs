@@ -1194,7 +1194,13 @@ fn first_meaningful_node<'a>(
     let kind = node.kind();
 
     // These are top-level wrappers that tree-sitter adds
-    if kind == "module" || kind == "program" || kind == "source_file" || kind == "script" {
+    if kind == "module"
+        || kind == "program"
+        || kind == "source_file"
+        || kind == "script"
+        // tree-sitter-clojure-orchard names its top-level wrapper `source`.
+        || kind == "source"
+    {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             // Skip the synthetic Go prelude that `prepare_pattern_for_grammar`
@@ -1740,6 +1746,11 @@ fn map_language(lang_str: &str) -> Option<Language> {
         "scala" | "sc" => Some(Language::Scala),
         "elixir" | "ex" | "exs" => Some(Language::Elixir),
         "json" => Some(Language::Json),
+        "apex" => Some(Language::Apex),
+        "clojure" | "clj" | "cljs" | "cljc" => Some(Language::Clojure),
+        "html" | "htm" => Some(Language::Html),
+        "xml" => Some(Language::Xml),
+        "dart" => Some(Language::Dart),
         _ => None,
     }
 }
@@ -1794,6 +1805,11 @@ const REGEX_MODE_ALL_LANGUAGES: &[Language] = &[
     Language::Scala,
     Language::Elixir,
     Language::Json,
+    Language::Apex,
+    Language::Clojure,
+    Language::Html,
+    Language::Xml,
+    Language::Dart,
 ];
 
 /// A compiled Semgrep `languages: [regex]` rule.
@@ -4214,6 +4230,160 @@ rules:
         let rules =
             parse_semgrep_file(f.path()).expect("ocaml language rule must load without error");
         assert!(!rules.is_empty(), "expected rules for ocaml language");
+    }
+
+    /// A `languages: [apex]` `pattern:` rule loads and matches inside Apex source.
+    #[test]
+    fn test_apex_pattern_loads_and_matches() {
+        use crate::engine::parser::parse_path;
+        use std::path::Path;
+
+        let yaml = r#"
+rules:
+  - id: apex-debug-call
+    pattern: System.debug(...)
+    message: Avoid System.debug
+    severity: WARNING
+    languages: [apex]
+"#;
+        let rules = parse_semgrep_str(yaml, "apex.yml")
+            .expect("apex language rule must load without error");
+        assert_eq!(rules.len(), 1, "expected one rule for apex language");
+
+        let source = "public class A {\n  void f() {\n    System.debug('x');\n  }\n}\n";
+        let tree = parse_path(source, Language::Apex, Path::new("A.cls")).expect("Apex must parse");
+        assert!(
+            !tree.root_node().has_error(),
+            "Apex parse must be error-free"
+        );
+        let findings = rules[0].check(source, &tree);
+        assert!(
+            !findings.is_empty(),
+            "pattern System.debug(...) must match in Apex"
+        );
+    }
+
+    /// A `languages: [clojure]` `pattern:` rule loads and matches inside Clojure source.
+    #[test]
+    fn test_clojure_pattern_loads_and_matches() {
+        use crate::engine::parser::parse_path;
+        use std::path::Path;
+
+        let yaml = r#"
+rules:
+  - id: clojure-eval-call
+    pattern: (eval $X)
+    message: Avoid eval
+    severity: WARNING
+    languages: [clojure]
+"#;
+        let rules = parse_semgrep_str(yaml, "clojure.yml")
+            .expect("clojure language rule must load without error");
+        assert_eq!(rules.len(), 1, "expected one rule for clojure language");
+
+        let source = "(defn f [x]\n  (eval x))\n";
+        let tree = parse_path(source, Language::Clojure, Path::new("core.clj"))
+            .expect("Clojure must parse");
+        assert!(
+            !tree.root_node().has_error(),
+            "Clojure parse must be error-free"
+        );
+        let findings = rules[0].check(source, &tree);
+        assert!(
+            !findings.is_empty(),
+            "pattern (eval ...) must match in Clojure"
+        );
+    }
+
+    /// A `languages: [html]` `pattern-regex` rule loads and matches inside HTML source.
+    #[test]
+    fn test_html_pattern_loads_and_matches() {
+        use crate::engine::parser::parse_path;
+        use std::path::Path;
+
+        let yaml = r#"
+rules:
+  - id: html-inline-onclick
+    pattern-regex: 'onclick='
+    message: Avoid inline event handlers
+    severity: WARNING
+    languages: [html]
+"#;
+        let rules = parse_semgrep_str(yaml, "html.yml").expect("html language rule must load");
+        assert_eq!(rules.len(), 1, "expected one rule for html language");
+
+        let source =
+            "<html>\n  <body>\n    <button onclick=\"go()\">x</button>\n  </body>\n</html>\n";
+        let tree =
+            parse_path(source, Language::Html, Path::new("index.html")).expect("HTML must parse");
+        assert!(
+            !tree.root_node().has_error(),
+            "HTML parse must be error-free"
+        );
+        let findings = rules[0].check(source, &tree);
+        assert!(
+            !findings.is_empty(),
+            "pattern-regex onclick= must match in HTML"
+        );
+    }
+
+    /// A `languages: [xml]` `pattern-regex` rule loads and matches inside XML source.
+    #[test]
+    fn test_xml_pattern_loads_and_matches() {
+        use crate::engine::parser::parse_path;
+        use std::path::Path;
+
+        let yaml = r#"
+rules:
+  - id: xml-doctype
+    pattern-regex: '<!DOCTYPE'
+    message: Avoid DOCTYPE declarations
+    severity: WARNING
+    languages: [xml]
+"#;
+        let rules = parse_semgrep_str(yaml, "xml.yml").expect("xml language rule must load");
+        assert_eq!(rules.len(), 1, "expected one rule for xml language");
+
+        let source =
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE root>\n<root>\n  <child>text</child>\n</root>\n";
+        let tree =
+            parse_path(source, Language::Xml, Path::new("data.xml")).expect("XML must parse");
+        let findings = rules[0].check(source, &tree);
+        assert!(
+            !findings.is_empty(),
+            "pattern-regex <!DOCTYPE must match in XML"
+        );
+    }
+
+    /// A `languages: [dart]` search rule loads and matches inside Dart source.
+    #[test]
+    fn test_dart_pattern_loads_and_matches() {
+        use crate::engine::parser::parse_path;
+        use std::path::Path;
+
+        let yaml = r#"
+rules:
+  - id: dart-print-call
+    pattern-regex: 'print\('
+    message: Avoid print
+    severity: WARNING
+    languages: [dart]
+"#;
+        let rules = parse_semgrep_str(yaml, "dart.yml").expect("dart language rule must load");
+        assert_eq!(rules.len(), 1, "expected one rule for dart language");
+
+        let source = "void main() {\n  print('hello');\n}\n";
+        let tree =
+            parse_path(source, Language::Dart, Path::new("main.dart")).expect("Dart must parse");
+        assert!(
+            !tree.root_node().has_error(),
+            "Dart parse must be error-free"
+        );
+        let findings = rules[0].check(source, &tree);
+        assert!(
+            !findings.is_empty(),
+            "pattern-regex print\\( must match in Dart"
+        );
     }
 
     /// A `languages: [scala]` rule loads successfully.

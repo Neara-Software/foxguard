@@ -68,6 +68,11 @@ const ALL_LANGUAGES: &[Language] = &[
     Language::Scala,
     Language::Elixir,
     Language::Json,
+    Language::Apex,
+    Language::Clojure,
+    Language::Html,
+    Language::Xml,
+    Language::Dart,
 ];
 
 // ─── Tokenizer ──────────────────────────────────────────────────────────────
