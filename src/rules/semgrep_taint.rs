@@ -1753,6 +1753,33 @@ fn compile_entry(
             }
         }
         Some("patterns") => {
+            // ── Parameter-as-source shape (focus-metavariable + a function-
+            //    signature `pattern-inside`/`pattern`) ─────────────────────
+            //
+            // The dominant rejected taint-source shape is "a parameter of the
+            // enclosing handler/function is user-controlled", written as
+            //
+            //   patterns:
+            //     - pattern-inside: |
+            //         function ... (..., $ARG, ...) { ... }
+            //     - focus-metavariable: $ARG
+            //
+            // or the AWS-Lambda variant `pattern: $EVENT` + a
+            // `pattern-either:` of `pattern-inside` handler signatures binding
+            // `$EVENT` as a parameter. None of the generic node shapes express
+            // this, so the block compiles to nothing and the rule is rejected.
+            //
+            // When the block is the parameter-as-source shape we compile it to
+            // a single any-parameter wildcard source
+            // (`ParamName { names: [ANY_PARAM_WILDCARD] }`); each engine seeds
+            // every function parameter as tainted (see
+            // `taint_engine::param_names_are_wildcard`). Only meaningful as a
+            // SOURCE — a parameter is a taint origin, not a destination.
+            if let MatcherRole::Source = role {
+                if try_compile_param_source_block(v, out) {
+                    return;
+                }
+            }
             // `patterns:` is a Semgrep AND-block: all sub-items must hold
             // simultaneously. foxguard's taint engine cannot express all AND
             // semantics (no nested scope / contextual constraints), so we
@@ -1880,6 +1907,171 @@ fn compile_patterns_block(
             role.label()
         );
     }
+}
+
+/// Try to recognise the "parameter-as-source" shape in a `patterns:` source
+/// block and, if found, push a single any-parameter wildcard source matcher.
+///
+/// Returns `true` (and pushes one matcher) when the block both:
+///   1. names a seed metavariable `$X` — either as a `focus-metavariable: $X`
+///      sub-item, or as a bare `pattern: $X` sub-item; and
+///   2. contains a function-signature context (a `pattern:` or
+///      `pattern-inside:` whose text declares a function/method whose
+///      *parameter list* contains that same `$X`).
+///
+/// Discipline: we require the seed metavariable to appear *inside a parameter
+/// list* of a function-definition pattern in the SAME block, so we never seed
+/// "all parameters" off an unrelated metavariable. The compiled source is the
+/// [`ANY_PARAM_WILDCARD`] sentinel — engines seed every function parameter as
+/// tainted, matching Semgrep's any-parameter semantics for this shape.
+///
+/// Returns `false` (and pushes nothing) for any other block shape, leaving the
+/// caller to fall through to the normal graceful-degradation extraction.
+fn try_compile_param_source_block(v: &YamlValue, out: &mut Vec<GenericMatcher>) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+
+    // Collect, across the whole block (recursing into pattern-either), the set
+    // of focus/bare-pattern seed metavariables and the set of function-signature
+    // pattern texts.
+    let mut seeds: Vec<String> = Vec::new();
+    let mut signature_texts: Vec<String> = Vec::new();
+    collect_param_source_parts(items, &mut seeds, &mut signature_texts);
+
+    if seeds.is_empty() || signature_texts.is_empty() {
+        return false;
+    }
+
+    // The seed metavariable must appear as a parameter of at least one
+    // function-signature context in the block.
+    let matched = seeds.iter().any(|seed| {
+        signature_texts
+            .iter()
+            .any(|sig| signature_has_param(sig, seed))
+    });
+    if !matched {
+        return false;
+    }
+
+    out.push(GenericMatcher::ParamName {
+        names: vec![crate::rules::taint_engine::ANY_PARAM_WILDCARD.to_string()],
+        description: "untrusted function parameter".to_string(),
+    });
+    true
+}
+
+/// Walk a `patterns:` block (and nested `pattern-either:` lists) collecting
+/// seed metavariables (`focus-metavariable: $X` and bare `pattern: $X`) and the
+/// text of function-signature contexts (`pattern:` / `pattern-inside:` whose
+/// value is a multi-line function definition).
+fn collect_param_source_parts(
+    items: &[YamlValue],
+    seeds: &mut Vec<String>,
+    signature_texts: &mut Vec<String>,
+) {
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("focus-metavariable") => {
+                    if let Some(s) = val.as_str() {
+                        let mv = s.trim();
+                        if is_metavariable(mv) {
+                            seeds.push(mv.to_string());
+                        }
+                    }
+                }
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if is_metavariable(t) {
+                            seeds.push(t.to_string());
+                        } else if is_function_definition_pattern(t) {
+                            signature_texts.push(t.to_string());
+                        }
+                    }
+                }
+                Some("pattern-inside") => {
+                    if let Some(s) = val.as_str() {
+                        if is_function_definition_pattern(s) {
+                            signature_texts.push(s.to_string());
+                        }
+                    }
+                }
+                Some("pattern-either") => {
+                    if let Some(seq) = val.as_sequence() {
+                        collect_param_source_parts(seq, seeds, signature_texts);
+                    }
+                }
+                Some("patterns") => {
+                    if let Some(seq) = val.as_sequence() {
+                        collect_param_source_parts(seq, seeds, signature_texts);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// True when `pat` looks like a function/method definition pattern: it declares
+/// a function with a parameter list. We accept the common cross-language
+/// keywords plus the assignment-to-function form (`exports.handler = function
+/// (...)`, `$F = function (...)`), requiring a `(` ... `)` parameter list.
+fn is_function_definition_pattern(pat: &str) -> bool {
+    let p = pat.trim();
+    if !(p.contains('(') && p.contains(')')) {
+        return false;
+    }
+    // A leading definition keyword anywhere in the (possibly multi-line) pattern.
+    p.contains("function")                       // JS/TS/PHP
+        || p.contains("func ")                   // Go
+        || p.starts_with("def ")
+        || p.contains("\ndef ")                  // Python/Ruby/Scala
+        || p.contains("fun ")                    // Kotlin
+        || p.contains("=>")                      // arrow / lambda
+        // A Java/C-style typed method signature: `$T $M(...) { ... }` — a
+        // metavariable or identifier return type followed by a name and a
+        // parameter list and a brace body.
+        || (p.contains('{') && p.contains('$'))
+}
+
+/// True when the function-signature pattern `sig` lists `seed` (a metavariable
+/// like `$ARG`) inside its FIRST parameter list `( ... )`. This bounds the
+/// any-parameter seed to a metavariable that is genuinely a parameter, so we
+/// never seed off an unrelated metavariable elsewhere in the pattern.
+fn signature_has_param(sig: &str, seed: &str) -> bool {
+    let Some(open) = sig.find('(') else {
+        return false;
+    };
+    // Find the matching close paren for this first '(' (balanced).
+    let bytes = sig.as_bytes();
+    let mut depth = 0i32;
+    let mut close = None;
+    for (i, &b) in bytes.iter().enumerate().skip(open) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return false;
+    };
+    let params = &sig[open + 1..close];
+    // Token-boundary match so `$ARG` does not match `$ARGUMENT`.
+    params
+        .split(|c: char| !is_ident_char(c) && c != '$')
+        .any(|tok| tok == seed)
 }
 
 /// Compile a Bash-specific pattern (shell command or command substitution)
@@ -6250,6 +6442,329 @@ object Ctrl {
             findings.len(),
             1,
             "scalajs eval of param must fire via bridge, got {:?}",
+            findings
+        );
+    }
+
+    // ── Parameter-as-source shape: focus-metavariable + function-signature
+    //    pattern-inside inside a taint pattern-sources block ────────────────
+
+    /// JS `lang/detect-child-process` shape: a `patterns:` source block with a
+    /// `pattern-inside: function ...(...,$FUNC,...)` context plus
+    /// `focus-metavariable: $FUNC`. Compiles to the any-parameter wildcard
+    /// source. A function parameter flowing to `exec(...)` must fire.
+    #[test]
+    fn js_param_source_focus_inside_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: js-child-process-param
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "Function argument reaches child_process.exec"
+pattern-sources:
+  - patterns:
+      - pattern-inside: |
+          function ... (...,$FUNC,...) {
+            ...
+          }
+      - focus-metavariable: $FUNC
+pattern-sinks:
+  - pattern: exec($CMD,...)
+"#,
+        );
+        // The source block must compile to the any-parameter wildcard.
+        assert!(
+            matches!(
+                rule.spec.sources.as_slice(),
+                [GenericMatcher::ParamName { names, .. }]
+                    if names == &[crate::rules::taint_engine::ANY_PARAM_WILDCARD.to_string()]
+            ),
+            "expected wildcard ParamName source, got {:?}",
+            rule.spec.sources
+        );
+
+        let src = r#"
+function run(name, cmd) {
+  exec(cmd);
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("js fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a function parameter reaching exec() must fire, got {:?}",
+            findings
+        );
+    }
+
+    /// JS near-miss: the value reaching `exec(...)` is NOT a function parameter
+    /// (it is a module-level constant), so the wildcard-param source must not
+    /// taint it and the rule must not fire.
+    #[test]
+    fn js_param_source_non_param_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: js-child-process-param-safe
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "Function argument reaches child_process.exec"
+pattern-sources:
+  - patterns:
+      - pattern-inside: |
+          function ... (...,$FUNC,...) {
+            ...
+          }
+      - focus-metavariable: $FUNC
+pattern-sinks:
+  - pattern: exec($CMD,...)
+"#,
+        );
+
+        // A literal local, not a parameter, reaching exec(). No parameter flows
+        // anywhere, so the any-parameter seed taints nothing relevant.
+        let src = r#"
+function run() {
+  const cmd = "ls -la";
+  exec(cmd);
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("js fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a non-parameter constant must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Python AWS-Lambda shape: `pattern: $EVENT` plus a `pattern-either:` of
+    /// `pattern-inside:` handler signatures binding `$EVENT` as a parameter.
+    /// A handler parameter flowing to `subprocess.call(...)` must fire.
+    #[test]
+    fn python_param_source_bare_pattern_inside_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-lambda-param
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Lambda event reaches subprocess"
+pattern-sources:
+  - patterns:
+      - pattern: $EVENT
+      - pattern-inside: |
+          def $HANDLER($EVENT, $CONTEXT):
+            ...
+pattern-sinks:
+  - pattern: subprocess.call($X)
+"#,
+        );
+        assert!(
+            matches!(
+                rule.spec.sources.as_slice(),
+                [GenericMatcher::ParamName { names, .. }]
+                    if names == &[crate::rules::taint_engine::ANY_PARAM_WILDCARD.to_string()]
+            ),
+            "expected wildcard ParamName source, got {:?}",
+            rule.spec.sources
+        );
+
+        let src = r#"
+def handler(event, context):
+    cmd = event
+    subprocess.call(cmd)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "handler param reaching subprocess.call must fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Python near-miss: same rule, but the value reaching the sink is a
+    /// hardcoded constant unrelated to any parameter — must not fire.
+    #[test]
+    fn python_param_source_constant_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-lambda-param-safe
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Lambda event reaches subprocess"
+pattern-sources:
+  - patterns:
+      - pattern: $EVENT
+      - pattern-inside: |
+          def $HANDLER($EVENT, $CONTEXT):
+            ...
+pattern-sinks:
+  - pattern: subprocess.call($X)
+"#,
+        );
+
+        let src = r#"
+def handler(event, context):
+    cmd = "echo hello"
+    subprocess.call(cmd)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a hardcoded constant must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// A source `patterns:` block that names a focus metavariable which is NOT
+    /// a parameter of any function-signature context must NOT compile to the
+    /// any-parameter wildcard (guards against over-broad seeding).
+    #[test]
+    fn non_param_focus_block_is_not_treated_as_param_source() {
+        let v: YamlValue = serde_yaml_ng::from_str(
+            r#"
+id: not-a-param-source
+mode: taint
+languages: [python]
+severity: ERROR
+message: m
+pattern-sources:
+  - patterns:
+      - pattern: get_input($X)
+      - focus-metavariable: $X
+pattern-sinks:
+  - pattern: eval($Y)
+"#,
+        )
+        .unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Compiled(r) => {
+                // The `get_input($X)` pattern is a Call source (expressible), so
+                // the block compiles via graceful degradation — NOT to the
+                // any-parameter wildcard.
+                assert!(
+                    !r.spec.sources.iter().any(|m| matches!(
+                        m,
+                        GenericMatcher::ParamName { names, .. }
+                            if names.contains(&crate::rules::taint_engine::ANY_PARAM_WILDCARD.to_string())
+                    )),
+                    "a focus on a call metavar must not become an any-parameter source: {:?}",
+                    r.spec.sources
+                );
+            }
+            other => panic!(
+                "expected compiled rule, got skip/nottaint: {:?}",
+                matches!(other, TaintRuleParse::Skip(_))
+            ),
+        }
+    }
+
+    /// Java AWS-Lambda shape: `focus-metavariable: $EVENT` + a typed
+    /// handler-signature `pattern`. A handler parameter flowing to a SQL string
+    /// concat sink must fire; the wildcard seeds the typed parameter.
+    #[test]
+    fn java_param_source_focus_typed_signature_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: java-lambda-param
+mode: taint
+languages: [java]
+severity: ERROR
+message: "Handler param reaches SQL string"
+pattern-sources:
+  - patterns:
+      - focus-metavariable: $EVENT
+      - pattern: |
+          $RT $HANDLER($TYPE $EVENT, Context $CTX) {
+            ...
+          }
+pattern-sinks:
+  - pattern: stmt.executeQuery($Q)
+"#,
+        );
+        assert!(
+            matches!(
+                rule.spec.sources.as_slice(),
+                [GenericMatcher::ParamName { names, .. }]
+                    if names == &[crate::rules::taint_engine::ANY_PARAM_WILDCARD.to_string()]
+            ),
+            "expected wildcard ParamName source, got {:?}",
+            rule.spec.sources
+        );
+
+        let src = r#"
+class H {
+  String handle(String event, Context ctx) {
+    String q = event;
+    return stmt.executeQuery(q);
+  }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "handler param reaching executeQuery must fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Java near-miss: a hardcoded literal (not a parameter) reaching the sink
+    /// must not fire even though the wildcard seeds parameters.
+    #[test]
+    fn java_param_source_literal_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: java-lambda-param-safe
+mode: taint
+languages: [java]
+severity: ERROR
+message: "Handler param reaches SQL string"
+pattern-sources:
+  - patterns:
+      - focus-metavariable: $EVENT
+      - pattern: |
+          $RT $HANDLER($TYPE $EVENT, Context $CTX) {
+            ...
+          }
+pattern-sinks:
+  - pattern: stmt.executeQuery($Q)
+"#,
+        );
+
+        let src = r#"
+class H {
+  String handle(String event, Context ctx) {
+    String q = "SELECT 1";
+    return stmt.executeQuery(q);
+  }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a hardcoded SQL literal must not fire, got {:?}",
             findings
         );
     }

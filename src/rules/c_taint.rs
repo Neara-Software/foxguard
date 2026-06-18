@@ -527,7 +527,9 @@ fn collect_param_sources(
         if let Some(name) = param_name {
             for matcher in &spec.sources {
                 if let NodeMatcher::ParamName { names, description } = matcher {
-                    if names.iter().any(|n| n == &name) {
+                    if names.iter().any(|n| n == &name)
+                        || crate::rules::taint_engine::param_names_are_wildcard(names)
+                    {
                         out.push(TaintSource {
                             var_name: Some(name.clone()),
                             description: description.clone(),
