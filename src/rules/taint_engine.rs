@@ -40,6 +40,45 @@ pub enum NodeMatcher {
     /// regardless of receiver. Only meaningful as a sink matcher.
     MethodName { method: String, description: String },
 
+    /// Match a call whose *callee text* matches a compiled regex. Compiled
+    /// from a taint source/sink/sanitizer `patterns:` AND-block pairing a
+    /// bare-metavariable callee pattern (`$F(...)`) with a `metavariable-regex`
+    /// pinning that metavariable, e.g.
+    ///
+    /// ```yaml
+    /// - pattern: $EXEC(...)
+    /// - metavariable-regex: { metavariable: $EXEC, regex: ^(system|exec)$ }
+    /// ```
+    ///
+    /// The regex (NOT a dropped constraint) is what bounds the match: without
+    /// it the bare-metavar callee would match every call (universal → FP) and
+    /// is refused. The matcher fires only for calls whose callee name matches
+    /// the regex, so it is name-constrained and FP-safe. The full callee text
+    /// is tested (so dotted alternatives such as `IO.popen` match), matching
+    /// Semgrep's binding of the callee metavariable to the whole callee.
+    /// Sink/sanitizer only — a call argument is a destination, not an origin.
+    CallRegex {
+        regex: crate::rules::semgrep_compat::CompiledRegex,
+        description: String,
+    },
+
+    /// Match any method call whose *final method name* matches a compiled
+    /// regex, regardless of receiver. Compiled from a `patterns:` AND-block
+    /// pairing a `$OBJ.$M(...)` pattern with a `metavariable-regex` pinning the
+    /// method metavariable `$M`, e.g.
+    ///
+    /// ```yaml
+    /// - pattern: $WRITER.$WRITE(...)
+    /// - metavariable-regex: { metavariable: $WRITE, regex: ^(writerow)$ }
+    /// ```
+    ///
+    /// The any-receiver analogue of [`NodeMatcher::CallRegex`], bounded by the
+    /// method-name regex. Sink/sanitizer only.
+    MethodNameRegex {
+        regex: crate::rules::semgrep_compat::CompiledRegex,
+        description: String,
+    },
+
     /// Match any call whose callee's leftmost/root identifier equals
     /// `receiver`, regardless of the method name — e.g. `os.$METHOD(...)`,
     /// `subprocess.$FUNC(...)`, `Kernel.$X(...)`. Compiled from a Semgrep
@@ -129,6 +168,8 @@ impl NodeMatcher {
             NodeMatcher::Call { description, .. } => description,
             NodeMatcher::ParamName { description, .. } => description,
             NodeMatcher::MethodName { description, .. } => description,
+            NodeMatcher::CallRegex { description, .. } => description,
+            NodeMatcher::MethodNameRegex { description, .. } => description,
             NodeMatcher::ReceiverCall { description, .. } => description,
             NodeMatcher::FieldName { description, .. } => description,
             NodeMatcher::Subscript { description, .. } => description,
@@ -732,6 +773,17 @@ pub(super) fn match_call_sink(
         NodeMatcher::MethodName { method, .. } if method == final_segment => {
             Some(matched_sink_for_matcher(matcher, sink_to_rules))
         }
+        // `$F(...)` + `metavariable-regex` on `$F`: match any call whose full
+        // callee text matches the pinning regex (so dotted callee alternatives
+        // such as `IO.popen` match against the whole `IO.popen` text).
+        NodeMatcher::CallRegex { regex, .. } if regex.is_match(resolved_callee) => {
+            Some(matched_sink_for_matcher(matcher, sink_to_rules))
+        }
+        // `$OBJ.$M(...)` + `metavariable-regex` on `$M`: match any method call
+        // whose final method name matches the pinning regex, any receiver.
+        NodeMatcher::MethodNameRegex { regex, .. } if regex.is_match(final_segment) => {
+            Some(matched_sink_for_matcher(matcher, sink_to_rules))
+        }
         // `os.$METHOD(...)` etc.: match any call whose callee root identifier
         // equals `receiver`. Requires a dotted callee (`receiver.method`) so a
         // bare call to a function literally named `receiver` does not match.
@@ -922,6 +974,12 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
             description,
         } => {
             format!("M|{method}|{description}")
+        }
+        NodeMatcher::CallRegex { regex, description } => {
+            format!("CR|{}|{description}", regex.as_str())
+        }
+        NodeMatcher::MethodNameRegex { regex, description } => {
+            format!("MR|{}|{description}", regex.as_str())
         }
         NodeMatcher::ReceiverCall {
             receiver,

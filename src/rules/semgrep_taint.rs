@@ -107,6 +107,27 @@ enum GenericMatcher {
     /// skipped (no C OOP method calls exist).
     MethodName { method: String, description: String },
 
+    /// Matches any call whose CALLEE TEXT matches a compiled regex. Compiled
+    /// from a taint sink/sanitizer `patterns:` AND-block that pairs a bare
+    /// metavariable callee pattern (`$F(...)`) with a `metavariable-regex`
+    /// pinning that metavariable. The regex is what bounds the otherwise
+    /// universal bare-metavar callee, so the shape becomes FP-safe (only calls
+    /// whose callee matches fire). Sink/sanitizer only.
+    CallRegex {
+        regex: crate::rules::semgrep_compat::CompiledRegex,
+        description: String,
+    },
+
+    /// Matches any method call whose FINAL METHOD NAME matches a compiled
+    /// regex, regardless of receiver. Compiled from a `$OBJ.$M(...)` pattern
+    /// paired with a `metavariable-regex` pinning the method metavariable `$M`.
+    /// The any-receiver, regex-bounded analogue of [`GenericMatcher::MethodName`].
+    /// Sink/sanitizer only.
+    MethodNameRegex {
+        regex: crate::rules::semgrep_compat::CompiledRegex,
+        description: String,
+    },
+
     /// Matches any call whose callee root identifier equals `receiver`,
     /// regardless of method — compiled from `receiver.$METAVAR(...)` where
     /// `receiver` is a concrete identifier and the method is a metavariable
@@ -243,6 +264,16 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => python_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            python_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -320,6 +351,18 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => {
+            javascript_taint::NodeMatcher::CallRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            javascript_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -397,6 +440,16 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => go_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            go_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -472,6 +525,16 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => java_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            java_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -549,6 +612,16 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => c_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            c_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         // ReceiverCall (`os.$METHOD(...)`) has no meaning in plain C; carried
         // in the spec but the C engine no-ops it.
         GenericMatcher::ReceiverCall {
@@ -629,6 +702,16 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => kotlin_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            kotlin_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -704,6 +787,16 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => ruby_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            ruby_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -788,6 +881,16 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => csharp_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            csharp_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -863,6 +966,16 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => bash_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            bash_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -938,6 +1051,18 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => {
+            solidity_taint::NodeMatcher::CallRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            solidity_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -1013,6 +1138,16 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => scala_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            scala_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -1077,6 +1212,16 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::CallRegex { regex, description } => php_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            php_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
         GenericMatcher::ReceiverCall {
             receiver,
             description,
@@ -1809,6 +1954,31 @@ fn compile_entry(
                     return;
                 }
             }
+            // ── Regex-bounded bare-metavar callee SINK shape ────────────────
+            //
+            // A `patterns:` AND-block that pairs a bare-metavariable callee
+            // pattern with a `metavariable-regex` pinning that metavariable,
+            // e.g.
+            //
+            //   patterns:
+            //     - pattern: $EXEC(...)
+            //     - metavariable-regex: { metavariable: $EXEC, regex: ^(system|exec)$ }
+            //
+            //   patterns:
+            //     - pattern: $WRITER.$WRITE(...)
+            //     - metavariable-regex: { metavariable: $WRITE, regex: ^(writerow)$ }
+            //
+            // Without the `metavariable-regex` a bare-metavar callee would
+            // match every call (universal → FP) and is refused. WITH the pin
+            // the match is bounded to callees whose name matches the regex, so
+            // we compile a name-constrained `CallRegex`/`MethodNameRegex`
+            // matcher that enforces the regex at match time. Sink/sanitizer
+            // only — a call argument is a data-flow destination, not an origin.
+            if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
+                if try_compile_regex_constrained_callee_block(v, role, rule_id, out) {
+                    return;
+                }
+            }
             // `patterns:` is a Semgrep AND-block: all sub-items must hold
             // simultaneously. foxguard's taint engine cannot express all AND
             // semantics (no nested scope / contextual constraints), so we
@@ -2395,6 +2565,148 @@ fn parse_anchored_alternation(re: &str) -> Option<Vec<String>> {
     } else {
         None
     }
+}
+
+/// A bare-metavariable callee shape extracted from a `pattern:` text, tagged
+/// with the metavariable that a `metavariable-regex` may pin.
+enum BareCallee {
+    /// `$F(...)` — the whole callee is a metavariable. Compiles to `CallRegex`
+    /// (the regex is tested against the full callee text).
+    Callee(String),
+    /// `$OBJ.$M(...)` — metavariable receiver, metavariable method. Compiles to
+    /// `MethodNameRegex` (the regex is tested against the final method name).
+    Method(String),
+}
+
+/// If `pat` is a call whose callee is a bare metavariable (`$F(...)`) or a
+/// metavariable-receiver / metavariable-method (`$OBJ.$M(...)`), return the
+/// constrainable metavariable tagged with its shape. Any concrete or partially
+/// concrete callee returns `None` (handled by the normal pattern compiler).
+fn bare_metavar_callee(pat: &str) -> Option<BareCallee> {
+    let c = pat.trim().trim_end_matches(';').trim();
+    let open = c.find('(')?;
+    let callee = c[..open].trim();
+    if let Some(dot) = callee.find('.') {
+        let recv = &callee[..dot];
+        let meth = &callee[dot + 1..];
+        if is_metavariable(recv) && is_metavariable(meth) && !meth.contains('.') {
+            return Some(BareCallee::Method(meth.to_string()));
+        }
+        return None;
+    }
+    if is_metavariable(callee) {
+        return Some(BareCallee::Callee(callee.to_string()));
+    }
+    None
+}
+
+/// Collect, across a `patterns:` block (recursing into `pattern-either:`),
+/// every bare-metavariable callee shape from `pattern:` texts and every
+/// `metavariable-regex` (metavariable, regex) pin.
+fn collect_regex_callee_parts(
+    items: &[YamlValue],
+    callees: &mut Vec<BareCallee>,
+    pins: &mut Vec<(String, String)>,
+) {
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (key, val) in map {
+            match key.as_str() {
+                Some("pattern") => {
+                    if let Some(text) = val.as_str() {
+                        if let Some(bc) = bare_metavar_callee(text) {
+                            callees.push(bc);
+                        }
+                    }
+                }
+                Some("metavariable-regex") => {
+                    if let Some(mm) = val.as_mapping() {
+                        let mv = mm
+                            .get(YamlValue::from("metavariable"))
+                            .and_then(|x| x.as_str());
+                        let re = mm.get(YamlValue::from("regex")).and_then(|x| x.as_str());
+                        if let (Some(mv), Some(re)) = (mv, re) {
+                            pins.push((mv.to_string(), re.to_string()));
+                        }
+                    }
+                }
+                Some("pattern-either") => {
+                    if let Some(seq) = val.as_sequence() {
+                        collect_regex_callee_parts(seq, callees, pins);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Try to recognise the "regex-bounded bare-metavariable callee" SINK shape: a
+/// `patterns:` AND-block pairing a bare-metavar callee pattern (`$F(...)` or
+/// `$OBJ.$M(...)`) with a `metavariable-regex` that pins that metavariable.
+///
+/// On recognition, compiles a name-constrained [`GenericMatcher::CallRegex`]
+/// (full-callee regex) or [`GenericMatcher::MethodNameRegex`] (method-name
+/// regex) and returns `true`. The compiled regex is enforced at match time, so
+/// the otherwise-universal bare-metavar callee becomes FP-safe (only callees
+/// whose name matches the regex fire).
+///
+/// Returns `false` (pushing nothing) when no bare-metavar callee is pinned by a
+/// `metavariable-regex` — preserving the existing refusal of an unpinned
+/// bare-metavar callee. Only the Sink/Sanitizer roles call this.
+fn try_compile_regex_constrained_callee_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    rule_id: &str,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+    let mut callees: Vec<BareCallee> = Vec::new();
+    let mut pins: Vec<(String, String)> = Vec::new();
+    collect_regex_callee_parts(items, &mut callees, &mut pins);
+
+    if callees.is_empty() || pins.is_empty() {
+        return false;
+    }
+
+    let before = out.len();
+    for callee in &callees {
+        let (mv, is_method) = match callee {
+            BareCallee::Callee(mv) => (mv, false),
+            BareCallee::Method(mv) => (mv, true),
+        };
+        // The metavariable MUST be pinned by a `metavariable-regex` — otherwise
+        // we stay FP-safe and refuse this bare-metavar callee.
+        let Some((_, re)) = pins.iter().find(|(m, _)| m == mv) else {
+            continue;
+        };
+        let regex = match crate::rules::semgrep_compat::compile_regex(re) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "Warning: taint rule `{}` {} `metavariable-regex` for `{}` is not a valid \
+                     regex ({}); refusing the bare-metavariable callee (FP-safe)",
+                    rule_id,
+                    role.label(),
+                    mv,
+                    e
+                );
+                continue;
+            }
+        };
+        let description = describe(re, role);
+        if is_method {
+            out.push(GenericMatcher::MethodNameRegex { regex, description });
+        } else {
+            out.push(GenericMatcher::CallRegex { regex, description });
+        }
+    }
+
+    out.len() > before
 }
 
 /// Compile a Bash-specific pattern (shell command or command substitution)
@@ -7313,6 +7625,206 @@ pattern-sinks:
         assert!(
             matches!(parse_taint_rule(&v), TaintRuleParse::Skip(_)),
             "an unpinned metavariable callee must not compile to a sink"
+        );
+    }
+
+    // ── Regex-bounded bare-metavariable callee SINK shape ───────────────────
+
+    /// `$FUNCTION(...)` + `metavariable-regex` on `$FUNCTION` → `CallRegex`.
+    /// A call whose callee matches the regex with a tainted argument FIRES;
+    /// a call whose callee does NOT match the regex does NOT fire (proving the
+    /// regex is enforced at match time, not dropped). Mirrors
+    /// `md5-used-as-password` (`regex: (?i)(.*password.*)`).
+    #[test]
+    fn callregex_sink_fires_on_matching_callee_and_not_on_near_miss() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-password-sink
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted input reaches a *password* function"
+pattern-sources:
+  - pattern: input(...)
+pattern-sinks:
+  - patterns:
+      - pattern: $FUNCTION(...)
+      - metavariable-regex:
+          metavariable: $FUNCTION
+          regex: (?i)(.*password.*)
+"#,
+        );
+
+        // Callee `hash_password` matches `(?i).*password.*` → must fire.
+        let fire_src = r#"
+def handler():
+    data = input()
+    hash_password(data)
+"#;
+        let tree = parse_file(fire_src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(fire_src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a tainted value reaching hash_password() (callee matches the regex) must fire, got {:?}",
+            findings
+        );
+
+        // Near-miss: callee `log_event` does NOT match the regex → must NOT fire.
+        let miss_src = r#"
+def handler():
+    data = input()
+    log_event(data)
+"#;
+        let tree = parse_file(miss_src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(miss_src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a tainted value reaching a callee NOT matching the regex must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// `$WRITER.$WRITE(...)` + `metavariable-regex` on `$WRITE` →
+    /// `MethodNameRegex`. A method call whose method name matches the regex
+    /// fires; a method whose name does NOT match does not. Mirrors
+    /// `csv-writer-injection` (`regex: ^(writerow|writerows|writeheader)$`).
+    #[test]
+    fn methodnameregex_sink_fires_on_matching_method_and_not_on_near_miss() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-csv-writer
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted input reaches a csv writer row method"
+pattern-sources:
+  - pattern: input(...)
+pattern-sinks:
+  - patterns:
+      - pattern: $WRITER.$WRITE(...)
+      - metavariable-regex:
+          metavariable: $WRITE
+          regex: ^(writerow|writerows|writeheader)$
+"#,
+        );
+
+        // Method `writerow` matches the alternation → must fire.
+        let fire_src = r#"
+def handler(w):
+    data = input()
+    w.writerow(data)
+"#;
+        let tree = parse_file(fire_src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(fire_src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "tainted value into w.writerow() (method matches regex) must fire, got {:?}",
+            findings
+        );
+
+        // Near-miss: method `flush` does NOT match the regex → must NOT fire.
+        let miss_src = r#"
+def handler(w):
+    data = input()
+    w.flush(data)
+"#;
+        let tree = parse_file(miss_src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(miss_src, &tree);
+        assert!(
+            findings.is_empty(),
+            "tainted value into a method NOT matching the regex must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// `$EXEC(...)` + an alternation `metavariable-regex` with DOTTED names
+    /// (`IO.popen`) → `CallRegex` tested against the full callee text. The
+    /// bare `system(...)` callee fires; `puts(...)` (not listed) does not.
+    /// Mirrors `dangerous-exec` (Ruby).
+    #[test]
+    fn callregex_sink_matches_dotted_alternative_callee_and_not_near_miss() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: ruby-dangerous-exec-min
+mode: taint
+languages: [ruby]
+severity: ERROR
+message: "Tainted input reaches a command-execution function"
+pattern-sources:
+  - pattern: gets
+pattern-sinks:
+  - patterns:
+      - pattern: $EXEC(...)
+      - metavariable-regex:
+          metavariable: $EXEC
+          regex: ^(system|exec|IO.popen)$
+"#,
+        );
+
+        // `system(cmd)` callee matches the alternation → must fire.
+        let fire_src = r#"
+def handler
+  cmd = gets
+  system(cmd)
+end
+"#;
+        let tree = parse_file(fire_src, Language::Ruby).expect("ruby fixture should parse");
+        let findings = rule.check(fire_src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "tainted value into system() (callee matches regex) must fire, got {:?}",
+            findings
+        );
+
+        // Near-miss: `puts(cmd)` is not in the alternation → must NOT fire.
+        let miss_src = r#"
+def handler
+  cmd = gets
+  puts(cmd)
+end
+"#;
+        let tree = parse_file(miss_src, Language::Ruby).expect("ruby fixture should parse");
+        let findings = rule.check(miss_src, &tree);
+        assert!(
+            findings.is_empty(),
+            "tainted value into puts() (callee NOT matching the regex) must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// FP-safety guard: a bare-metavariable callee sink with NO pinning
+    /// `metavariable-regex` must still compile to NOTHING (the sink role empties
+    /// and the rule is skipped), so the regex-constrained path never relaxes the
+    /// universal-callee refusal.
+    #[test]
+    fn bare_metavar_callee_sink_without_pin_still_compiles_to_nothing() {
+        let v: YamlValue = serde_yaml_ng::from_str(
+            r#"
+id: py-unpinned-callee-sink
+mode: taint
+languages: [python]
+severity: ERROR
+message: "x"
+pattern-sources:
+  - pattern: input(...)
+pattern-sinks:
+  - patterns:
+      - pattern: $FUNCTION(...)
+"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(parse_taint_rule(&v), TaintRuleParse::Skip(_)),
+            "a bare-metavar callee sink with no metavariable-regex pin must not compile"
         );
     }
 }
