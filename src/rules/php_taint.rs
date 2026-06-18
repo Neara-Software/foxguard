@@ -905,7 +905,9 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             NodeMatcher::MethodName { .. }
             | NodeMatcher::ReceiverCall { .. }
             | NodeMatcher::MemberAssign { .. }
-            | NodeMatcher::BinopFormat { .. } => {
+            | NodeMatcher::BinopFormat { .. }
+            | NodeMatcher::ObjectLiteralValue { .. }
+            | NodeMatcher::ReturnValue { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the PHP engine (no-op).
             }

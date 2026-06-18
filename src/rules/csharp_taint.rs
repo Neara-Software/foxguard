@@ -708,7 +708,9 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
             | NodeMatcher::MemberAssign { .. } => {
                 // Sink-only matchers, never a source.
             }
-            NodeMatcher::BinopFormat { .. } => {
+            NodeMatcher::BinopFormat { .. }
+            | NodeMatcher::ObjectLiteralValue { .. }
+            | NodeMatcher::ReturnValue { .. } => {
                 // Sink-only; carried for spec completeness but the C# engine
                 // does not match it as a source.
             }
@@ -792,7 +794,9 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         | NodeMatcher::Subscript { .. }
         | NodeMatcher::ParamName { .. }
         | NodeMatcher::MemberAssign { .. }
-        | NodeMatcher::BinopFormat { .. } => false,
+        | NodeMatcher::BinopFormat { .. }
+        | NodeMatcher::ObjectLiteralValue { .. }
+        | NodeMatcher::ReturnValue { .. } => false,
     }
 }
 

@@ -28,8 +28,9 @@ use super::common::AliasTable;
 use super::taint_engine::{
     analyze_function_generic, attribution_hint_for_sink, build_batched_taint_groups,
     cross_file_taint_finding, extract_cross_file_summary_for_function, match_call_sink,
-    match_member_assign_sink, node_text, push_attributed_findings, taint_finding_for_node,
-    walk_body_for_summary_generic, AnalysisContext, TaintLanguageAdapter, TaintState,
+    match_member_assign_sink, match_object_literal_sink, node_text, push_attributed_findings,
+    taint_finding_for_node, walk_body_for_summary_generic, AnalysisContext, TaintLanguageAdapter,
+    TaintState,
 };
 pub use super::taint_engine::{
     BatchedRule, NodeMatcher, ReturnSummary, ReturnTaintSummary, RuleFilter, TaintFinding,
@@ -1070,6 +1071,7 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for JsTaintAdapter {
             "variable_declarator" => handle_variable_declarator(node, ctx, state),
             "assignment_expression" => handle_assignment(node, ctx, state, findings),
             "call_expression" => handle_call(node, ctx, state, findings),
+            "object" => handle_object_literal_sink(node, ctx, state, findings),
             _ => {}
         }
     }
@@ -1337,6 +1339,43 @@ fn handle_assignment(
             for t in &targets {
                 state.clear(t);
             }
+        }
+    }
+}
+
+/// Object-literal sink: `{ role: "system", content: tainted }`. Fires when the
+/// spec carries an `ObjectLiteralValue` sink and at least one `pair` value in
+/// this `object` literal is tainted. Reports once on the whole literal node.
+fn handle_object_literal_sink(
+    node: Node<'_>,
+    ctx: &JsCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let Some(sink) = match_object_literal_sink(ctx.spec, ctx.sink_to_rules) else {
+        return;
+    };
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        // Only `key: value` pairs carry a tainted value position. Shorthand
+        // properties and spreads are handled by the literal's own propagation.
+        if child.kind() != "pair" {
+            continue;
+        }
+        let Some(value) = child.child_by_field_name("value") else {
+            continue;
+        };
+        if let Some((source_desc, src_line)) = expression_taint(value, ctx, state) {
+            let rule_hint = attribution_hint_for_sink(&sink);
+            findings.push(taint_finding_for_node(
+                node,
+                source_desc,
+                sink.description,
+                src_line,
+                rule_hint,
+                1,
+            ));
+            return;
         }
     }
 }
@@ -1885,7 +1924,9 @@ fn match_source(
             NodeMatcher::MethodName { .. }
             | NodeMatcher::ReceiverCall { .. }
             | NodeMatcher::MemberAssign { .. }
-            | NodeMatcher::BinopFormat { .. } => {
+            | NodeMatcher::BinopFormat { .. }
+            | NodeMatcher::ObjectLiteralValue { .. }
+            | NodeMatcher::ReturnValue { .. } => {
                 // Sink-only matchers; BinopFormat sinks are carried in the spec
                 // but the JS engine does not yet match them as a source (no-op).
             }

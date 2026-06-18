@@ -1261,7 +1261,9 @@ fn match_source(
             NodeMatcher::MethodName { .. }
             | NodeMatcher::ReceiverCall { .. }
             | NodeMatcher::MemberAssign { .. }
-            | NodeMatcher::BinopFormat { .. } => {
+            | NodeMatcher::BinopFormat { .. }
+            | NodeMatcher::ObjectLiteralValue { .. }
+            | NodeMatcher::ReturnValue { .. } => {
                 // Sink-only matcher; MemberAssign is JS-specific; BinopFormat is
                 // matched on binary-expression nodes, not as a source.
             }
