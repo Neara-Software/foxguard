@@ -4842,4 +4842,51 @@ rules:
             "rule must NOT fire when the negative lookahead excludes the match"
         );
     }
+
+    /// Bridge-level test for the generic-mode lookahead lever. A
+    /// `languages: [generic]` rule whose `pattern-regex` uses a negative
+    /// lookahead (`(?!\S)`, the exact shape of the registry rule
+    /// `google-maps-apikeyleak`) must now LOAD via `parse_semgrep_str` and FIRE
+    /// through the scanner entrypoint (`rule.check`), with a safe near-miss.
+    /// Previously the generic-mode `regex` crate rejected the lookahead and the
+    /// rule produced no live matcher (counted as a generic-mode skip).
+    #[test]
+    fn generic_lang_rule_with_lookahead_loads_and_fires() {
+        let yaml = r#"
+rules:
+  - id: test/generic-maps-apikey
+    patterns:
+      - pattern-regex: 'AIza[0-9A-Za-z_\-]{4}(?!\S)'
+    languages: [generic]
+    message: Detected a Google Maps API key
+    severity: WARNING
+"#;
+        let rules = parse_semgrep_str(yaml, "generic-lookahead.yml")
+            .expect("generic-mode rule with lookahead must load via fancy-regex");
+        assert!(
+            !rules.is_empty(),
+            "generic-mode lookahead rule must produce at least one rule instance"
+        );
+
+        // Generic-mode rules ignore the tree; any valid tree satisfies the
+        // `Rule::check` signature. The key must be at a token boundary: here it
+        // is followed by whitespace, so the `(?!\S)` lookahead is satisfied.
+        let firing = "key = AIza1234\nnext line\n";
+        let tree = parse_file(firing, Language::JavaScript).unwrap();
+        let findings = rules[0].check(firing, &tree);
+        assert!(
+            !findings.is_empty(),
+            "generic lookahead rule must fire on a key followed by whitespace"
+        );
+
+        // Near-miss: the key token is immediately followed by another non-space
+        // char, so the negative lookahead `(?!\S)` fails and nothing matches.
+        let safe = "key = AIza1234EXTRA\n";
+        let tree = parse_file(safe, Language::JavaScript).unwrap();
+        let findings = rules[0].check(safe, &tree);
+        assert!(
+            findings.is_empty(),
+            "generic lookahead rule must NOT fire when the lookahead is violated"
+        );
+    }
 }

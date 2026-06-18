@@ -34,7 +34,7 @@ use crate::rules::common::get_source_line;
 use crate::rules::semgrep_compat::PathFilter;
 use crate::rules::Rule;
 use crate::{Finding, Language, Severity};
-use regex::Regex;
+use fancy_regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -297,6 +297,10 @@ impl GenericMatcher {
             GenericMatcher::Pattern(elems) => find_pattern(elems, tokens),
             GenericMatcher::Regex(re) => re
                 .find_iter(source)
+                // `fancy-regex` yields `Result<Match, _>` (a backtracking
+                // failure surfaces as `Err`); skip errored steps and keep the
+                // successful matches.
+                .filter_map(|m| m.ok())
                 .map(|m| GenericMatch {
                     start_byte: m.start(),
                     end_byte: m.end(),
@@ -372,7 +376,9 @@ fn apply_negatives(
         match neg {
             // Regex negative: file-level — if it matches anywhere, clear all.
             GenericMatcher::Regex(re) => {
-                if re.is_match(source) {
+                // `fancy-regex`'s `is_match` returns `Result`; treat a
+                // backtracking error as "no match" (do not clear).
+                if re.is_match(source).unwrap_or(false) {
                     positives.clear();
                 }
             }
@@ -738,8 +744,11 @@ fn build_matcher(spec: &GenericRuleSpec<'_>) -> Result<GenericMatcher, String> {
 }
 
 fn compile_regex(pattern: &str) -> Result<Regex, String> {
-    // `\Z` is a Python/PCRE end-of-string anchor; normalise to `$` for the
-    // Rust `regex` crate (same semantics with MULTILINE off).
+    // `\Z` is a Python/PCRE end-of-string anchor; normalise to `$` for
+    // consistency (same semantics with MULTILINE off). `fancy-regex` (a
+    // backtracking engine) is used here instead of the `regex` crate so that
+    // lookaround assertions (`(?=...)`, `(?!...)`) used by several generic-mode
+    // registry rules compile.
     let normalised = pattern.replace(r"\Z", "$");
     Regex::new(&normalised).map_err(|e| format!("Invalid pattern-regex '{pattern}': {e}"))
 }
@@ -918,6 +927,38 @@ mod tests {
         let source = "key = AKIA1234XYZ\n";
         let tokens = tokenize(source);
         assert_eq!(m.find_all(source, &tokens).len(), 1);
+    }
+
+    /// Generic-mode `pattern-regex` now compiles PCRE lookaround assertions
+    /// (`(?=...)`, `(?!...)`) via the `fancy-regex` backtracking engine. The
+    /// plain `regex` crate rejects these, which previously made several
+    /// `languages: [generic]` registry rules (e.g. `google-maps-apikeyleak`,
+    /// `poetry-missing-solver-min-release-age`) fail to load. This is the
+    /// low-level compile + match check.
+    #[test]
+    fn regex_with_negative_lookahead_compiles_and_matches() {
+        // Shape mirrors `google-maps-apikeyleak`: a key token that must NOT be
+        // immediately followed by a non-space character (the `(?!\S)` tail).
+        let m = GenericMatcher::Regex(
+            compile_regex(r"AIza[0-9A-Za-z_\-]{4}(?!\S)")
+                .expect("negative-lookahead regex must compile via fancy-regex"),
+        );
+        let hit = "key = AIza1234 rest\n";
+        let toks = tokenize(hit);
+        assert_eq!(
+            m.find_all(hit, &toks).len(),
+            1,
+            "lookahead-satisfied key (followed by space) must match"
+        );
+
+        // Near-miss: the key is followed by a non-space char, so the negative
+        // lookahead fails and there is no match.
+        let miss = "key = AIza1234XYZ\n";
+        let toks = tokenize(miss);
+        assert!(
+            m.find_all(miss, &toks).is_empty(),
+            "lookahead-violating key (trailing non-space) must NOT match"
+        );
     }
 
     #[test]
