@@ -1780,6 +1780,35 @@ fn compile_entry(
                     return;
                 }
             }
+            // ── Focus-on-call-argument SINK shape (the sink-side analog of the
+            //    parameter-as-source shape) ──────────────────
+            //
+            // A common rejected sink shape names a focused metavariable that is
+            // an ARGUMENT of a call given by a `pattern-inside`/`pattern`
+            // context, e.g.
+            //
+            //   patterns:
+            //     - pattern-inside: redirect_to $X, ...
+            //     - pattern: $X
+            //
+            //   patterns:
+            //     - pattern: $RES.$METH($QUERY, ...)
+            //     - metavariable-regex: { metavariable: $METH, regex: ^(sendFile)$ }
+            //     - focus-metavariable: $QUERY
+            //
+            // Semgrep means "the focused argument, when it appears inside this
+            // call, is a sink". The dropped-constraint fallback empties the sink
+            // role (no bare metavar is a usable sink), rejecting the rule. We
+            // compile the call context to the existing `Call`/`MethodName` sink
+            // matcher (which already fires only when a tainted value reaches the
+            // call's arguments), gated by the method-name `metavariable-regex`
+            // where present. Sink/sanitizer only — a call argument is a data-flow
+            // destination, not a taint origin.
+            if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
+                if try_compile_focus_call_sink_block(v, role, lang, out) {
+                    return;
+                }
+            }
             // `patterns:` is a Semgrep AND-block: all sub-items must hold
             // simultaneously. foxguard's taint engine cannot express all AND
             // semantics (no nested scope / contextual constraints), so we
@@ -2072,6 +2101,300 @@ fn signature_has_param(sig: &str, seed: &str) -> bool {
     params
         .split(|c: char| !is_ident_char(c) && c != '$')
         .any(|tok| tok == seed)
+}
+
+/// Try to recognise the "focus-on-call-argument" SINK shape in a `patterns:`
+/// sink/sanitizer block and, if found, push the call's `Call`/`MethodName`
+/// matcher(s). Returns `true` (and pushes ≥1 matcher) on recognition.
+///
+/// Recognition is the sink-side analog of [`try_compile_param_source_block`]:
+///   1. the block names a focused metavariable `$F` — via `focus-metavariable:
+///      $F` or a bare `pattern: $F`; and
+///   2. the block carries a CALL context (a `pattern:` or `pattern-inside:`
+///      whose text is a call) whose ARGUMENT LIST contains that `$F` (literally,
+///      or via a `...`/metavariable wildcard arg list — "an argument of the
+///      call").
+///
+/// The call's callee is compiled to a sink matcher:
+///   - a concrete callee (`redirect_to(...)`, `render(...)`) → one `Call`;
+///   - a `$RECV.$METH(...)` callee whose `$METH` is pinned by an anchored
+///     alternation `metavariable-regex` (`^(sendfile|sendFile)$`) → one
+///     `MethodName` per listed method name;
+///   - a `$FUNC(...)` pure-metavariable callee whose `$FUNC` is pinned by an
+///     anchored-alternation `metavariable-regex` → one `Call` per listed name.
+///
+/// These reuse the existing `Call`/`MethodName` sink machinery, which only
+/// fires when a tracked-tainted value reaches the call's arguments — so the
+/// compiled sink is gated on taint AND the concrete callee/method name, keeping
+/// it from being an over-broad bare-node sink. Any callee that does not resolve
+/// to a concrete name (no regex pin, metavariable left free) produces nothing,
+/// so the caller falls through to the normal graceful-degradation extraction.
+fn try_compile_focus_call_sink_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    lang: Language,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+
+    let mut seeds: Vec<String> = Vec::new();
+    let mut call_texts: Vec<String> = Vec::new();
+    let mut metavar_regexes: Vec<(String, String)> = Vec::new();
+    collect_focus_call_sink_parts(items, &mut seeds, &mut call_texts, &mut metavar_regexes);
+
+    if seeds.is_empty() || call_texts.is_empty() {
+        return false;
+    }
+
+    let before = out.len();
+    for call in &call_texts {
+        // The focused metavariable must be an argument of this call.
+        if !seeds.iter().any(|seed| call_has_arg(call, seed)) {
+            continue;
+        }
+        compile_focus_call_callee(call, role, lang, &metavar_regexes, out);
+    }
+    out.len() > before
+}
+
+/// Walk a sink `patterns:` block (recursing into `pattern-either:`/`patterns:`)
+/// collecting focused metavariables (`focus-metavariable: $F` and bare
+/// `pattern: $F`), call-context texts (`pattern:`/`pattern-inside:` whose value
+/// is a call expression), and `metavariable-regex` (metavariable, regex) pairs.
+fn collect_focus_call_sink_parts(
+    items: &[YamlValue],
+    seeds: &mut Vec<String>,
+    call_texts: &mut Vec<String>,
+    metavar_regexes: &mut Vec<(String, String)>,
+) {
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("focus-metavariable") => {
+                    if let Some(s) = val.as_str() {
+                        let mv = s.trim();
+                        if is_metavariable(mv) {
+                            seeds.push(mv.to_string());
+                        }
+                    }
+                }
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if is_metavariable(t) {
+                            seeds.push(t.to_string());
+                        } else if is_call_context_pattern(t) {
+                            call_texts.push(t.to_string());
+                        }
+                    }
+                }
+                Some("pattern-inside") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if is_call_context_pattern(t) {
+                            call_texts.push(t.to_string());
+                        }
+                    }
+                }
+                Some("metavariable-regex") => {
+                    if let Some(m) = val.as_mapping() {
+                        let mv = m
+                            .get(YamlValue::from("metavariable"))
+                            .and_then(YamlValue::as_str);
+                        let re = m.get(YamlValue::from("regex")).and_then(YamlValue::as_str);
+                        if let (Some(mv), Some(re)) = (mv, re) {
+                            metavar_regexes.push((mv.to_string(), re.to_string()));
+                        }
+                    }
+                }
+                Some("pattern-either") | Some("patterns") => {
+                    if let Some(seq) = val.as_sequence() {
+                        collect_focus_call_sink_parts(seq, seeds, call_texts, metavar_regexes);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// True when `pat` looks like a (single) call expression: a callee followed by
+/// a balanced `(...)` argument list, with the call ending the pattern (allowing
+/// a trailing statement `;` / `,...` Semgrep ellipsis already inside the parens).
+/// Rejects assignments, binops, blocks, and multi-line definitions.
+fn is_call_context_pattern(pat: &str) -> bool {
+    let p = pat.trim().trim_end_matches(';').trim();
+    // A single logical line (no nested blocks / function bodies).
+    if p.contains('\n') || p.contains('{') {
+        return false;
+    }
+    // Must be a call: a `(` opening an argument list that closes at end.
+    let Some(open) = p.find('(') else {
+        return false;
+    };
+    if !p.ends_with(')') {
+        return false;
+    }
+    let callee = p[..open].trim();
+    if callee.is_empty() {
+        return false;
+    }
+    // The callee must not itself contain call/operator punctuation that would
+    // make this an expression rather than a plain `callee(args)` form. A dotted
+    // / metavariable chain is fine.
+    !callee.contains('(')
+        && !callee.contains('=')
+        && !callee.contains('+')
+        && !callee.contains('%')
+        && !callee.contains('[')
+}
+
+/// True when the call pattern `call` lists `seed` (a metavariable like `$ARG`)
+/// inside its argument list, OR has a wildcard/metavariable argument list
+/// (`(...)`, `($X)`) — i.e. the focused metavariable is one of the call's
+/// arguments. Bounds the sink to a focus that is genuinely a call argument.
+fn call_has_arg(call: &str, seed: &str) -> bool {
+    let c = call.trim().trim_end_matches(';').trim();
+    let Some(open) = c.find('(') else {
+        return false;
+    };
+    let bytes = c.as_bytes();
+    let mut depth = 0i32;
+    let mut close = None;
+    for (i, &b) in bytes.iter().enumerate().skip(open) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return false;
+    };
+    let args = c[open + 1..close].trim();
+    // Literal argument match (token boundary so `$ARG` != `$ARGUMENT`).
+    let literal = args
+        .split(|ch: char| !is_ident_char(ch) && ch != '$')
+        .any(|tok| tok == seed);
+    if literal {
+        return true;
+    }
+    // A wildcard argument list (`...` / a bare metavariable) carries the focus.
+    args == "..." || args.is_empty() || is_metavariable(args)
+}
+
+/// Compile the callee of a recognised focus-call sink to `Call`/`MethodName`
+/// matcher(s), pinning a metavariable callee/method with its anchored-alternation
+/// `metavariable-regex` where present.
+fn compile_focus_call_callee(
+    call: &str,
+    role: MatcherRole,
+    lang: Language,
+    metavar_regexes: &[(String, String)],
+    out: &mut Vec<GenericMatcher>,
+) {
+    let c = call.trim().trim_end_matches(';').trim();
+    let Some(open) = c.find('(') else {
+        return;
+    };
+    let callee = c[..open].trim();
+
+    // Case 1: `$RECV.$METH(...)` — metavariable receiver + metavariable method.
+    // Pin `$METH` via its regex → one `MethodName` per alternative.
+    if let Some(dot) = callee.find('.') {
+        let recv = &callee[..dot];
+        let meth = &callee[dot + 1..];
+        if is_metavariable(recv) && is_metavariable(meth) && !meth.contains('.') {
+            if let Some(names) = regex_alternatives_for(meth, metavar_regexes) {
+                for name in names {
+                    out.push(GenericMatcher::MethodName {
+                        method: name.clone(),
+                        description: describe(&name, role),
+                    });
+                }
+            }
+            return;
+        }
+        // `$RECV.method(...)` — concrete method on a metavariable receiver.
+        if is_metavariable(recv) && is_identifier(meth) {
+            out.push(GenericMatcher::MethodName {
+                method: meth.to_string(),
+                description: describe(meth, role),
+            });
+            return;
+        }
+    }
+
+    // Case 2: `$FUNC(...)` — pure-metavariable callee. Pin via its regex → one
+    // `Call` per alternative.
+    if is_metavariable(callee) {
+        if let Some(names) = regex_alternatives_for(callee, metavar_regexes) {
+            for name in names {
+                out.push(GenericMatcher::Call {
+                    canonical: name.clone(),
+                    description: describe(&name, role),
+                });
+            }
+        }
+        return;
+    }
+
+    // Case 3: concrete callee (`redirect_to`, `render`, `a.b.method`). Reuse the
+    // normal pattern compiler on the call text so it lands in the right shape.
+    if let Some(m) = compile_pattern(c, role, lang) {
+        if matches!(
+            m,
+            GenericMatcher::Call { .. } | GenericMatcher::MethodName { .. }
+        ) {
+            out.push(m);
+        }
+    }
+}
+
+/// If `mv` is constrained by an anchored alternation `metavariable-regex`
+/// (`^(a|b|c)$`, with optional `\b...\b` word-boundary wrapping), return the
+/// alternative names. Only plain-identifier alternatives are accepted; any
+/// non-anchored or non-trivial regex yields `None` (we will not invent names).
+fn regex_alternatives_for(mv: &str, metavar_regexes: &[(String, String)]) -> Option<Vec<String>> {
+    let (_, re) = metavar_regexes.iter().find(|(m, _)| m == mv)?;
+    parse_anchored_alternation(re)
+}
+
+/// Parse `^(a|b|c)$` or `\b(a|b|c)\b` (or a single `^a$` / `\ba\b`) into its
+/// plain-identifier alternatives. Returns `None` for anything else — we never
+/// guess at a non-trivial regex.
+fn parse_anchored_alternation(re: &str) -> Option<Vec<String>> {
+    let mut body = re.trim();
+    // Strip start/end anchors.
+    body = body.strip_prefix('^').unwrap_or(body);
+    body = body.strip_suffix('$').unwrap_or(body);
+    // Strip `\b ... \b` word boundaries.
+    body = body.strip_prefix("\\b").unwrap_or(body);
+    body = body.strip_suffix("\\b").unwrap_or(body);
+    // Strip a single wrapping group.
+    if body.starts_with('(') && body.ends_with(')') {
+        body = &body[1..body.len() - 1];
+    }
+    if body.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = body.split('|').map(|s| s.trim().to_string()).collect();
+    if names.iter().all(|n| is_identifier(n)) {
+        Some(names)
+    } else {
+        None
+    }
 }
 
 /// Compile a Bash-specific pattern (shell command or command substitution)
@@ -6766,6 +7089,230 @@ class H {
             findings.is_empty(),
             "a hardcoded SQL literal must not fire, got {:?}",
             findings
+        );
+    }
+
+    // ── Focus-on-call-argument SINK shape: focus-metavariable / bare-pattern
+    //    focus + a call-context pattern-inside/pattern in a pattern-sinks block.
+    //    Each test compiles through the SAME `parse_taint_rule` path the CLI
+    //    uses, asserts the compiled SINK is a concrete `Call`/`MethodName`
+    //    matcher (never an over-broad bare-node sink), then proves a tainted
+    //    value reaching that call FIRES and a clean near-miss does NOT.
+
+    /// PHP `assert-use` shape: `pattern: assert($SINK, ...)` + `pattern: $SINK`
+    /// (the focus). Compiles to a concrete `Call { assert }` sink. A tainted
+    /// `$_GET` value reaching `assert(...)` must fire.
+    #[test]
+    fn php_focus_call_sink_concrete_callee_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: php-assert-use
+mode: taint
+languages: [php]
+severity: ERROR
+message: "Tainted value reaches assert()"
+pattern-sources:
+  - pattern: $_GET
+pattern-sinks:
+  - patterns:
+      - pattern: assert($SINK, ...)
+      - pattern: $SINK
+"#,
+        );
+        // The sink must be the concrete `assert` Call, not a dropped/empty sink.
+        assert!(
+            matches!(
+                rule.spec.sinks.as_slice(),
+                [GenericMatcher::Call { canonical, .. }] if canonical == "assert"
+            ),
+            "expected a concrete `assert` Call sink, got {:?}",
+            rule.spec.sinks
+        );
+
+        let src = r#"<?php
+function run() {
+  $x = $_GET['code'];
+  assert($x);
+}
+"#;
+        let tree = parse_file(src, Language::Php).expect("php fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a tainted $_GET value reaching assert() must fire, got {:?}",
+            findings
+        );
+    }
+
+    /// PHP near-miss: the SAME `assert` sink, but the argument is a hardcoded
+    /// literal (not tainted) — the call-argument taint gate means it must NOT
+    /// fire. Proves the sink is not an over-broad "any assert call" matcher.
+    #[test]
+    fn php_focus_call_sink_untainted_arg_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: php-assert-use-safe
+mode: taint
+languages: [php]
+severity: ERROR
+message: "Tainted value reaches assert()"
+pattern-sources:
+  - pattern: $_GET
+pattern-sinks:
+  - patterns:
+      - pattern: assert($SINK, ...)
+      - pattern: $SINK
+"#,
+        );
+
+        let src = r#"<?php
+function run() {
+  $x = "1 === 1";
+  assert($x);
+}
+"#;
+        let tree = parse_file(src, Language::Php).expect("php fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "an untainted literal in assert() must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// JS `node-mysql-sqli` shape: `focus-metavariable: $QUERY` + a
+    /// `pattern-either:` of `pattern-inside: $POOL.query($QUERY, ...)` /
+    /// `$POOL.execute($QUERY, ...)` call contexts. Compiles to `MethodName`
+    /// sinks for `query`/`execute`. A tainted `req.body` reaching `.query(...)`
+    /// must fire.
+    #[test]
+    fn js_focus_call_sink_method_name_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: js-mysql-sqli
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "Tainted value reaches a SQL query method"
+pattern-sources:
+  - pattern: $REQ.body
+pattern-sinks:
+  - patterns:
+      - focus-metavariable: $QUERY
+      - pattern-either:
+          - pattern-inside: $POOL.query($QUERY, ...)
+          - pattern-inside: $POOL.execute($QUERY, ...)
+"#,
+        );
+        // The sink must compile to concrete `query`/`execute` MethodName sinks.
+        let mut methods: Vec<&str> = rule
+            .spec
+            .sinks
+            .iter()
+            .filter_map(|m| match m {
+                GenericMatcher::MethodName { method, .. } => Some(method.as_str()),
+                _ => None,
+            })
+            .collect();
+        methods.sort_unstable();
+        assert_eq!(
+            methods,
+            ["execute", "query"],
+            "expected query/execute MethodName sinks, got {:?}",
+            rule.spec.sinks
+        );
+
+        let src = r#"
+function run(req, pool) {
+  const q = req.body;
+  pool.query(q);
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("js fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a tainted req.body reaching pool.query() must fire, got {:?}",
+            findings
+        );
+    }
+
+    /// JS near-miss: the focused method-name sink (`query`/`execute`) but the
+    /// call is `pool.format(q)` — a DIFFERENT method outside the pinned set —
+    /// so the MethodName sinks must NOT fire. Proves the regex pin bounds the
+    /// matcher to the listed methods.
+    #[test]
+    fn js_focus_call_sink_other_method_does_not_fire() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: js-mysql-sqli-safe
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "Tainted value reaches a SQL query method"
+pattern-sources:
+  - pattern: $REQ.body
+pattern-sinks:
+  - patterns:
+      - focus-metavariable: $QUERY
+      - pattern-either:
+          - pattern-inside: $POOL.query($QUERY, ...)
+          - pattern-inside: $POOL.execute($QUERY, ...)
+"#,
+        );
+
+        let src = r#"
+function run(req, pool) {
+  const q = req.body;
+  pool.format(q);
+}
+"#;
+        let tree = parse_file(src, Language::JavaScript).expect("js fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a tainted value reaching an unlisted method (.format) must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// A bounded-recognition guard: a `pattern-sinks` block whose call context
+    /// has a free metavariable callee with NO pinning `metavariable-regex`
+    /// (`$F($SINK, ...)`) must NOT compile to a sink (we never invent a callee
+    /// name), so the rule is rejected rather than producing an any-call sink.
+    #[test]
+    fn unpinned_metavar_callee_sink_is_not_compiled() {
+        let v: YamlValue = serde_yaml_ng::from_str(
+            r#"
+id: js-unpinned-callee
+mode: taint
+languages: [javascript]
+severity: ERROR
+message: "x"
+pattern-sources:
+  - pattern: $REQ.body
+pattern-sinks:
+  - patterns:
+      - focus-metavariable: $SINK
+      - pattern: $F($SINK, ...)
+"#,
+        )
+        .unwrap();
+        // No concrete callee/method can be derived, so the sink role empties and
+        // the whole rule is skipped — never an over-broad any-call sink.
+        assert!(
+            matches!(parse_taint_rule(&v), TaintRuleParse::Skip(_)),
+            "an unpinned metavariable callee must not compile to a sink"
         );
     }
 }
