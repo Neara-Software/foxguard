@@ -12,10 +12,10 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 | Rule files scanned | 2070 |
 | Files with YAML parse errors | 0 |
 | Total rules | 2144 |
-| Rules loaded OK | 1946 (90.8%) |
-| Rules skipped | 198 (9.2%) |
+| Rules loaded OK | 1950 (91.0%) |
+| Rules skipped | 194 (9.0%) |
 
-**Headline load rate: 90.8%** (1946 / 2144 rules).
+**Headline load rate: 91.0%** (1950 / 2144 rules).
 
 ## Skip-reason histogram
 
@@ -23,14 +23,13 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 147 | 74.2% | 6.9% |
-| `unsupported language: apex` | 9 | 4.5% | 0.4% |
-| `generic mode (languages: [generic])` | 7 | 3.5% | 0.3% |
-| `mode: taint (unsupported language: scala)` | 5 | 2.5% | 0.2% |
-| `taint: pattern-propagators` | 5 | 2.5% | 0.2% |
-| `unsupported language: clojure` | 5 | 2.5% | 0.2% |
-| `loader rejected (other)` | 4 | 2.0% | 0.2% |
-| `unsupported language: html` | 4 | 2.0% | 0.2% |
+| `mode: taint (unsupported shape)` | 147 | 75.8% | 6.9% |
+| `unsupported language: apex` | 9 | 4.6% | 0.4% |
+| `generic mode (languages: [generic])` | 7 | 3.6% | 0.3% |
+| `mode: taint (unsupported language: scala)` | 5 | 2.6% | 0.2% |
+| `taint: pattern-propagators` | 5 | 2.6% | 0.2% |
+| `unsupported language: clojure` | 5 | 2.6% | 0.2% |
+| `unsupported language: html` | 4 | 2.1% | 0.2% |
 | `mode: taint (unsupported language: apex)` | 3 | 1.5% | 0.1% |
 | `mode: taint (unsupported language: bash)` | 3 | 1.5% | 0.1% |
 | `mode: taint (unsupported language: solidity)` | 3 | 1.5% | 0.1% |
@@ -46,9 +45,8 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 |---:|---|---:|
 | 1 | `mode: taint (unsupported shape)` | 147 |
 | 2 | `taint: pattern-propagators` | 5 |
-| 3 | `loader rejected (other)` | 4 |
 
-Operator/feature gaps account for **156 rules** (7.3% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **152 rules** (7.1% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
 
 ## Priority order — missing language grammars
 
@@ -79,7 +77,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 | python | 423 | 388 | 35 | 91.7% |
 | hcl | 359 | 359 | 0 | 100.0% |
 | javascript | 243 | 202 | 41 | 83.1% |
-| regex | 237 | 233 | 4 | 98.3% |
+| regex | 237 | 237 | 0 | 100.0% |
 | java | 131 | 111 | 20 | 84.7% |
 | generic | 103 | 96 | 7 | 93.2% |
 | yaml | 100 | 100 | 0 | 100.0% |
@@ -119,7 +117,6 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **javascript**: `mode: taint (unsupported shape)` (41)
 - **php**: `mode: taint (unsupported shape)` (14)
 - **python**: `mode: taint (unsupported shape)` (35)
-- **regex**: `loader rejected (other)` (4)
 - **ruby**: `mode: taint (unsupported shape)` (18), `taint: pattern-propagators` (1)
 - **scala**: `mode: taint (unsupported language: scala)` (5)
 - **solidity**: `mode: taint (unsupported language: solidity)` (3)
