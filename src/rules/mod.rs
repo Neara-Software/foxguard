@@ -1,3 +1,4 @@
+pub mod apex_taint;
 pub mod bash_taint;
 pub mod c;
 pub mod c_taint;
@@ -29,6 +30,7 @@ pub mod semgrep_compat;
 pub mod semgrep_taint;
 pub mod solidity_taint;
 pub mod swift;
+pub mod swift_taint;
 pub mod taint_engine;
 
 use crate::{Finding, Language, Severity};

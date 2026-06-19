@@ -56,6 +56,7 @@
 //! sub-items) is warn-skipped. If all source or sink entries are warn-skipped
 //! and none survive, the whole rule is skipped.
 
+use crate::rules::apex_taint;
 use crate::rules::bash_taint;
 use crate::rules::c_taint;
 use crate::rules::common::get_source_line;
@@ -69,6 +70,7 @@ use crate::rules::python_taint;
 use crate::rules::ruby_taint;
 use crate::rules::scala_taint;
 use crate::rules::solidity_taint;
+use crate::rules::swift_taint;
 use crate::rules::{FileContext, Rule};
 use crate::{Finding, Language, Severity};
 use serde_yaml_ng::Value as YamlValue;
@@ -1183,6 +1185,172 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
     }
 }
 
+/// Convert the generic spec into an Apex taint spec.
+fn to_apex_spec(g: &GenericSpec) -> apex_taint::TaintSpec {
+    apex_taint::TaintSpec {
+        sources: g.sources.iter().map(to_apex_matcher).collect(),
+        sinks: g.sinks.iter().map(to_apex_matcher).collect(),
+        sanitizers: g.sanitizers.iter().map(to_apex_matcher).collect(),
+    }
+}
+
+fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
+    match m {
+        GenericMatcher::Attribute {
+            root,
+            field,
+            description,
+        } => apex_taint::NodeMatcher::Attribute {
+            root: root.clone(),
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Call {
+            canonical,
+            description,
+        } => apex_taint::NodeMatcher::Call {
+            canonical: canonical.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ParamName { names, description } => apex_taint::NodeMatcher::ParamName {
+            names: names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => apex_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::CallRegex { regex, description } => apex_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            apex_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => apex_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => apex_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => apex_taint::NodeMatcher::Subscript {
+            base: base.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MemberAssign { field, description } => {
+            apex_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::BinopFormat { description } => apex_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            apex_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => apex_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
+    }
+}
+
+/// Convert the generic spec into a Swift taint spec.
+fn to_swift_spec(g: &GenericSpec) -> swift_taint::TaintSpec {
+    swift_taint::TaintSpec {
+        sources: g.sources.iter().map(to_swift_matcher).collect(),
+        sinks: g.sinks.iter().map(to_swift_matcher).collect(),
+        sanitizers: g.sanitizers.iter().map(to_swift_matcher).collect(),
+    }
+}
+
+fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
+    match m {
+        GenericMatcher::Attribute {
+            root,
+            field,
+            description,
+        } => swift_taint::NodeMatcher::Attribute {
+            root: root.clone(),
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Call {
+            canonical,
+            description,
+        } => swift_taint::NodeMatcher::Call {
+            canonical: canonical.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ParamName { names, description } => swift_taint::NodeMatcher::ParamName {
+            names: names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodName {
+            method,
+            description,
+        } => swift_taint::NodeMatcher::MethodName {
+            method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::CallRegex { regex, description } => swift_taint::NodeMatcher::CallRegex {
+            regex: regex.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodNameRegex { regex, description } => {
+            swift_taint::NodeMatcher::MethodNameRegex {
+                regex: regex.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReceiverCall {
+            receiver,
+            description,
+        } => swift_taint::NodeMatcher::ReceiverCall {
+            receiver: receiver.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::FieldName { field, description } => swift_taint::NodeMatcher::FieldName {
+            field: field.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::Subscript { base, description } => swift_taint::NodeMatcher::Subscript {
+            base: base.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MemberAssign { field, description } => {
+            swift_taint::NodeMatcher::MemberAssign {
+                field: field.clone(),
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::BinopFormat { description } => swift_taint::NodeMatcher::BinopFormat {
+            description: description.clone(),
+        },
+        GenericMatcher::ObjectLiteralValue { description } => {
+            swift_taint::NodeMatcher::ObjectLiteralValue {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::ReturnValue { description } => swift_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
+    }
+}
+
 fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
     match m {
         GenericMatcher::Attribute {
@@ -1439,6 +1607,32 @@ impl TaintFindingView {
             hops: f.hops,
         }
     }
+    fn from_apex(f: apex_taint::TaintFinding) -> Self {
+        Self {
+            sink_start_byte: f.sink_start_byte,
+            sink_line: f.sink_line,
+            sink_column: f.sink_column,
+            sink_end_line: f.sink_end_line,
+            sink_end_column: f.sink_end_column,
+            source_description: f.source_description,
+            sink_description: f.sink_description,
+            source_line: f.source_line,
+            hops: f.hops,
+        }
+    }
+    fn from_swift(f: swift_taint::TaintFinding) -> Self {
+        Self {
+            sink_start_byte: f.sink_start_byte,
+            sink_line: f.sink_line,
+            sink_column: f.sink_column,
+            sink_end_line: f.sink_end_line,
+            sink_end_column: f.sink_end_column,
+            source_description: f.source_description,
+            sink_description: f.sink_description,
+            source_line: f.source_line,
+            hops: f.hops,
+        }
+    }
 }
 
 impl Rule for SemgrepTaintRule {
@@ -1562,6 +1756,20 @@ impl Rule for SemgrepTaintRule {
                 scala_taint::analyze_tree(tree.root_node(), source, &spec, None)
                     .into_iter()
                     .map(TaintFindingView::from_scala)
+                    .collect()
+            }
+            Language::Apex => {
+                let spec = to_apex_spec(&self.spec);
+                apex_taint::analyze_tree(tree.root_node(), source, &spec, None)
+                    .into_iter()
+                    .map(TaintFindingView::from_apex)
+                    .collect()
+            }
+            Language::Swift => {
+                let spec = to_swift_spec(&self.spec);
+                swift_taint::analyze_tree(tree.root_node(), source, &spec, None)
+                    .into_iter()
+                    .map(TaintFindingView::from_swift)
                     .collect()
             }
             _ => Vec::new(),
@@ -1694,6 +1902,14 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                         detected = Some(Language::Scala);
                         break;
                     }
+                    "apex" => {
+                        detected = Some(Language::Apex);
+                        break;
+                    }
+                    "swift" => {
+                        detected = Some(Language::Swift);
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -1701,7 +1917,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
                 Some(l) => l,
                 None => {
                     return TaintRuleParse::Skip(format!(
-                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, Kotlin, Ruby, PHP, C#, Bash, Solidity, and Scala are supported",
+                        "taint rule `{}` targets unsupported languages; Python, JavaScript/TypeScript, Go, Java, C, Kotlin, Ruby, PHP, C#, Bash, Solidity, Scala, Apex, and Swift are supported",
                         id
                     ));
                 }
@@ -1842,20 +2058,32 @@ fn compile_entry(
         return;
     };
 
-    // Entries are expected to carry exactly one top-level key. Having more
-    // than one suggests the user meant `patterns:` semantics, which we
-    // don't support inside taint blocks — warn and skip.
-    if map.len() != 1 {
+    // `by-side-effect:` is a Semgrep taint-source flag (the *side-effect* of the
+    // matched expression is the source, not its value). The compiled matcher
+    // shape is the same either way, so we treat the flag as a no-op marker and
+    // compile the companion `pattern:`/`patterns:`/`pattern-either:` key. Drop
+    // the flag from the key count so an entry like
+    // `{ by-side-effect: true, pattern: ... }` is not mis-rejected as multi-key.
+    let effective_keys: Vec<(&YamlValue, &YamlValue)> = map
+        .iter()
+        .filter(|(k, _)| k.as_str() != Some("by-side-effect"))
+        .collect();
+
+    // Entries are expected to carry exactly one top-level key (after dropping
+    // the `by-side-effect` flag). Having more than one suggests the user meant
+    // `patterns:` semantics, which we don't support inside taint blocks — warn
+    // and skip.
+    if effective_keys.len() != 1 {
         eprintln!(
             "Warning: taint rule `{}` {} entry has {} keys (expected a single `pattern:`, `pattern-either:`, or `patterns:`); skipping entry",
             rule_id,
             role.label(),
-            map.len(),
+            effective_keys.len(),
         );
         return;
     }
 
-    let (k, v) = map.iter().next().expect("map.len() == 1");
+    let (k, v) = effective_keys[0];
     match k.as_str() {
         Some("pattern") => {
             let Some(pattern) = v.as_str() else {
@@ -2785,6 +3013,82 @@ fn is_function_signature_source(pat: &str) -> bool {
     pat.contains('(') && pat.contains('$')
 }
 
+/// True when `pat` is a Swift "string built dynamically" source pattern:
+///
+/// - an interpolated string literal `"...\($X)..."` (contains `\(` and `$`);
+/// - a concatenation assigned to a variable, `$SQL = "..." + $X` or
+///   `$SQL = $X + "..."` (a `=` LHS metavariable, a `+`, a quoted literal, and
+///   a metavariable operand).
+///
+/// These compile to the Swift string-construction sentinel source.
+fn is_swift_string_construction_source(pat: &str) -> bool {
+    let p = pat.trim();
+    // Interpolated string literal: `"...\($X)..."`.
+    if p.starts_with('"') && p.contains("\\(") && p.contains('$') {
+        return true;
+    }
+    // Concatenation assignment: `$VAR = "..." + $X` / `$VAR = $X + "..."`.
+    if let Some(eq) = find_single_assignment(p) {
+        let rhs = p[eq + 1..].trim();
+        if rhs.contains('+') && rhs.contains('"') && rhs.contains('$') {
+            return true;
+        }
+    }
+    false
+}
+
+/// Recognise an Apex chained-call request source of the form
+/// `ROOT.<...calls...>.method($MV)` — a method chain rooted at a concrete
+/// identifier (`ApexPage`, `RestContext`, …), whose final `.method($MV)` reads
+/// a request value into a metavariable. Returns the canonical `ROOT.method`
+/// pair, or `None`.
+///
+/// Examples:
+/// - `ApexPage.getCurrentPage().getParameters().get($URLPARAM)`
+///   → `Some("ApexPage.get")`
+/// - `ApexPage.getCurrentPage().getParameters.get($URLPARAM)`
+///   → `Some("ApexPage.get")`
+fn parse_apex_chained_call_source(pat: &str) -> Option<String> {
+    let p = pat.trim();
+    // Must end with a call whose argument list references a metavariable.
+    if !p.ends_with(')') {
+        return None;
+    }
+    let open = p.find('(')?;
+    // The callee text is everything before the FIRST `(` in a left-to-right
+    // chain — but here the first `(` belongs to an intermediate call, so we
+    // instead split on the final `.method(` boundary.
+    let last_call_open = p.rfind('(')?;
+    let callee_chain = p[..last_call_open].trim();
+    // Final method name = segment after the last `.` in the callee chain.
+    let method = callee_chain.rsplit('.').next()?;
+    if method.is_empty()
+        || !method
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
+    // Root identifier = leading identifier before the first `.` or `(`.
+    let root_end = callee_chain.find(['.', '(']).unwrap_or(callee_chain.len());
+    let root = callee_chain[..root_end].trim();
+    if root.is_empty() || !root.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    // Require an intermediate call chain (so a plain `root.method(...)` keeps
+    // going through the normal Call branch, not this Apex-specific one).
+    let has_inner_call = open < last_call_open;
+    if !has_inner_call {
+        return None;
+    }
+    // The argument list must reference a metavariable (the focused URL param).
+    let args = &p[last_call_open + 1..p.len() - 1];
+    if !args.contains('$') {
+        return None;
+    }
+    Some(format!("{root}.{method}"))
+}
+
 /// Compile a single Semgrep pattern string into a [`NodeMatcher`].
 ///
 /// Returns `None` if the pattern shape is not one of the supported forms
@@ -2796,11 +3100,56 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
         return None;
     }
 
-    // Solidity statement patterns carry a trailing `;` (e.g. `selfdestruct(...);`,
-    // `$CONTRACT.delegatecall(...);`). Strip it so the call/member shapes below
+    // Solidity / Apex statement patterns carry a trailing `;` (e.g.
+    // `selfdestruct(...);`, `Database.query($SINK,...);`,
+    // `req.setHeader($X, ...);`). Strip it so the call/member shapes below
     // recognise them.
-    if lang == Language::Solidity {
+    if matches!(lang, Language::Solidity | Language::Apex) {
         pat = pat.trim_end_matches(';').trim_end();
+    }
+
+    // ── Swift string-construction source: `"...\($X)..."`, `$SQL = "..." + $X`,
+    //    `$SQL = $X + "..."` ───────────────────────────────────────────────
+    //
+    // The Swift `swift-potential-sqlite-injection` rule expresses its source as
+    // a string assembled by interpolation or by concatenation with a dynamic
+    // operand — the constructed string is itself the (low-confidence) taint
+    // origin (there is no parameter binding). None of the generic call/param/
+    // field shapes recognise these, so we compile them to a sentinel
+    // `ParamName` source that the Swift engine interprets as "any interpolated
+    // or concatenated string is tainted" (see
+    // `swift_taint::STRING_CONSTRUCTION_SENTINEL`). Source role only.
+    if lang == Language::Swift {
+        if let MatcherRole::Source = role {
+            if is_swift_string_construction_source(pat) {
+                return Some(GenericMatcher::ParamName {
+                    names: vec![swift_taint::STRING_CONSTRUCTION_SENTINEL.to_string()],
+                    description: "dynamically constructed string".to_string(),
+                });
+            }
+        }
+    }
+
+    // ── Apex chained-call request source: `ROOT.....method($MV)` ────────────
+    //
+    // Apex SOQL-injection rules read the inbound request parameter via a method
+    // chain, e.g. `ApexPage.getCurrentPage().getParameters().get($URLPARAM)`.
+    // None of the generic call shapes recognise a callee whose receiver itself
+    // contains call parens, so this would otherwise skip. We compile it to a
+    // `Call { canonical: "ROOT.method" }` keyed by the leading root identifier
+    // and the final method name; the Apex engine matches a `method_invocation`
+    // whose final method equals `method` and whose receiver chain contains
+    // `ROOT` (so `ApexPage.getCurrentPage()....get(...)` matches `ApexPage.get`).
+    // Source role only.
+    if lang == Language::Apex {
+        if let MatcherRole::Source = role {
+            if let Some(canonical) = parse_apex_chained_call_source(pat) {
+                return Some(GenericMatcher::Call {
+                    description: format!("untrusted `{canonical}` request input"),
+                    canonical,
+                });
+            }
+        }
     }
 
     // ── Bash command / command-substitution shapes ───────────────────────
@@ -7077,6 +7426,285 @@ object Ctrl {
             findings.len(),
             1,
             "scalajs eval of param must fire via bridge, got {:?}",
+            findings
+        );
+    }
+
+    // ── Bridge-level tests: Apex (SOQL injection) ────────────────────────────
+
+    /// Real rule `soql-injection-unescaped-param`: any-parameter source →
+    /// `Database.query(<... $P ...>)` sink, sanitized by
+    /// `String.escapeSingleQuotes`.
+    #[test]
+    fn apex_bridge_soql_injection_unescaped_param_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: soql-injection-unescaped-param
+mode: taint
+severity: ERROR
+languages:
+  - apex
+message: "SOQL injection from an unescaped parameter."
+pattern-sources:
+  - by-side-effect: true
+    patterns:
+      - pattern: $M(...,String $P,...) { ... }
+      - focus-metavariable: $P
+pattern-sanitizers:
+  - pattern-either:
+    - pattern: String.escapeSingleQuotes($P)
+    - pattern: Database.query(<... String.escapeSingleQuotes($P) ...>)
+pattern-sinks:
+  - pattern: Database.query(<... $P ...>)
+"#,
+        );
+        assert_eq!(rule.lang, Language::Apex);
+
+        let src = r#"
+public class C {
+    public List<Account> find(String p) {
+        return Database.query(p);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Apex).expect("apex fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "tainted Database.query must fire via bridge, got {:?}",
+            findings
+        );
+    }
+
+    /// Safe near-miss: the parameter is escaped via `String.escapeSingleQuotes`
+    /// before reaching `Database.query`.
+    #[test]
+    fn apex_bridge_soql_injection_sanitized_safe() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: soql-injection-unescaped-param
+mode: taint
+severity: ERROR
+languages:
+  - apex
+message: "SOQL injection from an unescaped parameter."
+pattern-sources:
+  - by-side-effect: true
+    patterns:
+      - pattern: $M(...,String $P,...) { ... }
+      - focus-metavariable: $P
+pattern-sanitizers:
+  - pattern-either:
+    - pattern: String.escapeSingleQuotes($P)
+    - pattern: Database.query(<... String.escapeSingleQuotes($P) ...>)
+pattern-sinks:
+  - pattern: Database.query(<... $P ...>)
+"#,
+        );
+
+        let src = r#"
+public class C {
+    public List<Account> find(String p) {
+        String safe = String.escapeSingleQuotes(p);
+        return Database.query(safe);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Apex).expect("apex fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "escaped parameter must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Real rule `soql-injection-unescaped-url-param`: chained request-param
+    /// read source → `Database.query($SINK,...)` focus-argument sink.
+    #[test]
+    fn apex_bridge_soql_injection_url_param_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: soql-injection-unescaped-url-param
+mode: taint
+severity: ERROR
+languages:
+  - apex
+message: "SOQL injection from an unescaped URL parameter."
+pattern-sources:
+  - by-side-effect: true
+    pattern: ApexPage.getCurrentPage().getParameters.get($URLPARAM);
+pattern-sanitizers:
+  - pattern: String.escapeSingleQuotes(...)
+pattern-sinks:
+  - patterns:
+    - pattern: Database.query($SINK,...);
+    - focus-metavariable: $SINK
+"#,
+        );
+        assert_eq!(rule.lang, Language::Apex);
+
+        let src = r#"
+public class C {
+    public List<Account> find() {
+        String url = ApexPage.getCurrentPage().getParameters().get('q');
+        return Database.query(url);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Apex).expect("apex fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "tainted URL-param Database.query must fire via bridge, got {:?}",
+            findings
+        );
+    }
+
+    /// Safe near-miss: a literal query, no request-parameter flow.
+    #[test]
+    fn apex_bridge_soql_injection_url_param_literal_safe() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: soql-injection-unescaped-url-param
+mode: taint
+severity: ERROR
+languages:
+  - apex
+message: "SOQL injection from an unescaped URL parameter."
+pattern-sources:
+  - by-side-effect: true
+    pattern: ApexPage.getCurrentPage().getParameters.get($URLPARAM);
+pattern-sanitizers:
+  - pattern: String.escapeSingleQuotes(...)
+pattern-sinks:
+  - patterns:
+    - pattern: Database.query($SINK,...);
+    - focus-metavariable: $SINK
+"#,
+        );
+
+        let src = r#"
+public class C {
+    public List<Account> find() {
+        return Database.query('SELECT Id FROM Account');
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Apex).expect("apex fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "literal query must not fire, got {:?}",
+            findings
+        );
+    }
+
+    // ── Bridge-level tests: Swift (sqlite injection) ─────────────────────────
+
+    /// Real rule `swift-potential-sqlite-injection`: an interpolated/concatenated
+    /// SQL string source → `sqlite3_exec`/`sqlite3_prepare_v2` focus-argument
+    /// sink.
+    #[test]
+    fn swift_bridge_sqlite_injection_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: swift-potential-sqlite-injection
+mode: taint
+severity: WARNING
+languages:
+  - swift
+message: "Potential client-side SQL injection."
+pattern-sources:
+  - pattern-either:
+    - pattern: |
+        "...\($X)..."
+    - pattern: |
+        $SQL = "..." + $X
+    - pattern: |
+        $SQL = $X + "..."
+pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern: sqlite3_exec($DB, $SQL, ...)
+      - pattern: sqlite3_prepare_v2($DB, $SQL, ...)
+    - focus-metavariable:
+      - $SQL
+"#,
+        );
+        assert_eq!(rule.lang, Language::Swift);
+
+        let src = r#"
+func handler(input: String) {
+    let q = "SELECT * FROM t WHERE n = \(input)"
+    sqlite3_exec(db, q, nil, nil, nil)
+}
+"#;
+        let tree = parse_file(src, Language::Swift).expect("swift fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "interpolated SQL into sqlite3_exec must fire via bridge, got {:?}",
+            findings
+        );
+    }
+
+    /// Safe near-miss: a fully-literal SQL string reaches `sqlite3_exec` — no
+    /// dynamic interpolation/concatenation, so no finding.
+    #[test]
+    fn swift_bridge_sqlite_injection_literal_safe() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: swift-potential-sqlite-injection
+mode: taint
+severity: WARNING
+languages:
+  - swift
+message: "Potential client-side SQL injection."
+pattern-sources:
+  - pattern-either:
+    - pattern: |
+        "...\($X)..."
+    - pattern: |
+        $SQL = "..." + $X
+    - pattern: |
+        $SQL = $X + "..."
+pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern: sqlite3_exec($DB, $SQL, ...)
+      - pattern: sqlite3_prepare_v2($DB, $SQL, ...)
+    - focus-metavariable:
+      - $SQL
+"#,
+        );
+
+        let src = r#"
+func handler() {
+    let q = "SELECT * FROM t"
+    sqlite3_exec(db, q, nil, nil, nil)
+}
+"#;
+        let tree = parse_file(src, Language::Swift).expect("swift fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "literal SQL must not fire, got {:?}",
             findings
         );
     }
