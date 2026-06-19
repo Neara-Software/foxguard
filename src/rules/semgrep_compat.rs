@@ -192,9 +192,18 @@ pub struct PatternEntry {
     pub pattern: Option<String>,
     #[serde(default, rename = "pattern-regex")]
     pub pattern_regex: Option<String>,
+    /// A nested `patterns:` AND-block arm, kept as a raw YAML value. Used by
+    /// generic-mode package-manager rules whose `pattern-either` arms are full
+    /// AND-blocks (each with a named-capture `pattern-regex` plus
+    /// `metavariable-*` constraints). The AST bridge ignores this field; only
+    /// the generic-mode loader consumes it (decoding leniently, so AST-only
+    /// nested shapes — e.g. a `pattern-not:` whose value is itself a block —
+    /// never break deserialization of an unrelated rule).
+    #[serde(default)]
+    pub patterns: Option<serde_yaml_ng::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct PatternClause {
     #[serde(default)]
     pub pattern: Option<String>,
@@ -2067,79 +2076,129 @@ fn build_generic_mode_rules(
         build_generic_rules, GenericEitherEntry, GenericPatternsClause, GenericRuleSpec,
     };
 
-    // Top-level pattern-either: both `pattern:` and `pattern-regex:` arms are
-    // forwarded so rules like `mcp-tool-poisoning` (all-regex arms) also load.
+    // Map one `patterns:` clause into a generic clause, preserving the
+    // metavariable constraints + focus that operate over named regex captures.
+    // Returns `None` for clauses with no expressible content (pattern-inside /
+    // pattern-not-inside / empty) so they are warn-skipped without aborting.
+    //
+    // `strict` is set for clauses inside a `pattern-either` arm that is a nested
+    // `patterns:` AND-block (the new package-manager rule shape). In strict mode,
+    // a clause carrying an unenforceable constraint (metavariable-pattern /
+    // metavariable-analysis) flags the block as unbuildable so the arm is
+    // warn-skipped rather than loaded broadened. For top-level `patterns:`
+    // blocks (`strict == false`) we preserve the established
+    // load-with-dropped-constraint behaviour to avoid regressing rules that
+    // already loaded that way.
+    fn map_clause(
+        clause: &PatternClause,
+        rule_id: &str,
+        strict: bool,
+    ) -> Option<GenericPatternsClause> {
+        if clause.pattern_inside.is_some() {
+            eprintln!(
+                "Warning: generic mode does not support pattern-inside in rule '{rule_id}'; \
+                 skipping clause"
+            );
+            return None;
+        }
+        if clause.pattern_not_inside.is_some() {
+            eprintln!(
+                "Warning: generic mode does not support pattern-not-inside in rule '{rule_id}'; \
+                 skipping clause"
+            );
+            return None;
+        }
+        let pattern_either_entries: Vec<GenericEitherEntry> = clause
+            .pattern_either
+            .iter()
+            .flatten()
+            .map(map_either_arm)
+            .collect();
+
+        let metavariable_regex = clause
+            .metavariable_regex
+            .as_ref()
+            .map(|mr| (mr.metavariable.clone(), mr.regex.clone()));
+        let metavariable_comparison = clause
+            .metavariable_comparison
+            .as_ref()
+            .map(|mc| (mc.metavariable.clone(), mc.comparison.clone()));
+        let focus_metavariable = clause
+            .focus_metavariable
+            .clone()
+            .and_then(|f| f.into_vec().into_iter().next());
+
+        // metavariable-pattern / metavariable-analysis cannot be enforced in
+        // generic mode. In strict mode (a `pattern-either` arm), flag the clause
+        // so its `patterns:` block refuses to load — dropping the constraint
+        // would broaden the rule into false positives. In lenient mode
+        // (top-level `patterns:`), keep the legacy load-broadened behaviour.
+        let unsupported_constraint = strict
+            && (clause.metavariable_pattern.is_some() || clause.metavariable_analysis.is_some());
+
+        let has_positive = clause.pattern.is_some()
+            || clause.pattern_regex.is_some()
+            || !pattern_either_entries.is_empty();
+        let has_negative = clause.pattern_not.is_some() || clause.pattern_not_regex.is_some();
+        let has_constraint = metavariable_regex.is_some()
+            || metavariable_comparison.is_some()
+            || focus_metavariable.is_some()
+            || unsupported_constraint;
+
+        if !has_positive && !has_negative && !has_constraint {
+            return None;
+        }
+
+        Some(GenericPatternsClause {
+            pattern: clause.pattern.clone(),
+            pattern_regex: clause.pattern_regex.clone(),
+            pattern_either: pattern_either_entries,
+            pattern_not: clause.pattern_not.clone(),
+            pattern_not_regex: clause.pattern_not_regex.clone(),
+            metavariable_regex,
+            metavariable_comparison,
+            focus_metavariable,
+            unsupported_constraint,
+        })
+    }
+
+    // Map one `pattern-either` arm. An arm is either a simple pattern/regex or a
+    // nested `patterns:` AND-block (the package-manager rule shape).
+    fn map_either_arm(entry: &PatternEntry) -> GenericEitherEntry {
+        // Decode the raw `patterns:` value into typed clauses leniently. If it
+        // does not fit our `PatternClause` shape (e.g. an AST-only nested form),
+        // we simply skip it — the arm degrades to its `pattern`/`pattern-regex`
+        // (usually empty), which the generic builder warn-skips.
+        let patterns = entry
+            .patterns
+            .as_ref()
+            .and_then(|v| serde_yaml_ng::from_value::<Vec<PatternClause>>(v.clone()).ok())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|c| map_clause(c, "<pattern-either arm>", true))
+            .collect();
+        GenericEitherEntry {
+            pattern: entry.pattern.clone(),
+            pattern_regex: entry.pattern_regex.clone(),
+            patterns,
+        }
+    }
+
+    // Top-level pattern-either: simple `pattern:` / `pattern-regex:` arms and
+    // nested `patterns:` AND-block arms are all forwarded.
     let pattern_either: Vec<GenericEitherEntry> = yaml
         .pattern_either
         .iter()
         .flatten()
-        .map(|entry| GenericEitherEntry {
-            pattern: entry.pattern.clone(),
-            pattern_regex: entry.pattern_regex.clone(),
-        })
+        .map(map_either_arm)
         .collect();
 
-    // Map `patterns:` clauses.
+    // Map top-level `patterns:` clauses.
     let patterns_clauses: Vec<GenericPatternsClause> = yaml
         .patterns
         .iter()
         .flatten()
-        .filter_map(|clause| {
-            // Warn-skip entirely constraint-only or unsupported clauses that
-            // have neither a positive match nor a negative filter we can use.
-            // Supported: pattern, pattern-regex, pattern-either, pattern-not,
-            // pattern-not-regex. Unsupported: pattern-inside, pattern-not-inside,
-            // metavariable-*.
-            if clause.pattern_inside.is_some() {
-                eprintln!(
-                    "Warning: generic mode does not support pattern-inside in rule '{}'; \
-                     skipping clause",
-                    yaml.id
-                );
-                return None;
-            }
-            if clause.pattern_not_inside.is_some() {
-                eprintln!(
-                    "Warning: generic mode does not support pattern-not-inside in rule '{}'; \
-                     skipping clause",
-                    yaml.id
-                );
-                return None;
-            }
-
-            // Build the either-entries for a nested pattern-either: clause.
-            let pattern_either_entries: Vec<GenericEitherEntry> = clause
-                .pattern_either
-                .iter()
-                .flatten()
-                .map(|e| GenericEitherEntry {
-                    pattern: e.pattern.clone(),
-                    pattern_regex: e.pattern_regex.clone(),
-                })
-                .collect();
-
-            // Silently skip pure constraint clauses (metavariable-regex, etc.)
-            // that carry no match expression — they have no effect in generic
-            // mode but also do not block loading.
-            let has_positive = clause.pattern.is_some()
-                || clause.pattern_regex.is_some()
-                || !pattern_either_entries.is_empty();
-            let has_negative = clause.pattern_not.is_some() || clause.pattern_not_regex.is_some();
-
-            if !has_positive && !has_negative {
-                // Pure constraint clause (metavariable-regex / metavariable-comparison /
-                // metavariable-analysis / focus-metavariable / etc.) — silently skip.
-                return None;
-            }
-
-            Some(GenericPatternsClause {
-                pattern: clause.pattern.clone(),
-                pattern_regex: clause.pattern_regex.clone(),
-                pattern_either: pattern_either_entries,
-                pattern_not: clause.pattern_not.clone(),
-                pattern_not_regex: clause.pattern_not_regex.clone(),
-            })
-        })
+        .filter_map(|clause| map_clause(clause, &yaml.id, false))
         .collect();
 
     build_generic_rules(GenericRuleSpec {
