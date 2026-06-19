@@ -191,6 +191,8 @@ fn taint_language_supported(lang: &str) -> bool {
             | "solidity"
             | "sol"
             | "scala"
+            | "apex"
+            | "swift"
     )
 }
 
