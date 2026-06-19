@@ -164,18 +164,21 @@ rules:
 Supported in generic mode:
 
 - `pattern` — tokenized literal matching
-- `pattern-either` — OR over multiple generic patterns
+- `pattern-either` — OR over multiple generic patterns; an arm may itself be a `patterns:` AND-block
 - `pattern-not` — drops candidates whose span overlaps a negative match
 - `pattern-regex` — passthrough regex match against the raw text
+- `pattern-not-regex` — file-level negative (drops all candidates if it matches anywhere)
 - `...` ellipsis — matches any run of tokens, including across whitespace and newlines
 - `$METAVAR` — binds a single token span, with equality enforcement (the same metavariable must bind the same text)
+- **Metavariable constraints over named regex captures** — when a `pattern-regex` declares named capture groups (`(?P<NAME>…)` / `(?<NAME>…)`) inside a `patterns:` block, a sibling `metavariable-regex` or `metavariable-comparison` that references `$NAME` is **enforced** against the captured group's text at match time (regex: the captured text must match; comparison: the captured text is parsed as a number and the `$VAR <op> number` / `int($VAR) < n` comparison is evaluated). A candidate is reported only if every such constraint passes — the constraint is enforced, not dropped. `focus-metavariable: $NAME` narrows the reported span to that capture's range. This is what lets the package-manager "minimum release age / dependency cooldown" rules (`bun-`, `npm-`, `uv-`) load and fire correctly (e.g. flag `minimumReleaseAge = 100` but not `= 604800`).
 - `paths.include` / `paths.exclude` — same path scoping as the AST bridge
 - `metadata.cwe` and `severity` mapping (`ERROR` → Critical, `WARNING` → High, `INFO` → Medium)
 
 Limits (parity-honest):
 
 - Tokenization is word/punctuation based (a "word" is a run of ASCII alphanumerics and underscores; every other non-whitespace character is its own token). It is close to, but not byte-identical with, spacegrep's tokenizer.
-- `metavariable-comparison` and `metavariable-pattern` are not applied in generic mode.
+- `metavariable-comparison` / `metavariable-regex` are applied **only** over named regex captures (the case above). A `metavariable-*` constraint over a spacegrep `$METAVAR` token binding is dropped (the rule loads broadened) at the top level.
+- `metavariable-pattern` and `metavariable-analysis` (e.g. `entropy`) cannot be enforced in generic mode. A `pattern-either` arm that is a `patterns:` block carrying one of these **refuses to load** rather than silently dropping the constraint and broadening into false positives; if that arm is the rule's only expressible matcher, the rule is skipped (this is why `use-absolute-workdir` and `detected-private-key`'s entropy narrowing remain unsupported). A top-level `patterns:` block keeps the legacy load-broadened behaviour for backward compatibility.
 - `pattern-inside` / `pattern-not-inside` are not applied in generic mode (generic mode treats the file as a flat token stream, not a brace-nested structure).
 - A generic rule only runs on files foxguard already recognizes (the languages above plus the config formats). Files with no detected language are not scanned, so a generic rule will not fire on an arbitrary extension the way upstream `semgrep` would. Scope generic rules with `paths:` and target recognized files.
 - Match line numbers are parity-checked against upstream `semgrep` in CI (`tests/semgrep_parity_generic.rs`, gated on `semgrep` being installed); exact end-column spans may differ because ellipsis greediness is approximated.
