@@ -84,6 +84,7 @@ const ALL_LANGUAGES: &[Language] = &[
     Language::Html,
     Language::Xml,
     Language::Dart,
+    Language::Haskell,
 ];
 
 // ─── Tokenizer ──────────────────────────────────────────────────────────────

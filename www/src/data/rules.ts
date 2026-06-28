@@ -235,6 +235,15 @@ const kotlinRules: Rule[] = [
   { id: 'kt/taint-ssrf', cwe: 'CWE-918', desc: 'Untrusted input from Ktor/Spring handler reaches HTTP/URL sink', severity: 'high' },
 ];
 
+const haskellRules: Rule[] = [
+  { id: 'semgrep/cardano-haskell/cbor-decoder-edge', cwe: 'CWE-248', desc: 'CBOR/serialisation decoder edge; verify malformed or truncated bytes return a clean decoder error, not a panic or wrong state.', severity: 'high' },
+  { id: 'semgrep/cardano-haskell/ffi-foreign-import', cwe: 'CWE-125', desc: 'Haskell FFI boundary; verify every ByteString/Ptr length assumption against the actual buffer length.', severity: 'critical' },
+  { id: 'semgrep/cardano-haskell/ffi-pointer-offset', cwe: 'CWE-787', desc: 'Raw pointer offset/cast operation; verify the offset/count is bounded by the underlying allocation.', severity: 'critical' },
+  { id: 'semgrep/cardano-haskell/lazy-eval-dos', cwe: 'CWE-400', desc: 'Potential lazy accumulation over input-sized data; check for thunk buildup or memory blowup under attacker-controlled sizes.', severity: 'high' },
+  { id: 'semgrep/cardano-haskell/partial-function', cwe: 'CWE-248', desc: 'Partial function; verify malformed or attacker-controlled input cannot trigger an uncaught exception.', severity: 'high' },
+  { id: 'semgrep/cardano-haskell/unsafe-escape', cwe: 'CWE-704', desc: 'Unsafe Haskell escape hatch; trace whether attacker-controlled input reaches this operation.', severity: 'critical' },
+];
+
 const nginxconfRules: Rule[] = [
   { id: 'config/nginx-pq-vulnerable-tls', cwe: 'CWE-327', desc: 'Nginx TLS configuration uses quantum-vulnerable protocols or ciphers', severity: 'medium' },
 ];
@@ -272,6 +281,7 @@ export const ruleGroups: RuleGroup[] = [
   { name: 'C#', slug: 'cs', rules: csharpRules },
   { name: 'Swift', slug: 'swift', rules: swiftRules },
   { name: 'Kotlin', slug: 'kt', rules: kotlinRules },
+  { name: 'Haskell', slug: 'hs', rules: haskellRules },
   { name: 'Nginx', slug: 'nginxconf', rules: nginxconfRules },
   { name: 'Apache', slug: 'apacheconf', rules: apacheconfRules },
   { name: 'HAProxy', slug: 'haproxyconf', rules: haproxyconfRules },
@@ -280,4 +290,4 @@ export const ruleGroups: RuleGroup[] = [
 ];
 
 export const totalRules = ruleGroups.reduce((sum, g) => sum + g.rules.length, 0);
-export const productLanguageCount = 15;
+export const productLanguageCount = 16;

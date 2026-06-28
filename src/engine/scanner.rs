@@ -363,6 +363,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "html" | "htm" => Some(Language::Html),
         "xml" => Some(Language::Xml),
         "dart" => Some(Language::Dart),
+        "hs" | "lhs" | "hsc" => Some(Language::Haskell),
         _ => None,
     }
 }
@@ -746,6 +747,7 @@ fn comment_markers(language: Language) -> &'static [&'static str] {
         Language::Apex | Language::Dart => &["//", "/*"],
         Language::Clojure => &[";"],
         Language::Html | Language::Xml => &["<!--"],
+        Language::Haskell => &["--"],
         // Regex-mode rules run against raw text with no guaranteed comment syntax.
         // Use `#` as a safe fallback (it works for most config/script files).
         Language::Regex => &["#"],
@@ -1714,6 +1716,22 @@ mod tests {
             detect_language(Path::new("backend.dockerfile")),
             Some(Language::Dockerfile),
             "'backend.dockerfile' should be detected via extension"
+        );
+    }
+
+    #[test]
+    fn haskell_extension_detection() {
+        assert_eq!(
+            detect_language(Path::new("Main.hs")),
+            Some(Language::Haskell)
+        );
+        assert_eq!(
+            detect_language(Path::new("Module.lhs")),
+            Some(Language::Haskell)
+        );
+        assert_eq!(
+            detect_language(Path::new("Bindings.hsc")),
+            Some(Language::Haskell)
         );
     }
 

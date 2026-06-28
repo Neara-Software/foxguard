@@ -1,0 +1,54 @@
+rules:
+  - id: cardano-haskell/ffi-foreign-import
+    pattern-regex: '\bforeign\s+import\b'
+    message: Haskell FFI boundary; verify every ByteString/Ptr length assumption against the actual buffer length.
+    severity: ERROR
+    languages: [haskell]
+    metadata:
+      cwe: "CWE-125"
+      category: cardano-haskell-seed
+
+  - id: cardano-haskell/ffi-pointer-offset
+    pattern-regex: '\b(peekByteOff|pokeByteOff|plusPtr|castPtr)\b'
+    message: Raw pointer offset/cast operation; verify the offset/count is bounded by the underlying allocation.
+    severity: ERROR
+    languages: [haskell]
+    metadata:
+      cwe: "CWE-787"
+      category: cardano-haskell-seed
+
+  - id: cardano-haskell/unsafe-escape
+    pattern-regex: '\b(unsafePerformIO|unsafeDupablePerformIO|unsafeCoerce|unsafeFromBuiltinData)\b'
+    message: Unsafe Haskell escape hatch; trace whether attacker-controlled input reaches this operation.
+    severity: ERROR
+    languages: [haskell]
+    metadata:
+      cwe: "CWE-704"
+      category: cardano-haskell-seed
+
+  - id: cardano-haskell/partial-function
+    pattern-regex: '\b(fromJust|head|tail|last|init|read|error|undefined)\b|!!|\b(Map|IntMap|HashMap)\s*\.\s*!'
+    message: Partial function; verify malformed or attacker-controlled input cannot trigger an uncaught exception.
+    severity: WARNING
+    languages: [haskell]
+    metadata:
+      cwe: "CWE-248"
+      category: cardano-haskell-seed
+
+  - id: cardano-haskell/cbor-decoder-edge
+    pattern-regex: '\b(decodeFull|deserialise|deserialiseFromBytes|fromCBOR|decCBOR|decodeCBOR|decodeListLen|decodeMapLen|decodeListLenOf|toEnum)\b'
+    message: CBOR/serialisation decoder edge; verify malformed or truncated bytes return a clean decoder error, not a panic or wrong state.
+    severity: WARNING
+    languages: [haskell]
+    metadata:
+      cwe: "CWE-248"
+      category: cardano-haskell-seed
+
+  - id: cardano-haskell/lazy-eval-dos
+    pattern-regex: '\b(foldl|insertWith|scanl)\b'
+    message: Potential lazy accumulation over input-sized data; check for thunk buildup or memory blowup under attacker-controlled sizes.
+    severity: WARNING
+    languages: [haskell]
+    metadata:
+      cwe: "CWE-400"
+      category: cardano-haskell-seed

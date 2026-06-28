@@ -47,6 +47,7 @@ fn parse_source_for_path(
         Language::Html => tree_sitter_html::LANGUAGE.into(),
         Language::Xml => tree_sitter_xml::LANGUAGE_XML.into(),
         Language::Dart => tree_sitter_dart::LANGUAGE.into(),
+        Language::Haskell => tree_sitter_haskell::LANGUAGE.into(),
         // Regex-mode rules never use a tree-sitter parser — they match raw text
         // only. Return `None` immediately so the scanner skips the tree build.
         Language::Regex => return None,
@@ -194,6 +195,15 @@ contract Token {
         let source = "void main() {\n  print('hello');\n}\n";
         let tree = parse_path(source, Language::Dart, Path::new("main.dart"))
             .expect("Dart parser should produce a tree");
+
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn parses_haskell_without_errors() {
+        let source = "module Main where\n\nmain :: IO ()\nmain = putStrLn \"hello\"\n";
+        let tree = parse_path(source, Language::Haskell, Path::new("Main.hs"))
+            .expect("Haskell parser should produce a tree");
 
         assert!(!tree.root_node().has_error());
     }

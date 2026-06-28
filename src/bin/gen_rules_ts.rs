@@ -25,6 +25,7 @@ const LANGUAGE_ORDER: &[Language] = &[
     Language::CSharp,
     Language::Swift,
     Language::Kotlin,
+    Language::Haskell,
     Language::NginxConf,
     Language::ApacheConf,
     Language::HAProxyConf,
@@ -63,6 +64,7 @@ fn language_slug(language: Language) -> &'static str {
         Language::Html => "html",
         Language::Xml => "xml",
         Language::Dart => "dart",
+        Language::Haskell => "hs",
         // Regex-mode rules fan out per language; this binary generates rules
         // for concrete languages only.
         Language::Regex => "regex",
@@ -100,6 +102,7 @@ fn language_display_name(language: Language) -> &'static str {
         Language::Html => "HTML",
         Language::Xml => "XML",
         Language::Dart => "Dart",
+        Language::Haskell => "Haskell",
         Language::Regex => "Regex",
     }
 }
@@ -135,6 +138,7 @@ fn language_array_name(language: Language) -> &'static str {
         Language::Html => "htmlRules",
         Language::Xml => "xmlRules",
         Language::Dart => "dartRules",
+        Language::Haskell => "haskellRules",
         Language::Regex => "regexRules",
     }
 }

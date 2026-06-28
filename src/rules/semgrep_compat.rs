@@ -1770,6 +1770,7 @@ fn map_language(lang_str: &str) -> Option<Language> {
         "html" | "htm" => Some(Language::Html),
         "xml" => Some(Language::Xml),
         "dart" => Some(Language::Dart),
+        "haskell" | "hs" => Some(Language::Haskell),
         _ => None,
     }
 }
@@ -1829,6 +1830,7 @@ const REGEX_MODE_ALL_LANGUAGES: &[Language] = &[
     Language::Html,
     Language::Xml,
     Language::Dart,
+    Language::Haskell,
 ];
 
 /// A compiled Semgrep `languages: [regex]` rule.
@@ -4452,6 +4454,38 @@ rules:
         assert!(
             !findings.is_empty(),
             "pattern-regex print\\( must match in Dart"
+        );
+    }
+
+    /// A `languages: [haskell]` `pattern-regex` rule loads and matches inside Haskell source.
+    #[test]
+    fn test_haskell_pattern_loads_and_matches() {
+        use crate::engine::parser::parse_path;
+        use std::path::Path;
+
+        let yaml = r#"
+rules:
+  - id: haskell-foreign-import
+    pattern-regex: '\bforeign\s+import\b'
+    message: Review Haskell FFI boundary
+    severity: WARNING
+    languages: [haskell]
+"#;
+        let rules =
+            parse_semgrep_str(yaml, "haskell.yml").expect("haskell language rule must load");
+        assert_eq!(rules.len(), 1, "expected one rule for haskell language");
+
+        let source = "module Bindings where\nforeign import ccall \"foo\" c_foo :: IO ()\n";
+        let tree = parse_path(source, Language::Haskell, Path::new("Bindings.hs"))
+            .expect("Haskell must parse");
+        assert!(
+            !tree.root_node().has_error(),
+            "Haskell parse must be error-free"
+        );
+        let findings = rules[0].check(source, &tree);
+        assert!(
+            !findings.is_empty(),
+            "pattern-regex foreign import must match in Haskell"
         );
     }
 

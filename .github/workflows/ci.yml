@@ -117,6 +117,8 @@ jobs:
         run: cargo test --test semgrep_parity_c
       - name: Run Semgrep parity suite (Kotlin)
         run: cargo test --test semgrep_parity_kotlin
+      - name: Run Semgrep parity suite (Haskell)
+        run: cargo test --test semgrep_parity_haskell
       - name: Run Semgrep parity suite (inverse / unsupported-skip)
         run: cargo test --test semgrep_parity_inverse
 

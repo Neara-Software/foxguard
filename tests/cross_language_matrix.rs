@@ -219,6 +219,22 @@ const MATRIX: &[MatrixRow] = &[
         pqc: Cell::NotApplicable("C PQ coverage is currently external-rule/kernel focused"),
         taint_explain: Cell::NotApplicable("C has no taint engine"),
     },
+    MatrixRow {
+        language: "Haskell",
+        extension: "hs",
+        vulnerable_fixture: Some("vulnerable.hs"),
+        safe_fixture: Some("safe.hs"),
+        scan_vulnerable: Cell::Covered,
+        scan_safe: Cell::Covered,
+        diff: Cell::Covered,
+        secrets: Cell::Covered,
+        terminal: Cell::Covered,
+        json: Cell::Covered,
+        sarif: Cell::Covered,
+        cbom: Cell::Covered,
+        pqc: Cell::NotApplicable("Haskell has no PQ rule registered"),
+        taint_explain: Cell::NotApplicable("Haskell has no taint engine"),
+    },
 ];
 
 fn foxguard_cmd() -> Command {
@@ -342,6 +358,7 @@ fn write_secret_fixture(dir: &Path, row: MatrixRow) -> PathBuf {
         "swift" => format!("let token = \"{secret}\"\n"),
         "kt" => format!("val token = \"{secret}\"\n"),
         "c" => format!("const char *token = \"{secret}\";\n"),
+        "hs" => format!("module Secret where\n\ntoken :: String\ntoken = \"{secret}\"\n"),
         _ => format!("const token = \"{secret}\";\n"),
     };
     let path = dir.join(format!("secret.{}", row.extension));
@@ -379,7 +396,7 @@ fn coverage_report() -> String {
 
 #[test]
 fn matrix_inventory_has_all_source_languages_and_documented_gaps() {
-    assert_eq!(MATRIX.len(), 11, "matrix rows:\n{}", coverage_report());
+    assert_eq!(MATRIX.len(), 12, "matrix rows:\n{}", coverage_report());
 
     for row in MATRIX {
         for (cell_name, cell) in [

@@ -347,9 +347,9 @@ fn execute_scan_resolved(scan: ScanArgs) -> Result<ScanExecution, String> {
     if files_scanned == 0 && coccinelle_candidate_files == 0 && codeql_candidate_rules == 0 {
         if stats.files_discovered == 0 {
             let supported = if coccinelle_rules.is_empty() {
-                ".js, .ts, .py, .go, .rb, .java, .php, .rs, .cs, .swift, .kt"
+                ".js, .ts, .py, .go, .rb, .java, .php, .rs, .cs, .swift, .kt, .hs"
             } else {
-                ".js, .ts, .py, .go, .rb, .java, .php, .rs, .cs, .swift, .kt, .c, .h"
+                ".js, .ts, .py, .go, .rb, .java, .php, .rs, .cs, .swift, .kt, .hs, .c, .h"
             };
             notices.push(format!("Warning: no files found. Supported: {supported}"));
         } else {

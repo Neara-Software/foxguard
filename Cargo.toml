@@ -2,7 +2,7 @@
 name = "foxguard"
 version = "0.9.0"
 edition = "2021"
-description = "A security scanner as fast as a linter, written in Rust. 170+ built-in rules across 11 languages."
+description = "A security scanner as fast as a linter, written in Rust. 170+ built-in rules across 12 languages."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/0sec-labs/foxguard"
 homepage = "https://foxguard.dev"
@@ -75,6 +75,7 @@ tree-sitter-xml = "0.7"
 tree-sitter-dart = "0.2"
 tree-sitter-clojure-orchard = "0.2.5"
 tree-sitter-sfapex = "3.0.0"
+tree-sitter-haskell = "0.23.1"
 
 [features]
 default = []
