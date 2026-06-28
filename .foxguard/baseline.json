@@ -2,7 +2,7 @@
   "version": 1,
   "entries": [
     {
-      "fingerprint": "10044f91c094ed524d992f72c8327b82ebb9460d9a1c5e1878afaf8d96904e5f",
+      "fingerprint": "ac1546bcaa6ab1b07eeaee346c76f02ed1e548c2777411f3e93ac4eeea498c92",
       "rule_id": "manifest/cargo-pq-vulnerable-dep",
       "file": "Cargo.lock",
       "line": 874
