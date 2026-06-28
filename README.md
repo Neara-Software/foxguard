@@ -84,7 +84,7 @@ foxguard --format sarif . > results.sarif
 | Python | Yes | Yes | Django, Flask, FastAPI |
 | Go | Yes | Yes | Gin |
 | Kotlin | Yes | Yes | Spring |
-| Java | Yes | -- | Spring |
+| Java | Yes | Yes | Spring |
 | Ruby | Yes | -- | Rails |
 | PHP | Yes | -- | Laravel |
 | Rust | Yes | -- | -- |

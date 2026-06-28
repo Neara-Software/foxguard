@@ -12,7 +12,7 @@ The taint engine answers the second, on a narrower footprint. It lets us ship ru
 
 The taint engine supports:
 
-- **Six languages**: Python, JavaScript/TypeScript, Go, Kotlin, C, and Java, each with its own grammar-aware engine (`src/rules/*_taint.rs`) sharing the same user-facing trace surface (`TaintSpec`, `NodeMatcher`, `TaintFinding`, `analyze_tree`). `.ts` and `.tsx` files use dedicated tree-sitter TypeScript/TSX grammars, then run through the JavaScript-compatible rule and taint surface where semantics align.
+- **Built-in taint rules for six languages**: Python, JavaScript/TypeScript, Go, Kotlin, C, and Java. Each has source/sink specs wired into the scanner (`builtin_taint_specs_for_language`) and a grammar-aware engine (`src/rules/*_taint.rs`) sharing the same user-facing trace surface (`TaintSpec`, `NodeMatcher`, `TaintFinding`, `analyze_tree`). `.ts` and `.tsx` files use dedicated tree-sitter TypeScript/TSX grammars, then run through the JavaScript-compatible rule and taint surface where semantics align.
 - **Intraprocedural**: each function body is analyzed independently.
 - **Flow-insensitive**: statements are processed in source order. Reassigning a tainted variable to a clean value drops the taint. Branches are not modeled — taint observed in one branch of an `if` persists through the fall-through.
 - **One level of attribute propagation**: `x.y` is tainted when `x` is tainted.
@@ -36,7 +36,7 @@ Known limitations:
 - **Field sensitivity**: `d["key"]` is tainted because `d` is. Different keys are not distinguished.
 - **Object attribute propagation beyond one level**: `x.y.z` is tainted when `x` is tainted, but the engine does not persist taint on `x.y` as a distinct name.
 - **Dynamic import forms**: `importlib.import_module(...)` does not interact with the alias table, so sinks reached through it are not recognized.
-- **Other languages**: Ruby, PHP, C#, Swift, Rust etc. have no taint engine yet. Adding one per language is expected — the shape of the Python, JavaScript, Go, Kotlin, C, and Java engines is intended to serve as a template. JavaScript/TypeScript uses the same scope as Python (intraprocedural, flow-insensitive, one-level subscript propagation, template-literal and wrapping-call propagation, collapse-to-clean sanitizers) with a `JsImportAliases` table for `import`/`require` forms. Go (see "Supported Go frameworks" below) uses `GoImportAliases` for grouped / aliased import specs and the same flow-insensitive, one-level propagation semantics, plus native multi-return destructuring and binary `+` string-concatenation propagation.
+- **Other languages**: Ruby, PHP, C#, Bash, Solidity, Scala, Apex, and Swift have grammar-aware taint engines for Semgrep-compatible external taint rules, but no built-in first-party taint rules are wired into the default scanner registry yet. Rust, Haskell, and other source languages have no taint engine today. JavaScript/TypeScript uses the same scope as Python (intraprocedural, flow-insensitive, one-level subscript propagation, template-literal and wrapping-call propagation, collapse-to-clean sanitizers) with a `JsImportAliases` table for `import`/`require` forms. Go (see "Supported Go frameworks" below) uses `GoImportAliases` for grouped / aliased import specs and the same flow-insensitive, one-level propagation semantics, plus native multi-return destructuring and binary `+` string-concatenation propagation.
 
 ## API
 
