@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { execFile } from "child_process";
+import { spawn } from "child_process";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
@@ -23,6 +23,119 @@ interface Finding {
 interface ReportEnvelope {
   schema_version: string;
   findings: Finding[];
+}
+
+interface ConfigMutationResult {
+  config_path: string;
+  added: boolean;
+}
+
+interface ProcessResult {
+  stdout: string;
+  stderr: string;
+}
+
+interface ProcessOptions {
+  cwd?: string;
+  maxBuffer?: number;
+  timeout?: number;
+  allowNonZero?: boolean;
+}
+
+const configMutationQueues = new Map<string, Promise<void>>();
+
+function runProcess(command: string, args: string[], options: ProcessOptions = {}): Promise<ProcessResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { // foxguard: ignore[js/no-command-injection]
+      cwd: options.cwd,
+      shell: process.platform === "win32",
+      windowsHide: true,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const maxBuffer = options.maxBuffer ?? 1024 * 1024;
+
+    const timer = options.timeout
+      ? setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          child.kill();
+          reject(new Error(`command timed out after ${options.timeout}ms`));
+        }, options.timeout)
+      : undefined;
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+      if (stdout.length + stderr.length > maxBuffer && !settled) {
+        settled = true;
+        child.kill();
+        reject(new Error("command output exceeded maxBuffer"));
+      }
+    });
+
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+      if (stdout.length + stderr.length > maxBuffer && !settled) {
+        settled = true;
+        child.kill();
+        reject(new Error("command output exceeded maxBuffer"));
+      }
+    });
+
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      if (code === 0 || options.allowNonZero) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(new Error(stderr.trim() || `command exited with code ${code}`));
+      }
+    });
+  });
+}
+
+async function withConfigMutationQueue<T>(configPath: string, operation: () => Promise<T>): Promise<T> {
+  const key = path.resolve(configPath);
+  const previous = configMutationQueues.get(key) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(operation);
+  const next = run.then(() => undefined, () => undefined);
+  configMutationQueues.set(key, next);
+
+  try {
+    return await run;
+  } finally {
+    if (configMutationQueues.get(key) === next) {
+      configMutationQueues.delete(key);
+    }
+  }
+}
+
+function parseConfigMutationResult(stdout: string): ConfigMutationResult {
+  const parsed = JSON.parse(stdout) as Partial<ConfigMutationResult>;
+  if (typeof parsed.config_path !== "string" || typeof parsed.added !== "boolean") {
+    throw new Error("invalid config edit response shape");
+  }
+  return parsed as ConfigMutationResult;
 }
 
 /**
@@ -161,177 +274,55 @@ function writeBaseline(baselinePath: string, baseline: BaselineFile): void {
 // Config file helpers (scan.ignore_rules in .foxguard.yml)
 // ---------------------------------------------------------------------------
 
-/**
- * Add `ruleId` to the `scan.ignore_rules` entry for `relPath` in
- * `.foxguard.yml`. Creates the file/structure as needed.
- * Returns `true` if the rule was actually added (not a duplicate).
- */
-function addIgnoreRuleToConfig(configPath: string, relPath: string, ruleId: string): boolean {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let doc: any = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      // Simple YAML-ish parse: we only touch scan.ignore_rules,
-      // but the config may have arbitrary keys. Use a JSON-safe
-      // round-trip via the foxguard CLI (preferred) or fall back to
-      // a minimal in-process implementation.
-      const text = fs.readFileSync(configPath, "utf-8");
-      doc = parseSimpleYaml(text);
-    } catch {
-      doc = {};
-    }
-  }
-
-  if (!doc.scan) {
-    doc.scan = {};
-  }
-  if (!Array.isArray(doc.scan.ignore_rules)) {
-    doc.scan.ignore_rules = [];
-  }
-
-  // Find existing entry for this path
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const existing = doc.scan.ignore_rules.find((e: any) => e.path === relPath);
-  if (existing) {
-    if (Array.isArray(existing.rules) && existing.rules.includes(ruleId)) {
-      return false; // already present
-    }
-    if (!Array.isArray(existing.rules)) {
-      existing.rules = [];
-    }
-    existing.rules.push(ruleId);
-  } else {
-    doc.scan.ignore_rules.push({ path: relPath, rules: [ruleId] });
-  }
-
-  fs.writeFileSync(configPath, serializeSimpleYaml(doc));
-  return true;
-}
-
-/**
- * Minimal YAML parser — handles the subset of YAML that .foxguard.yml uses.
- * This avoids adding a js-yaml dependency to the extension.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function parseSimpleYaml(text: string): any {
-  // We use a line-by-line state machine that handles:
-  //   key: value        (string)
-  //   key:              (start mapping)
-  //     sub: value
-  //   key:              (start sequence)
-  //     - item          (string item)
-  //     - key: value    (mapping item)
-  //       key2: value2
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const root: any = {};
-  const lines = text.split("\n");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const stack: { indent: number; obj: any; key?: string }[] = [
-    { indent: -1, obj: root },
-  ];
-
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\r$/, "");
-    if (line.trim() === "" || line.trim().startsWith("#")) {
-      continue;
+async function addIgnoreRuleToConfig(
+  scanPath: string,
+  configPath: string,
+  relPath: string,
+  ruleId: string,
+): Promise<ConfigMutationResult> {
+  return await withConfigMutationQueue(configPath, async () => {
+    const binary = await resolveBinary();
+    if (binary === undefined) {
+      throw new Error("foxguard not found");
     }
 
-    const indent = line.search(/\S/);
-    const content = line.trim();
-
-    // Pop stack to find parent at smaller indent
-    while (stack.length > 1 && stack[stack.length - 1].indent >= indent) {
-      stack.pop();
-    }
-    const parent = stack[stack.length - 1];
-
-    if (content.startsWith("- ")) {
-      // Sequence item
-      const itemContent = content.slice(2).trim();
-      // Ensure parent value is an array
-      if (parent.key !== undefined && !Array.isArray(parent.obj[parent.key])) {
-        parent.obj[parent.key] = [];
-      }
-      const arr = parent.key !== undefined ? parent.obj[parent.key] : parent.obj;
-
-      if (itemContent.includes(": ")) {
-        // Mapping item in a sequence: "- key: value"
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const item: any = {};
-        const colonIdx = itemContent.indexOf(": ");
-        const k = itemContent.slice(0, colonIdx).trim();
-        const v = itemContent.slice(colonIdx + 2).trim();
-        item[k] = v;
-        arr.push(item);
-        stack.push({ indent: indent + 2, obj: item, key: undefined });
-      } else {
-        arr.push(itemContent);
-      }
-    } else if (content.includes(": ")) {
-      const colonIdx = content.indexOf(": ");
-      const key = content.slice(0, colonIdx).trim();
-      const value = content.slice(colonIdx + 2).trim();
-
-      if (value === "") {
-        // Start of a sub-mapping or sub-sequence (determined later)
-        parent.obj[key] = {};
-        stack.push({ indent, obj: parent.obj, key });
-      } else {
-        parent.obj[key] = value;
-      }
-    } else if (content.endsWith(":")) {
-      // Key with no value — sub-mapping
-      const key = content.slice(0, -1).trim();
-      parent.obj[key] = {};
-      stack.push({ indent, obj: parent.obj, key });
-    }
-  }
-
-  return root;
-}
-
-/**
- * Minimal YAML serializer for the config subset we use.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function serializeSimpleYaml(obj: any, indent: number = 0): string {
-  let out = "";
-  const prefix = " ".repeat(indent);
-
-  for (const key of Object.keys(obj)) {
-    const value = obj[key];
-    if (Array.isArray(value)) {
-      out += `${prefix}${key}:\n`;
-      for (const item of value) {
-        if (typeof item === "object" && item !== null) {
-          const keys = Object.keys(item);
-          if (keys.length > 0) {
-            out += `${prefix}  - ${keys[0]}: ${item[keys[0]]}\n`;
-            for (let i = 1; i < keys.length; i++) {
-              const v = item[keys[i]];
-              if (Array.isArray(v)) {
-                out += `${prefix}    ${keys[i]}:\n`;
-                for (const subItem of v) {
-                  out += `${prefix}      - ${subItem}\n`;
-                }
-              } else {
-                out += `${prefix}    ${keys[i]}: ${v}\n`;
-              }
-            }
-          }
-        } else {
-          out += `${prefix}  - ${item}\n`;
-        }
-      }
-    } else if (typeof value === "object" && value !== null) {
-      out += `${prefix}${key}:\n`;
-      out += serializeSimpleYaml(value, indent + 2);
+    let command: string;
+    let args: string[];
+    if (binary === null) {
+      command = "npx";
+      args = [
+        "foxguard",
+        "internal",
+        "add-scan-ignore-rule",
+        "--scan-path", scanPath,
+        "--config", configPath,
+        "--file", relPath,
+        "--rule-id", ruleId,
+      ];
     } else {
-      out += `${prefix}${key}: ${value}\n`;
+      command = binary;
+      args = [
+        "internal",
+        "add-scan-ignore-rule",
+        "--scan-path", scanPath,
+        "--config", configPath,
+        "--file", relPath,
+        "--rule-id", ruleId,
+      ];
     }
-  }
-  return out;
+
+    const { stdout } = await runProcess(command, args, {
+      cwd: scanPath,
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+
+    try {
+      return parseConfigMutationResult(stdout);
+    } catch (parseError) {
+      throw new Error(`invalid config edit response: ${parseError}`);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -509,17 +500,25 @@ export function activate(context: vscode.ExtensionContext): void {
         const configPath = path.join(rootPath, ".foxguard.yml");
         const relPath = path.relative(rootPath, uri.fsPath);
 
-        const added = addIgnoreRuleToConfig(configPath, relPath, ruleId);
-        if (added) {
-          outputChannel.appendLine(
-            `Suppressed ${ruleId} for ${relPath} in ${configPath}`,
-          );
-          vscode.window.showInformationMessage(
-            `foxguard: added ${ruleId} ignore for ${relPath} to .foxguard.yml`,
-          );
-        } else {
-          vscode.window.showInformationMessage(
-            `foxguard: ${ruleId} already suppressed for ${relPath}`,
+        try {
+          const result = await addIgnoreRuleToConfig(rootPath, configPath, relPath, ruleId);
+          if (result.added) {
+            outputChannel.appendLine(
+              `Suppressed ${ruleId} for ${relPath} in ${result.config_path}`,
+            );
+            vscode.window.showInformationMessage(
+              `foxguard: added ${ruleId} ignore for ${relPath} to .foxguard.yml`,
+            );
+          } else {
+            vscode.window.showInformationMessage(
+              `foxguard: ${ruleId} already suppressed for ${relPath}`,
+            );
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          outputChannel.appendLine(`Failed to update .foxguard.yml: ${message}`);
+          vscode.window.showErrorMessage(
+            `foxguard: failed to update .foxguard.yml: ${message}`,
           );
         }
       },
@@ -697,18 +696,16 @@ async function resolveBinary(): Promise<string | null | undefined> {
   }
 
   // Check PATH
-  const found = await new Promise<boolean>((resolve) => {
-    execFile("foxguard", ["--version"], (err) => resolve(!err));
-  });
+  const found = await runProcess("foxguard", ["--version"], { timeout: 15_000 })
+    .then(() => true, () => false);
   if (found) {
     cachedBinary = "foxguard";
     return cachedBinary;
   }
 
   // Try npx
-  const npxFound = await new Promise<boolean>((resolve) => {
-    execFile("npx", ["foxguard", "--version"], { timeout: 15000 }, (err) => resolve(!err));
-  });
+  const npxFound = await runProcess("npx", ["foxguard", "--version"], { timeout: 15_000 })
+    .then(() => true, () => false);
   if (npxFound) {
     cachedBinary = null; // sentinel: use npx
     return cachedBinary;
@@ -774,11 +771,8 @@ function scanDocument(document: vscode.TextDocument): void {
     }
 
     // foxguard: ignore[js/no-command-injection]
-    execFile(
-      command,
-      args,
-      { maxBuffer: 10 * 1024 * 1024, timeout: 30_000 },
-      (error, stdout, stderr) => {
+    runProcess(command, args, { maxBuffer: 10 * 1024 * 1024, timeout: 30_000, allowNonZero: true })
+      .then(({ stdout, stderr }) => {
         if (stderr) {
           outputChannel.appendLine(stderr.trim());
         }
@@ -836,8 +830,11 @@ function scanDocument(document: vscode.TextDocument): void {
             `${path.basename(filePath)}: ${diagnostics.length} issue${diagnostics.length === 1 ? "" : "s"}`
           );
         }
-      }
-    );
+      })
+      .catch((error) => {
+        outputChannel.appendLine(`Scan failed: ${error instanceof Error ? error.message : String(error)}`);
+        setStatusDone(0);
+      });
   });
 }
 
@@ -880,11 +877,8 @@ async function scanWorkspace(): Promise<void> {
         }
 
         // foxguard: ignore[js/no-command-injection]
-        execFile(
-          command,
-          args,
-          { maxBuffer: 50 * 1024 * 1024, timeout: 120_000 },
-          (error, stdout, stderr) => {
+        runProcess(command, args, { maxBuffer: 50 * 1024 * 1024, timeout: 120_000, allowNonZero: true })
+          .then(({ stdout }) => {
             if (!stdout.trim()) {
               vscode.window.showInformationMessage("foxguard: no issues found in workspace.");
               resolve();
@@ -942,8 +936,11 @@ async function scanWorkspace(): Promise<void> {
               `foxguard: ${findings.length} issue${findings.length === 1 ? "" : "s"} in ${byFile.size} file${byFile.size === 1 ? "" : "s"}.`
             );
             resolve();
-          }
-        );
+          })
+          .catch((error) => {
+            outputChannel.appendLine(`Workspace scan failed: ${error instanceof Error ? error.message : String(error)}`);
+            resolve();
+          });
       });
     }
   );

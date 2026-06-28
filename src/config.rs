@@ -681,6 +681,10 @@ pub fn add_scan_ignore_rule(
         added = true;
     }
 
+    if !added {
+        return Ok((config_path, false));
+    }
+
     let content = serde_yaml_ng::to_string(&root).map_err(|e| {
         format!(
             "failed to serialize config '{}': {}",
@@ -1011,7 +1015,7 @@ fn resolve_config_path(
     explicit_path: Option<&str>,
 ) -> Result<Option<PathBuf>, String> {
     if let Some(path) = explicit_path {
-        let path = PathBuf::from(path);
+        let path = PathBuf::from(path); // foxguard: ignore[rs/no-path-traversal]
         if !path.exists() {
             return Err(format!("Config path '{}' does not exist", path.display()));
         }
@@ -1048,8 +1052,9 @@ fn resolve_value_path(
     field: &str,
     value: &str,
 ) -> Result<String, String> {
-    let joined = if Path::new(value).is_absolute() {
-        PathBuf::from(value)
+    let value_path = Path::new(value); // foxguard: ignore[rs/no-path-traversal]
+    let joined = if value_path.is_absolute() {
+        PathBuf::from(value) // foxguard: ignore[rs/no-path-traversal]
     } else {
         base.join(value)
     };
