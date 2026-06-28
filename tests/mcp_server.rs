@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 fn send_request(stdin: &mut impl Write, stdout: &mut impl BufRead, request: &Value) -> Value {
@@ -260,11 +260,18 @@ fn test_mcp_scan_directory() {
         }),
     );
 
-    // Scan the fixtures directory
-    // Cargo provides this compile-time manifest path for integration tests.
-    // foxguard: ignore[rs/no-path-traversal]
-    let fixtures_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
+    let fixtures_dir =
+        tempfile::tempdir().unwrap_or_else(|error| panic!("failed to create fixture dir: {error}"));
+    fs::write(
+        fixtures_dir.path().join("vulnerable.py"),
+        "def run(user_input):\n    eval(user_input)\n",
+    )
+    .unwrap_or_else(|error| panic!("failed to write vulnerable fixture: {error}"));
+    fs::write(fixtures_dir.path().join("safe.py"), "print('safe')\n")
+        .unwrap_or_else(|error| panic!("failed to write safe fixture: {error}"));
+
+    let fixtures_path = fixtures_dir
+        .path()
         .canonicalize()
         .unwrap_or_else(|error| panic!("failed to canonicalize fixtures path: {error}"));
     let fixtures_path = path_string(&fixtures_path);
