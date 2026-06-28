@@ -40,7 +40,7 @@ curl -fsSL https://foxguard.dev/install.sh | sh     # prebuilt binary (macOS/Lin
 cargo install foxguard                              # from source
 ```
 
-Prebuilt installs verify SHA-256 checksums. Release binaries also publish GitHub artifact attestations; see [release provenance](docs/release-provenance.md).
+Prebuilt installs verify release binaries against `checksums.txt`. Release binaries also publish GitHub artifact attestations; use `gh attestation verify` for manual verification, or see [release provenance](docs/release-provenance.md).
 
 **GitHub Action:**
 
