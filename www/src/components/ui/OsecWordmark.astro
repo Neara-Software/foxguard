@@ -1,69 +1,28 @@
 ---
+interface Props {
+  class?: string;
+  mono?: boolean;
+  'aria-label'?: string;
+}
+
+const {
+  class: className = 'h-3 w-auto text-noir-300',
+  mono = false,
+  'aria-label': ariaLabel = '0sec',
+} = Astro.props;
+
+const OCT = 'M4 0 H16 L20 4 V16 L16 20 H4 L0 16 V4 Z M4 5 V15 L5 16 H15 L16 15 V5 L15 4 H5 Z';
+const CORE = 'M12.5 2 H17.5 L7.5 18 H2.5 Z';
+const S = 'M0 0 H20 V4 H0 Z M0 4 H4 V8 H0 Z M0 8 H20 V12 H0 Z M16 12 H20 V16 H16 Z M0 16 H20 V20 H0 Z';
+const E = 'M0 0 H20 V4 H0 Z M0 0 H4 V20 H0 Z M0 8 H16 V12 H0 Z M0 16 H20 V20 H0 Z';
+const C = 'M0 0 H20 V4 H0 Z M0 0 H4 V20 H0 Z M0 16 H20 V20 H0 Z';
+const coreFill = mono ? 'currentColor' : '#DC2626';
 ---
 
-<span class="osec-wm osec-wm-tail-slashed text-noir-300" aria-label="0sec">
-  <span class="osec-wm-stage">
-    <span class="osec-wm-mark">0</span>
-    <span class="osec-wm-tail">
-      <span class="osec-wm-prey">s</span>
-      <span class="osec-wm-prey">e</span>
-      <span class="osec-wm-prey">c</span>
-    </span>
-    <span class="osec-wm-bar" aria-hidden="true"></span>
-  </span>
-</span>
-
-<style>
-  /* 0sec provenance mark.
-     Mirrors @0cloud/ui's OsecWordmark DOM plus CloudWordmark's
-     "slash through 0 while tail stays visible" static state. */
-  .osec-wm {
-    display: inline-block;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    font-weight: 600;
-    letter-spacing: -0.05em;
-    line-height: 1;
-  }
-
-  .osec-wm-stage {
-    position: relative;
-    display: inline-flex;
-    align-items: baseline;
-    line-height: 1;
-  }
-
-  .osec-wm-mark {
-    position: relative;
-    z-index: 3;
-    display: inline-block;
-  }
-
-  .osec-wm-tail {
-    position: relative;
-    display: inline-flex;
-    overflow: hidden;
-    vertical-align: baseline;
-    white-space: nowrap;
-    max-width: 1.8em;
-  }
-
-  .osec-wm-prey {
-    position: relative;
-    z-index: 1;
-    display: inline-block;
-    opacity: 1;
-  }
-
-  .osec-wm-bar {
-    position: absolute;
-    z-index: 4;
-    left: 0;
-    top: 0.085em;
-    width: 0.11em;
-    height: 0.85em;
-    background: #DC2626;
-    transform: translateX(0.32em) rotate(15deg);
-    transform-origin: center;
-    pointer-events: none;
-  }
-</style>
+<svg class={className} viewBox="0 0 104 20" fill="none" role="img" aria-label={ariaLabel}>
+  <path fill={coreFill} d={CORE} />
+  <path fill="currentColor" fill-rule="evenodd" d={OCT} />
+  <path fill="currentColor" transform="translate(28,0)" d={S} />
+  <path fill="currentColor" transform="translate(56,0)" d={E} />
+  <path fill="currentColor" transform="translate(84,0)" d={C} />
+</svg>

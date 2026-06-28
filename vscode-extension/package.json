@@ -92,6 +92,12 @@
       },
       {
         "id": "swift"
+      },
+      {
+        "id": "kotlin"
+      },
+      {
+        "id": "haskell"
       }
     ]
   },

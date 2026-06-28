@@ -2,7 +2,7 @@
 name = "foxguard"
 version = "0.9.0"
 edition = "2021"
-description = "A security scanner as fast as a linter, written in Rust. 170+ built-in rules across 12 languages."
+description = "A security scanner as fast as a linter, written in Rust. 200+ built-in rules across 12 source languages."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/0sec-labs/foxguard"
 homepage = "https://foxguard.dev"

@@ -112,4 +112,4 @@ The deal is the same as the rest of foxguard: the answer should be fast to get, 
 
 ---
 
-*foxguard is an open-source security scanner written in Rust. 196 built-in rules, 10 languages, post-quantum crypto audit with CNSA 2.0 deadline annotations and CycloneDX 1.6 CBOM output. [Try it](https://github.com/0sec-labs/foxguard): `npx foxguard pqc .`*
+*foxguard is an open-source security scanner written in Rust. 200+ built-in rules, 12 source languages, post-quantum crypto audit with CNSA 2.0 deadline annotations and CycloneDX 1.6 CBOM output. [Try it](https://github.com/0sec-labs/foxguard): `npx foxguard pqc .`*

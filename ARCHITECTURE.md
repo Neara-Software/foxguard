@@ -1,12 +1,12 @@
 # Architecture
 
-foxguard is a Rust-native static analyzer with tree-sitter parsers for 11 programming languages (`src/lib.rs:43-60`) plus five configuration formats (nginx, Apache, HAProxy, Dockerfile, package manifests). It runs at linter speed locally and ships as a CLI, GitHub App, Claude Code plugin, VS Code extension, and GitHub Action.
+foxguard is a Rust-native static analyzer with tree-sitter parsers for 12 source languages plus configuration formats (nginx, Apache, HAProxy, Dockerfile, package manifests). It runs at linter speed locally and ships as a CLI, GitHub App, Claude Code plugin, VS Code extension, and GitHub Action.
 
 ## Rule model: Rust core + bundled YAML + external YAML
 
 There are three rule surfaces.
 
-**Rust canonical core (188 rules).** Every Rust rule is a struct registered at startup in `RuleRegistry::new()` (`src/rules/mod.rs:316-543`). Rules live in one file per language under `src/rules/` (`javascript.rs`, `python.rs`, `go.rs`, `java.rs`, `php.rs`, `ruby.rs`, `csharp.rs`, `swift.rs`, `kotlin.rs`, `rust_lang.rs`) plus cross-cutting files for taint, config, and manifest rules. They use the `impl_rule!` macro (`src/rules/mod.rs:98`) for boilerplate-free metadata and are exercised by fixture-based tests in `tests/fixtures/`. This is the curated, hardened, byte-identical-output-tested layer. `www/src/data/rules.ts` is generated from this registry by `src/bin/gen_rules_ts.rs` and is enforced by CI to never drift (`CONTRIBUTING.md:16`).
+**Built-in registry (200+ rules).** Rust-native rules are registered at startup in `RuleRegistry::new()` (`src/rules/mod.rs`) and bundled YAML packs are embedded into the same registry. Rules live in one file per language under `src/rules/` plus cross-cutting files for taint, config, and manifest checks. They use the `impl_rule!` macro (`src/rules/mod.rs:98`) for boilerplate-free metadata and are exercised by fixture-based tests in `tests/fixtures/`. `www/src/data/rules.ts` is generated from this registry by `src/bin/gen_rules_ts.rs` and is enforced by CI to never drift (`CONTRIBUTING.md:16`).
 
 **Bundled YAML rule packs.** `rules/` is embedded into the binary at compile time via `include_dir!` (`src/rules/mod.rs:35`). Each `.yaml` / `.yml` file is parsed through the Semgrep-compat loader and registered alongside the Rust rules at startup — same registry, same scan loop, no flag required. The embedded walker (`src/rules/semgrep_compat.rs:1172-1209`) is invoked from `RuleRegistry::new()` (`src/rules/mod.rs:538-540`) and skips `queries/` subdirs so CodeQL pack metadata doesn't reach the YAML parser. `rules/kernel/dirty-frag-class/` is today's only bundled pack — a maintainer-curated bundle of Semgrep-shaped YAML rules calibrated against a single Linux kernel bug class (ESP/AEAD shared-fragment regressions, scatterwalk store hazards, RxRPC dispatch). Future packs (other kernel classes, vendor compliance) go under `rules/<area>/<class>/` and load the same way.
 

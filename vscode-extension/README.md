@@ -6,7 +6,7 @@ A security scanner as fast as a linter, written in Rust. Scans your code on ever
 
 - Scans on file save and open — instant feedback
 - Status bar shows finding count
-- Supports JS/TS, Python, Go, Ruby, Java, PHP, Rust, C#, Swift
+- Supports JS/TS, Python, Go, Ruby, Java, PHP, Rust, C#, Swift, Kotlin, Haskell
 - Critical/High → red underline, Medium → yellow, Low → blue
 - Rule IDs link to documentation
 - Workspace scan via command palette or `Cmd+Shift+G`

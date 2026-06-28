@@ -9,13 +9,13 @@ npx foxguard .
 ## Why people use it
 
 - Fast enough to run locally instead of waiting for CI
-- Useful built-in rules out of the box across 10 languages
+- Useful built-in rules out of the box across 12 source languages
 - Semgrep-compatible YAML subset when you already have existing rules
 - JSON and SARIF output for automation
 
 It scans for SQL injection, XSS, SSRF, hardcoded secrets, command injection, weak crypto, unsafe deserialization, and framework-specific mistakes.
 
-**Languages:** JavaScript, TypeScript, Python, Go, Ruby, Java, PHP, Rust, C#, Swift
+**Languages:** JavaScript, TypeScript, Python, Go, Ruby, Java, PHP, Rust, C#, Swift, Kotlin, Haskell
 
 ## How it works
 

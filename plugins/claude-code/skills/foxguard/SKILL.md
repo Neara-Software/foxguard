@@ -1,5 +1,5 @@
 ---
-description: Run the foxguard security scanner on the user's code. Use proactively when the user asks to find vulnerabilities, scan for secrets, audit cryptography, do a security review, check what a branch introduces, or validate code before merging. Covers SAST, secrets, cross-file taint tracking, post-quantum crypto audit, and diff scans across 10 languages.
+description: Run the foxguard security scanner on the user's code. Use proactively when the user asks to find vulnerabilities, scan for secrets, audit cryptography, do a security review, check what a branch introduces, or validate code before merging. Covers SAST, secrets, cross-file taint tracking, post-quantum crypto audit, and diff scans across 12 source languages.
 ---
 
 You are driving [foxguard](https://foxguard.dev), a fast local SAST scanner. This skill is the standalone counterpart to the foxguard Claude Code plugin — you have the scanner binary; you don't have the plugin's slash commands or PostToolUse hook. Behave accordingly: ask before running long scans, surface results inline, propose fixes the user can accept.

@@ -5,7 +5,7 @@
 <h1 align="center">foxguard</h1>
 
 <p align="center">
-  <strong>A fast security scanner. Completely free. 10+ languages supported.</strong>
+  <strong>Fast local security scanning for code, secrets, dependencies, and crypto risk.</strong>
 </p>
 
 <p align="center">
@@ -24,20 +24,13 @@ npx foxguard .
   <img src="assets/demo.gif" alt="foxguard scan demo" width="640" />
 </p>
 
-## Features
+## Why
 
-- **Sub-second scans** on real codebases -- fast enough for pre-commit hooks
-- **Completely free** -- local scans, CI usage, and GitHub PR checks without a paid tier
-- **10+ languages supported** -- JS/TS, Python, Go, Ruby, Java, PHP, Rust, C#, Swift, Kotlin, C
-- **Cross-file taint tracking** with intraprocedural dataflow and cross-file summaries
-- **Diff scans** -- only new findings since a target branch
-- **Secrets scanning** -- AWS keys, GitHub/GitLab/Slack/Stripe tokens, private keys
-- **Dependency vulnerability scanning** -- OSV-backed SCA for Cargo, npm, pnpm, pip, Poetry, and Pipenv lockfiles
-- **Post-quantum crypto audit** -- CNSA 2.0 migration deadlines on every finding
-- **Semgrep/OpenGrep-compatible YAML bridge** -- load external rule packs via `--rules`
-- **Interactive TUI** -- triage, baseline, ignore, severity overrides
-- **Output formats** -- terminal, JSON, SARIF, CycloneDX 1.6 CBOM
-- **GitHub App** -- auto-scans PRs, posts inline comments, check runs
+- 200+ built-in rules across 12 source languages, plus config and manifest checks
+- Fast local and CI scans, with diff mode for “what did this branch add?”
+- Secrets scanning, OSV-backed dependency scanning, and post-quantum crypto audit
+- Semgrep/OpenGrep-compatible YAML bridge for existing rule packs
+- Terminal, JSON, SARIF, and CycloneDX 1.6 CBOM output
 
 ## Install
 
@@ -47,9 +40,7 @@ curl -fsSL https://foxguard.dev/install.sh | sh     # prebuilt binary (macOS/Lin
 cargo install foxguard                              # from source
 ```
 
-Prebuilt installs verify release SHA-256 checksums before using downloaded
-binaries. Signed GitHub artifact attestations are published for release binaries;
-see [release provenance](docs/release-provenance.md) for manual verification.
+Prebuilt installs verify SHA-256 checksums. Release binaries also publish GitHub artifact attestations; see [release provenance](docs/release-provenance.md).
 
 **GitHub Action:**
 
@@ -62,9 +53,6 @@ see [release provenance](docs/release-provenance.md) for manual verification.
     upload-sarif: "true"
 ```
 
-The action verifies the downloaded binary against `checksums.txt`. Provenance
-verification is available as a separate `gh attestation verify` policy step.
-
 **pre-commit:**
 
 ```yaml
@@ -75,71 +63,46 @@ repos:
       - id: foxguard
 ```
 
-**VS Code:** [Install extension](https://marketplace.visualstudio.com/items?itemName=peaktwilight.foxguard) -- scans on save, inline findings.
+Integrations: [GitHub App](https://github.com/apps/foxguard-app/installations/new), [VS Code](https://marketplace.visualstudio.com/items?itemName=peaktwilight.foxguard), [Claude Code plugin](docs/claude-code-integration.md), and [MCP server](docs/mcp-server.md).
 
-**Claude Code:** `claude --plugin-dir ./plugins/claude-code` -- see [docs](docs/claude-code-integration.md).
-
-**MCP server:** `foxguard-mcp` exposes scan, diff, secrets, PQC, SARIF/CBOM,
-rule, explanation, and suppression tools -- see [docs](docs/mcp-server.md).
-
-## Quick start
+## Quick Start
 
 ```sh
-foxguard .                    # scan everything
-foxguard diff main .          # only new findings vs main
-foxguard secrets .            # leaked credentials and keys
-foxguard sca .                # dependency vulnerabilities from OSV
-foxguard pqc .                # post-quantum crypto audit
-foxguard tui .                # interactive triage UI
-foxguard --format sarif . > results.sarif   # SARIF for CI
+foxguard .                              # scan everything
+foxguard diff main .                    # only new findings vs main
+foxguard secrets .                      # leaked credentials and keys
+foxguard sca .                          # dependency vulnerabilities from OSV
+foxguard pqc .                          # post-quantum crypto audit
+foxguard --format sarif . > results.sarif
 ```
 
-## GitHub App
+## Language Coverage
 
-[![Install foxguard on GitHub](https://img.shields.io/badge/Install_on_GitHub-foxguard--app-2ea44f?style=for-the-badge&logo=github)](https://github.com/apps/foxguard-app/installations/new)
+| Language | Built-in rules | Taint tracking | Framework-aware rules |
+|----------|:-:|:-:|---|
+| JavaScript / TypeScript | Yes | Yes | Express, Next.js |
+| Python | Yes | Yes | Django, Flask, FastAPI |
+| Go | Yes | Yes | Gin |
+| Kotlin | Yes | Yes | Spring |
+| Java | Yes | -- | Spring |
+| Ruby | Yes | -- | Rails |
+| PHP | Yes | -- | Laravel |
+| Rust | Yes | -- | -- |
+| C# | Yes | -- | .NET |
+| Swift | Yes | -- | iOS |
+| Haskell | Yes | -- | Cardano seed rules |
 
-Scans every pull request automatically. Posts inline comments on new findings and reports check run status. Zero config -- install and it works.
+Config, manifest, and external-rule scans cover Dockerfile, Nginx, Apache, HAProxy, HCL/Terraform, YAML/JSON/XML/HTML, C via Semgrep YAML/Coccinelle, and more.
 
-## Supported languages
-
-| Language | Taint tracking | Framework-aware |
-|----------|:-:|:-:|
-| JavaScript / TypeScript | Yes | Express, Next.js |
-| Python | Yes | Django, Flask, FastAPI |
-| Go | Yes | Gin |
-| Kotlin | Yes | Spring |
-| Java | -- | Spring |
-| Ruby | -- | Rails |
-| PHP | -- | Laravel |
-| Rust | -- | -- |
-| C# | -- | .NET |
-| Swift | -- | iOS |
-| C | -- | via Semgrep YAML / Coccinelle |
-
-## Post-quantum crypto audit
-
-```sh
-foxguard pqc .
-```
-
-```
-src/tls/client.go
-  42:14  HIGH  go/pq-vulnerable-crypto (CWE-327)
-         ECDH P-256 is not post-quantum safe.
-         CNSA 2.0 deadline: traditional networking equipment, 2030.
-```
-
-Each finding carries its CNSA 2.0 migration deadline. Covers Python, JS/TS, Go, Java, Rust, and TLS config files. Export as CycloneDX 1.6 CBOM with `--format cbom`.
-
-## Dependency vulnerability scanning
+## Security Modes
 
 ```sh
 foxguard sca .
-foxguard --sca . --format json
-foxguard sca . --sca-offline --sca-db ./osv-advisories.json
+foxguard pqc .
+foxguard --rules ./semgrep-rules .
 ```
 
-SCA supports `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `requirements.txt`, `poetry.lock`, and `Pipfile.lock`. Offline mode uses `--sca-db` or an existing `--sca-cache`; without either, OSV lookup is skipped and normal/PQ manifest rules still run. See [docs/dependency-scanning.md](docs/dependency-scanning.md).
+SCA supports `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `requirements.txt`, `poetry.lock`, and `Pipfile.lock`. PQC findings carry CNSA 2.0 migration deadlines and can export CycloneDX 1.6 CBOMs.
 
 ## Configuration
 
@@ -149,8 +112,6 @@ foxguard auto-discovers `.foxguard.yml` from the scan path upward.
 scan:
   baseline: .foxguard/baseline.json
   disable_rules: [py/no-eval]
-  severity_overrides:
-    py/no-hardcoded-secret: medium
 
 secrets:
   exclude_paths: [fixtures, testdata]
@@ -167,11 +128,11 @@ Suppress an accepted finding inline with `// foxguard: ignore[rule-id]`.
 | gin | 18K Go | 0.50s | 4.95s | **10x** |
 | sentry | 1.3M Py | 35s | 194s | **5x** |
 
-Reproduce: `./benchmarks/run.sh`. See [`benchmarks/README.md`](./benchmarks/README.md).
+Reproduce with `./benchmarks/run.sh`; results vary by machine. See [`benchmarks/README.md`](./benchmarks/README.md).
 
 ## Contributing
 
-Adding a rule is one struct implementing a trait. See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for rule authoring, tests, and development setup.
 
 ## License
 
