@@ -184,6 +184,17 @@ fn realistic_java_spring_controller() {
     );
 }
 
+/// Multi-file Spring fixture for Java cross-file taint. The `@RequestParam`
+/// source lives in `UserController.java` and the SQL sink (`executeQuery`)
+/// lives in `UserQueries.java`; the controller `import`s the queries class
+/// and calls its static helper. Cross-file analysis traces the tainted value
+/// into the callee and reports one `java/taint-sql-injection` finding at the
+/// call site. The NEAR-MISS handler passes a literal and must not fire.
+#[test]
+fn realistic_java_spring_shop_multifile() {
+    assert_fixture("java_spring_shop", 1, &[("java/taint-sql-injection", 1)]);
+}
+
 /// Multi-file Django fixture (issue #48). Cross-file taint analysis
 /// (issue #46) propagates taint from `views.py` into `queries.py`
 /// helpers via function taint summaries. In-file flows fire as before,
