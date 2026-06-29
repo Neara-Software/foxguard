@@ -62,6 +62,7 @@ pub enum TaintEngine {
     Java,
     JavaScript,
     Kotlin,
+    Php,
     Python,
     Ruby,
 }
@@ -654,6 +655,17 @@ impl RuleRegistry {
         register_rules!(
             registry,
             [
+                php::TaintCommandInjection,
+                php::TaintSqlInjection,
+                php::TaintXss,
+                php::TaintFileInclusion,
+                php::TaintUnsafeDeserialization,
+            ]
+        );
+
+        register_rules!(
+            registry,
+            [
                 rust_lang::UnsafeBlock,
                 rust_lang::TransmuteUsage,
                 rust_lang::NoCommandInjection,
@@ -928,6 +940,15 @@ fn builtin_taint_specs_for_language(language: Language) -> Vec<RegistryTaintSpec
                 rule_id,
                 language,
                 engine: TaintEngine::Ruby,
+                spec,
+            })
+            .collect(),
+        Language::Php => php_taint::php_taint_rule_specs()
+            .into_iter()
+            .map(|(rule_id, spec)| RegistryTaintSpec {
+                rule_id,
+                language,
+                engine: TaintEngine::Php,
                 spec,
             })
             .collect(),

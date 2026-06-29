@@ -662,10 +662,10 @@
       "line": 49
     },
     {
-      "fingerprint": "b8b1cd44ce08967582d35330b5f944a184d9f8dad8bf2761fca436ced48b65ea",
+      "fingerprint": "f2283e2dfa6d29ad0bd0f800bb56a36cce694edba58826e68e49f3eaef4fbf08",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/php.rs",
-      "line": 22
+      "line": 23
     },
     {
       "fingerprint": "d713b0625cc1279c1d0e6f8193d63837efd877a6d739cdeceae2ba78c1caf936",
@@ -2046,6 +2046,18 @@
       "rule_id": "js/no-xss-innerhtml",
       "file": "tests/fixtures/safe_nextjs_taint.ts",
       "line": 22
+    },
+    {
+      "fingerprint": "ad718181d7d3cf36f7a1b5b83fd898bbdc2f6f5fa478c518790c85ccbe98509b",
+      "rule_id": "php/no-command-injection",
+      "file": "tests/fixtures/safe_php_taint.php",
+      "line": 16
+    },
+    {
+      "fingerprint": "bc7192710b6f18ae27aea656ced577b2af6a4f1b627a463786d378453f1402c7",
+      "rule_id": "php/no-unserialize",
+      "file": "tests/fixtures/safe_php_taint.php",
+      "line": 53
     },
     {
       "fingerprint": "bbff26802e3d60dc88c31b39af8e3c70549fa07aae05bcd32373b4ae5eb6c1d4",
@@ -4326,6 +4338,24 @@
       "rule_id": "js/no-document-write",
       "file": "tests/fixtures/vulnerable_nextjs_taint.ts",
       "line": 19
+    },
+    {
+      "fingerprint": "f4c56e53dbf4f97675ecb3e559263a4f9a6f30e35d5f4ed1fdf2b34a96858ed3",
+      "rule_id": "php/no-command-injection",
+      "file": "tests/fixtures/vulnerable_php_taint.php",
+      "line": 11
+    },
+    {
+      "fingerprint": "6f9e53c677ebd83ed837ff76ef243d0dc409fe4d4947b158fee42b73886bfcc7",
+      "rule_id": "php/no-file-inclusion",
+      "file": "tests/fixtures/vulnerable_php_taint.php",
+      "line": 32
+    },
+    {
+      "fingerprint": "2cf0abb8b4772e12d779d93a79407ae43d405043ea85359c89f8da4e9ce5f9fb",
+      "rule_id": "php/no-unserialize",
+      "file": "tests/fixtures/vulnerable_php_taint.php",
+      "line": 39
     },
     {
       "fingerprint": "91ae20fa132bac2d728a99c352ff61ca8854bd4a597b4cc1479191ab09a11c36",

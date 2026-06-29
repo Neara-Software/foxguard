@@ -182,6 +182,11 @@ const phpRules: Rule[] = [
   { id: 'php/no-ssrf', cwe: 'CWE-918', desc: 'Potential SSRF via file_get_contents or curl_init with variable URL', severity: 'high' },
   { id: 'php/no-unserialize', cwe: 'CWE-502', desc: 'Use of unserialize() on untrusted data can lead to object injection', severity: 'critical' },
   { id: 'php/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak cryptographic hash (MD5/SHA1)', severity: 'medium' },
+  { id: 'php/taint-command-injection', cwe: 'CWE-78', desc: 'Untrusted input flows to an OS command execution sink', severity: 'critical' },
+  { id: 'php/taint-file-inclusion', cwe: 'CWE-98', desc: 'Untrusted input flows to an include/require sink (LFI/RFI)', severity: 'critical' },
+  { id: 'php/taint-sql-injection', cwe: 'CWE-89', desc: 'Untrusted input flows to a SQL query execution sink', severity: 'critical' },
+  { id: 'php/taint-unsafe-deserialization', cwe: 'CWE-502', desc: 'Untrusted input flows to unserialize() (unsafe deserialization)', severity: 'critical' },
+  { id: 'php/taint-xss', cwe: 'CWE-79', desc: 'Untrusted input flows to an output sink (reflected XSS)', severity: 'high' },
 ];
 
 const rustRules: Rule[] = [

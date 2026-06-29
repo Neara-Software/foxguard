@@ -4,9 +4,10 @@ use regex::Regex;
 
 use crate::impl_rule;
 use crate::rules::common::{
-    hardcoded_secret_re, is_secret_value_long_enough, make_finding, walk_tree,
+    get_source_line, hardcoded_secret_re, is_secret_value_long_enough, make_finding, walk_tree,
 };
-use crate::{Language, Severity};
+use crate::rules::php_taint;
+use crate::{Finding, Language, Severity};
 
 // ─── Static regex helpers (compiled once) ────────────────────────────────────
 
@@ -656,6 +657,314 @@ impl_rule! {
         });
         findings
 
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHP taint rules
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Five `php/taint-*` rules that consume the taint engine in
+// `crate::rules::php_taint`. Each rule's `check()` looks up the rule's
+// declarative `TaintSpec` from `php_taint::php_taint_rule_specs()`, hands
+// it to `php_taint::analyze_tree`, and maps returned `TaintFinding`s onto
+// the project's `Finding` type — same shape as the C taint rules.
+//
+// The scanner skips the rule's `check()` when the same rule id is
+// registered as a `RegistryTaintSpec` via
+// `builtin_taint_specs_for_language`, and runs the batched dispatcher
+// `run_php_taint_batched` instead. The `check()` path is kept working
+// so unit tests that construct a Rule struct directly continue to
+// function.
+
+/// Per-rule metadata for PHP taint findings.
+struct PhpTaintRuleMeta<'a> {
+    rule_id: &'a str,
+    severity: Severity,
+    cwe: Option<&'a str>,
+    fix_suggestion: Option<&'a str>,
+    format_description: fn(&str, &str) -> String,
+}
+
+fn php_taint_command_injection_desc(src: &str, sink: &str) -> String {
+    format!(
+        "{} flows to {} — avoid passing untrusted input to OS commands",
+        src, sink
+    )
+}
+
+fn php_taint_sql_injection_desc(src: &str, sink: &str) -> String {
+    format!(
+        "{} flows to {} — use prepared statements to prevent SQL injection",
+        src, sink
+    )
+}
+
+fn php_taint_xss_desc(src: &str, sink: &str) -> String {
+    format!(
+        "{} flows to {} — escape output with htmlspecialchars() before rendering",
+        src, sink
+    )
+}
+
+fn php_taint_file_inclusion_desc(src: &str, sink: &str) -> String {
+    format!(
+        "{} flows to {} — avoid dynamic include/require of user-controlled paths",
+        src, sink
+    )
+}
+
+fn php_taint_unsafe_deserialization_desc(src: &str, sink: &str) -> String {
+    format!(
+        "{} flows to {} — use json_decode() instead of unserialize() for untrusted data",
+        src, sink
+    )
+}
+
+fn php_taint_meta(rule_id: &str) -> Option<PhpTaintRuleMeta<'static>> {
+    match rule_id {
+        "php/taint-command-injection" => Some(PhpTaintRuleMeta {
+            rule_id: "php/taint-command-injection",
+            severity: Severity::Critical,
+            cwe: Some("CWE-78"),
+            fix_suggestion: Some(
+                "Use escapeshellarg()/escapeshellcmd() to escape arguments, or pass an argv array to proc_open()",
+            ),
+            format_description: php_taint_command_injection_desc,
+        }),
+        "php/taint-sql-injection" => Some(PhpTaintRuleMeta {
+            rule_id: "php/taint-sql-injection",
+            severity: Severity::Critical,
+            cwe: Some("CWE-89"),
+            fix_suggestion: Some(
+                "Use parameterized queries: mysqli_prepare() + mysqli_stmt_bind_param(), or PDO statements with bound parameters",
+            ),
+            format_description: php_taint_sql_injection_desc,
+        }),
+        "php/taint-xss" => Some(PhpTaintRuleMeta {
+            rule_id: "php/taint-xss",
+            severity: Severity::High,
+            cwe: Some("CWE-79"),
+            fix_suggestion: Some(
+                "Escape output with htmlspecialchars($value, ENT_QUOTES, 'UTF-8') before echoing",
+            ),
+            format_description: php_taint_xss_desc,
+        }),
+        "php/taint-file-inclusion" => Some(PhpTaintRuleMeta {
+            rule_id: "php/taint-file-inclusion",
+            severity: Severity::Critical,
+            cwe: Some("CWE-98"),
+            fix_suggestion: Some(
+                "Resolve include/require paths against a fixed allowlist; never include user-controlled paths",
+            ),
+            format_description: php_taint_file_inclusion_desc,
+        }),
+        "php/taint-unsafe-deserialization" => Some(PhpTaintRuleMeta {
+            rule_id: "php/taint-unsafe-deserialization",
+            severity: Severity::Critical,
+            cwe: Some("CWE-502"),
+            fix_suggestion: Some(
+                "Use json_decode() for untrusted data, or call unserialize() with allowed_classes: false",
+            ),
+            format_description: php_taint_unsafe_deserialization_desc,
+        }),
+        _ => None,
+    }
+}
+
+/// Map a single `TaintFinding` from the PHP engine onto a `Finding`.
+fn map_php_taint_finding(
+    meta: &PhpTaintRuleMeta<'_>,
+    source: &str,
+    finding: php_taint::TaintFinding,
+) -> Finding {
+    Finding {
+        rule_id: meta.rule_id.to_string(),
+        severity: meta.severity,
+        cwe: meta.cwe.map(|s| s.to_string()),
+        description: (meta.format_description)(
+            &finding.source_description,
+            &finding.sink_description,
+        ),
+        file: String::new(),
+        line: finding.sink_line,
+        column: finding.sink_column,
+        end_line: finding.sink_end_line,
+        end_column: finding.sink_end_column,
+        snippet: get_source_line(source, finding.sink_start_byte),
+        source_line: if finding.source_line == 0 {
+            None
+        } else {
+            Some(finding.source_line)
+        },
+        source_description: Some(finding.source_description),
+        sink_line: Some(finding.sink_line),
+        sink_description: Some(finding.sink_description),
+        fix_suggestion: meta.fix_suggestion.map(|s| s.to_string()),
+        sink_start_byte: None,
+        sink_end_byte: None,
+        confidence: crate::default_confidence(),
+        taint_hops: None,
+        tags: vec![],
+        crypto_algorithm: None,
+        cnsa2_deadline: None,
+        dep_name: None,
+        dep_version: None,
+        dep_ecosystem: None,
+        dep_purl: None,
+        dep_vulnerability_id: None,
+        dep_fixed_version: None,
+        dep_source: None,
+        dep_vulnerability_severity: None,
+        dep_path: vec![],
+    }
+}
+
+/// Run every enabled PHP taint rule over `tree` in a single dispatch.
+///
+/// Mirrors `run_c_taint_batched` in `c.rs`. PHP's engine is intraprocedural
+/// and has no cross-file analysis, so each rule's `TaintSpec` is handed to
+/// `php_taint::analyze_tree` in turn.
+pub fn run_php_taint_batched(
+    source: &str,
+    tree: &tree_sitter::Tree,
+    enabled_rule_ids: &std::collections::HashSet<&str>,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for (rule_id, spec) in php_taint::php_taint_rule_specs() {
+        if !enabled_rule_ids.contains(rule_id) {
+            continue;
+        }
+        let Some(meta) = php_taint_meta(rule_id) else {
+            continue;
+        };
+        let raw = php_taint::analyze_tree(tree.root_node(), source, &spec, None);
+        for finding in raw {
+            findings.push(map_php_taint_finding(&meta, source, finding));
+        }
+    }
+    findings
+}
+
+/// Run a single PHP taint rule over a tree. Used by the rule structs'
+/// `check()` path for direct unit tests.
+fn run_php_taint_single(
+    rule_id: &str,
+    source: &str,
+    tree: &tree_sitter::Tree,
+    spec: &php_taint::TaintSpec,
+) -> Vec<Finding> {
+    let Some(meta) = php_taint_meta(rule_id) else {
+        return Vec::new();
+    };
+    let raw = php_taint::analyze_tree(tree.root_node(), source, spec, None);
+    raw.into_iter()
+        .map(|t| map_php_taint_finding(&meta, source, t))
+        .collect()
+}
+
+// ─── Rule 1: php/taint-command-injection ────────────────────────────────────
+
+pub struct TaintCommandInjection;
+
+impl_rule! {
+    TaintCommandInjection,
+    id = "php/taint-command-injection",
+    severity = Severity::Critical,
+    cwe = Some("CWE-78"),
+    description = "Untrusted input flows to an OS command execution sink",
+    language = Language::Php,
+    fn check(_self, source, tree) {
+        let spec = php_taint::php_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_php_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 2: php/taint-sql-injection ────────────────────────────────────────
+
+pub struct TaintSqlInjection;
+
+impl_rule! {
+    TaintSqlInjection,
+    id = "php/taint-sql-injection",
+    severity = Severity::Critical,
+    cwe = Some("CWE-89"),
+    description = "Untrusted input flows to a SQL query execution sink",
+    language = Language::Php,
+    fn check(_self, source, tree) {
+        let spec = php_taint::php_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_php_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 3: php/taint-xss ─────────────────────────────────────────────────
+
+pub struct TaintXss;
+
+impl_rule! {
+    TaintXss,
+    id = "php/taint-xss",
+    severity = Severity::High,
+    cwe = Some("CWE-79"),
+    description = "Untrusted input flows to an output sink (reflected XSS)",
+    language = Language::Php,
+    fn check(_self, source, tree) {
+        let spec = php_taint::php_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_php_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 4: php/taint-file-inclusion ───────────────────────────────────────
+
+pub struct TaintFileInclusion;
+
+impl_rule! {
+    TaintFileInclusion,
+    id = "php/taint-file-inclusion",
+    severity = Severity::Critical,
+    cwe = Some("CWE-98"),
+    description = "Untrusted input flows to an include/require sink (LFI/RFI)",
+    language = Language::Php,
+    fn check(_self, source, tree) {
+        let spec = php_taint::php_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_php_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 5: php/taint-unsafe-deserialization ───────────────────────────────
+
+pub struct TaintUnsafeDeserialization;
+
+impl_rule! {
+    TaintUnsafeDeserialization,
+    id = "php/taint-unsafe-deserialization",
+    severity = Severity::Critical,
+    cwe = Some("CWE-502"),
+    description = "Untrusted input flows to unserialize() (unsafe deserialization)",
+    language = Language::Php,
+    fn check(_self, source, tree) {
+        let spec = php_taint::php_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_php_taint_single(_self.id(), source, tree, &spec)
     }
 }
 
