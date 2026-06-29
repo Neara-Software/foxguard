@@ -16,8 +16,11 @@
 //! - Sanitizer calls listed on the `TaintSpec` produce clean values.
 
 use crate::rules::common::{walk_tree, AliasTable};
+use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary, ParamSinkFlow};
+use crate::rules::taint_engine::cross_file_taint_finding;
 pub use crate::rules::taint_engine::{NodeMatcher, TaintFinding, TaintSpec};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use tree_sitter::Node;
 
 #[derive(Clone, Debug)]
@@ -224,6 +227,262 @@ fn unsafe_deserialization_spec() -> TaintSpec {
         ],
         sanitizers: vec![],
     }
+}
+
+// ─── Cross-file (interprocedural across files) taint ─────────────────────
+//
+// Scope of the Java cross-file pass (deliberately narrow; see
+// `docs/taint-tracking.md`):
+//
+// * **Resolution is NAME-based, not type-based.** A method declaration is
+//   summarized by its bare method name. A call site resolves to a summary
+//   whenever the invoked method name matches a summarized method in a
+//   sibling file of the same directory (used as a same-package proxy, the
+//   way the Go engine treats same-directory `.go` files). This intentionally
+//   over-approximates: `helper.process(x)`, `Helper.process(x)`, and a bare
+//   `process(x)` all resolve to *any* same-package `process` summary,
+//   regardless of the receiver's declared type.
+// * **What is NOT modeled:** instance-method dispatch through interfaces or
+//   subclasses, method overloads (same name, different arity/types — only
+//   arity is checked via the argument count), `import`-based class resolution
+//   across packages/directories, and multi-hop chains (a helper that itself
+//   calls another cross-file helper). These need a Java type/symbol table the
+//   engine does not build.
+
+/// Extract cross-file taint summaries for every method declaration in `root`.
+///
+/// Pass 1 of the two-pass scanner. For each method, every parameter is
+/// treated as a synthetic taint source; a parameter that reaches a sink
+/// records a [`ParamSinkFlow`], and a parameter that flows to a `return`
+/// records a `params_to_return` index. Summaries are keyed by the bare
+/// method name (last-write-wins on name collisions, mirroring Go).
+pub fn extract_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    _aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+) -> Vec<FunctionTaintSummary> {
+    let mut summaries = Vec::new();
+    walk_tree(root, source, &mut |node, src| {
+        if node.kind() != "method_declaration" {
+            return;
+        }
+        let Some(method_name) = node
+            .child_by_field_name("name")
+            .map(|n| node_text(n, src).to_string())
+        else {
+            return;
+        };
+        let param_names = method_param_names(node, src);
+        if let Some(summary) =
+            summarize_java_method(node, &method_name, &param_names, src, rule_specs)
+        {
+            summaries.push(summary);
+        }
+    });
+    summaries
+}
+
+/// The parameter names of a method/constructor/lambda scope, in order.
+fn method_param_names(scope_node: Node<'_>, source: &str) -> Vec<String> {
+    scope_parameter_nodes(scope_node)
+        .into_iter()
+        .filter_map(|node| formal_parameter_name(node, source).map(|s| s.to_string()))
+        .collect()
+}
+
+/// Build a [`FunctionTaintSummary`] for a single method, or `None` if no
+/// parameter reaches a sink or a return value.
+fn summarize_java_method(
+    method_node: Node<'_>,
+    method_name: &str,
+    param_names: &[String],
+    source: &str,
+    rule_specs: &[(&str, TaintSpec)],
+) -> Option<FunctionTaintSummary> {
+    if param_names.is_empty() {
+        return None;
+    }
+
+    let mut params_to_sink: Vec<ParamSinkFlow> = Vec::new();
+    let mut params_to_return: Vec<usize> = Vec::new();
+
+    for (param_idx, param_name) in param_names.iter().enumerate() {
+        if java_param_flows_to_return(method_node, param_name, source) {
+            params_to_return.push(param_idx);
+        }
+
+        for (rule_id, rule_spec) in rule_specs {
+            let synthetic = TaintSpec {
+                sources: vec![NodeMatcher::ParamName {
+                    names: vec![param_name.clone()],
+                    description: format!("parameter '{param_name}'"),
+                }],
+                sinks: rule_spec.sinks.clone(),
+                sanitizers: rule_spec.sanitizers.clone(),
+            };
+            let mut findings = Vec::new();
+            analyze_scope(method_node, source, &synthetic, &mut findings);
+            if let Some(finding) = findings.first() {
+                params_to_sink.push(ParamSinkFlow {
+                    param_index: param_idx,
+                    sink_rule_id: rule_id.to_string(),
+                    sink_description: finding.sink_description.clone(),
+                });
+            }
+        }
+    }
+
+    if params_to_sink.is_empty() && params_to_return.is_empty() {
+        return None;
+    }
+
+    Some(FunctionTaintSummary {
+        name: method_name.to_string(),
+        params_to_return,
+        params_to_sink,
+    })
+}
+
+/// Does `param_name`, treated as a taint source, reach a `return` statement?
+fn java_param_flows_to_return(method_node: Node<'_>, param_name: &str, source: &str) -> bool {
+    let synthetic = TaintSpec {
+        sources: vec![NodeMatcher::ParamName {
+            names: vec![param_name.to_string()],
+            description: format!("parameter '{param_name}'"),
+        }],
+        sinks: vec![],
+        sanitizers: vec![],
+    };
+    let body = find_scope_body(method_node).unwrap_or(method_node);
+    let mut state = TaintState::default();
+    collect_param_sources(method_node, source, &synthetic, &mut state);
+    for _ in 0..3 {
+        propagate_assignments(body, source, &synthetic, &mut state);
+    }
+
+    let mut flows = false;
+    walk_scope_nodes(body, source, &mut |node, src| {
+        if flows || node.kind() != "return_statement" {
+            return;
+        }
+        if let Some(expr) = node.named_child(0) {
+            if expression_taint(expr, src, &synthetic, &state).is_some() {
+                flows = true;
+            }
+        }
+    });
+    flows
+}
+
+/// Cross-file resolution info for the Java engine.
+///
+/// `same_package_paths` are the canonical paths of sibling Java files in the
+/// same directory (the same-package proxy); `summaries` is the pass-1 map
+/// keyed by canonical path; `allowed_rule_ids` gates which rules may emit
+/// cross-file findings in the current run.
+pub struct CrossFileInfo<'a> {
+    pub same_package_paths: &'a [PathBuf],
+    pub summaries: &'a CrossFileSummaryMap,
+    pub allowed_rule_ids: &'a HashSet<String>,
+}
+
+/// Pass 2 cross-file resolution: walk every scope, compute its intra-file
+/// taint state, and for each helper-method call that resolves to a sibling
+/// summary, emit a finding when a tainted argument lands on a parameter with
+/// a recorded sink flow.
+///
+/// Returns findings whose `rule_id_hint` carries the attributed rule id.
+pub fn extract_cross_file_findings(
+    root: Node<'_>,
+    source: &str,
+    rule_specs: &[(&str, TaintSpec)],
+    cross_file: &CrossFileInfo<'_>,
+) -> Vec<TaintFinding> {
+    // The caller-side taint state is driven by the real sources (shared
+    // across the built-in Java rules); union them so an inline source
+    // argument like `helper(request.getParameter("x"))` is recognized.
+    let mut source_spec = TaintSpec::default();
+    for (_, spec) in rule_specs {
+        source_spec.sources.extend(spec.sources.iter().cloned());
+        source_spec
+            .sanitizers
+            .extend(spec.sanitizers.iter().cloned());
+    }
+
+    let mut out = Vec::new();
+    walk_tree(root, source, &mut |node, src| {
+        if is_scope_node(node.kind()) {
+            resolve_cross_file_scope(node, src, &source_spec, cross_file, &mut out);
+        }
+    });
+    out
+}
+
+fn resolve_cross_file_scope(
+    scope_node: Node<'_>,
+    source: &str,
+    source_spec: &TaintSpec,
+    cross_file: &CrossFileInfo<'_>,
+    out: &mut Vec<TaintFinding>,
+) {
+    let body = find_scope_body(scope_node).unwrap_or(scope_node);
+    let mut state = TaintState::default();
+    collect_param_sources(scope_node, source, source_spec, &mut state);
+    for _ in 0..3 {
+        propagate_assignments(body, source, source_spec, &mut state);
+    }
+
+    walk_scope_nodes(body, source, &mut |node, src| {
+        if node.kind() != "method_invocation" {
+            return;
+        }
+        let Some(method_name) = call_method_name(node, src) else {
+            return;
+        };
+        let Some(summary) = lookup_cross_file_summary(cross_file, method_name) else {
+            return;
+        };
+        let Some(args) = node.child_by_field_name("arguments") else {
+            return;
+        };
+        let mut cursor = args.walk();
+        let arg_nodes: Vec<Node<'_>> = args.named_children(&mut cursor).collect();
+
+        for flow in &summary.params_to_sink {
+            if !cross_file.allowed_rule_ids.contains(&flow.sink_rule_id) {
+                continue;
+            }
+            if flow.param_index >= arg_nodes.len() {
+                continue;
+            }
+            let arg = arg_nodes[flow.param_index];
+            if let Some(info) = expression_taint(arg, src, source_spec, &state) {
+                out.push(cross_file_taint_finding(
+                    node,
+                    info.description,
+                    info.line,
+                    &flow.sink_description,
+                    method_name,
+                    &flow.sink_rule_id,
+                ));
+            }
+        }
+    });
+}
+
+fn lookup_cross_file_summary<'a>(
+    cross_file: &'a CrossFileInfo<'_>,
+    method_name: &str,
+) -> Option<&'a FunctionTaintSummary> {
+    for path in cross_file.same_package_paths {
+        if let Some(file_summaries) = cross_file.summaries.get(path) {
+            if let Some(summary) = file_summaries.iter().find(|s| s.name == method_name) {
+                return Some(summary);
+            }
+        }
+    }
+    None
 }
 
 fn analyze_scope(
@@ -773,6 +1032,75 @@ class Controller {
         assert!(
             findings.is_empty(),
             "literal command should not trigger taint: {findings:?}"
+        );
+    }
+
+    fn summaries(src: &str) -> Vec<FunctionTaintSummary> {
+        let Some(tree) = parse_file(src, Language::Java) else {
+            panic!("Java fixture should parse");
+        };
+        let specs = java_taint_rule_specs();
+        extract_cross_file_summaries(tree.root_node(), src, None, &specs)
+    }
+
+    #[test]
+    fn cross_file_summary_records_param_to_sink() {
+        let src = r#"
+class QueryHelper {
+    static Statement stmt;
+    public static void runQuery(String term) throws Exception {
+        stmt.executeQuery("SELECT * FROM users WHERE name = '" + term + "'");
+    }
+}
+"#;
+        let found = summaries(src);
+        let helper = found
+            .iter()
+            .find(|s| s.name == "runQuery")
+            .expect("runQuery should be summarized");
+        let flow = helper
+            .params_to_sink
+            .iter()
+            .find(|f| f.param_index == 0)
+            .expect("param 0 should reach a sink");
+        assert_eq!(flow.sink_rule_id, "java/taint-sql-injection");
+    }
+
+    #[test]
+    fn cross_file_summary_records_param_to_return() {
+        let src = r#"
+class Passthrough {
+    public static String clean(String value) {
+        return value.trim();
+    }
+}
+"#;
+        let found = summaries(src);
+        let helper = found
+            .iter()
+            .find(|s| s.name == "clean")
+            .expect("clean should be summarized");
+        assert!(
+            helper.params_to_return.contains(&0),
+            "param 0 should flow to the return value: {helper:?}"
+        );
+    }
+
+    #[test]
+    fn cross_file_summary_skips_methods_with_no_flow() {
+        // `log` neither sinks nor returns its parameter, so it must not be
+        // summarized at all.
+        let src = r#"
+class Plain {
+    public static void log(String message) {
+        System.out.println("constant");
+    }
+}
+"#;
+        let found = summaries(src);
+        assert!(
+            found.iter().all(|s| s.name != "log"),
+            "method with no param flow should not be summarized: {found:?}"
         );
     }
 

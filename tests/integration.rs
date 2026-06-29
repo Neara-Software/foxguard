@@ -1917,6 +1917,77 @@ mod cross_file {
         }
     }
 
+    /// Java cross-file taint: a `@RequestParam` source in `Handler.java`
+    /// flows into `QueryHelper.runQuery(name)`, a helper defined in a
+    /// sibling file whose parameter reaches an `executeQuery` SQL sink.
+    /// The two-pass scanner must connect the source to the cross-file sink
+    /// and emit exactly one `java/taint-sql-injection` finding.
+    #[test]
+    fn test_java_cross_file_taint_directory_scan() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/realistic/java_chain", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let sql_taint: Vec<&serde_json::Value> = findings
+            .iter()
+            .filter(|f| f["rule_id"].as_str() == Some("java/taint-sql-injection"))
+            .collect();
+
+        assert_eq!(
+            sql_taint.len(),
+            1,
+            "java/taint-sql-injection should fire exactly once cross-file on java_chain; got: {findings:?}"
+        );
+
+        // The single finding is reported in the *caller* file (Handler.java),
+        // at the cross-file helper call, and labelled as a cross-file flow.
+        let finding = sql_taint[0];
+        assert!(
+            finding["file"]
+                .as_str()
+                .is_some_and(|f| f.ends_with("Handler.java")),
+            "cross-file finding should be reported in Handler.java; got: {finding:?}"
+        );
+        assert!(
+            finding["sink_description"]
+                .as_str()
+                .is_some_and(|d| d.contains("via cross-file call to runQuery")),
+            "finding should be attributed to the cross-file helper call; got: {finding:?}"
+        );
+    }
+
+    /// Negative control for the Java cross-file pass: scanning only the
+    /// source file (`Handler.java`) — without the sibling helper that holds
+    /// the sink — must not produce a `java/taint-sql-injection` finding.
+    /// Single-file scans never run pass 1, so the helper body is unseen and
+    /// `runQuery` is not itself a sink.
+    #[test]
+    fn test_java_cross_file_taint_single_file_finds_nothing() {
+        let output = foxguard_cmd_isolated()
+            .args([
+                "tests/fixtures/realistic/java_chain/Handler.java",
+                "-f",
+                "json",
+            ])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let n = findings
+            .iter()
+            .filter(|f| f["rule_id"].as_str() == Some("java/taint-sql-injection"))
+            .count();
+
+        assert_eq!(
+            n, 0,
+            "java/taint-sql-injection must not fire when Handler.java is scanned alone; got: {findings:?}"
+        );
+    }
+
     /// Semgrep-compatible `mode: taint` YAML rules should load via `--rules`
     /// and fire on the same flows as the native `py/taint-pickle-deserialization`
     /// rule. See issue #17.

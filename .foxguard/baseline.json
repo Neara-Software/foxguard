@@ -290,76 +290,76 @@
       "line": 655
     },
     {
-      "fingerprint": "bea6d0599d9226782a834015ea477c71bb41bf5635469e1ce7f9ac2581982eb2",
+      "fingerprint": "5caef98440464c28d83cea82f2c6f975c19aa88fb37cba382ae708da01fde5f8",
       "rule_id": "rs/no-path-traversal",
       "file": "src/engine/scanner.rs",
-      "line": 226
+      "line": 227
     },
     {
-      "fingerprint": "8a29ed901c7af87c8e609d373c3e80a9aee6cf86ab35b75ffed7f2c6418400e2",
+      "fingerprint": "cb03ed6aa3bcd79b275ad48b9a94eb1665af8bd74388df8efb2de2f7ad1d70e4",
       "rule_id": "rs/no-path-traversal",
       "file": "src/engine/scanner.rs",
-      "line": 387
+      "line": 388
     },
     {
-      "fingerprint": "6a64bff2600867a2d0b5b505194c90d886429eb9f42c811620fd1eda740d02da",
+      "fingerprint": "0c2dfca92c33d777c41045af73e996f314f476f9c4c5c821988a32848f673213",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/engine/scanner.rs",
-      "line": 569
+      "line": 570
     },
     {
-      "fingerprint": "fdadb2483ae62e0ff70bcd0405b20350fff2cba5dd2ca84744cb1cb6386aa9f6",
+      "fingerprint": "191caede53a8c8bb39a4210c307652cacc8be5a2679aeaa1e346e63e30852f49",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/engine/scanner.rs",
-      "line": 577
+      "line": 578
     },
     {
-      "fingerprint": "0833de9b6fc5fb6112b42165a1f109e72dc3f1abcc7a30414914cd342ccfbd5e",
+      "fingerprint": "5ad1b7869e09e7f9dfd8ef7024c74ca9210e807bac61e14c5ef43f77b5c48e23",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/engine/scanner.rs",
-      "line": 584
+      "line": 585
     },
     {
-      "fingerprint": "5feb4a984547ee307c8675708d68926725880ce49c1adb7c9b4dad0833e293a0",
+      "fingerprint": "6fcbc92265737615a8063e63e98422d29ad8c6e9f903c41c397586929bacd13b",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/engine/scanner.rs",
-      "line": 1036
+      "line": 1118
     },
     {
-      "fingerprint": "4dd0c7006c261bd6c6de8236b6edf72f1b1689c28dbf64d4a49cc36846842951",
+      "fingerprint": "ecb0cc2844d2cac1a38106848081b915a96ecfaadafa39c69853616103d6ef5b",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/engine/scanner.rs",
-      "line": 1044
+      "line": 1126
     },
     {
-      "fingerprint": "2b2cab67d31bae808e95136b983f323808cf8c1d6bbf018de9471d8463f794d8",
+      "fingerprint": "f93088ee610da538d29068c655309a4741bcce65effe8615a0447c2885a4791d",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/engine/scanner.rs",
-      "line": 1061
+      "line": 1143
     },
     {
-      "fingerprint": "ceb41ba06de9f058dd87bd29b2d111ec74c686d01bda6b89328d6739fd3daac7",
+      "fingerprint": "8e27f9575068300570bd47a97c3cf0c1dc2480bf046aa114929d7c88ec85d73b",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/engine/scanner.rs",
-      "line": 1068
+      "line": 1150
     },
     {
-      "fingerprint": "4f98f4a931401c08131a6caa4b90a073d72dceb4568faa3cb0779dcc20f13d92",
+      "fingerprint": "bacee3784f1f7e14bfba200b7ddf5a11100469acba56eb4100c77a875b8264a6",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/engine/scanner.rs",
-      "line": 1090
+      "line": 1172
     },
     {
-      "fingerprint": "837c082b2157ab0ad08b187459cb625e1c69f6d8bf3ea9c4919c8e7c8a97c672",
+      "fingerprint": "7f8c0bb6b9d793595892d6187adf017a8daf8cdd3f368d2e772f99f0d62dce61",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/engine/scanner.rs",
-      "line": 1099
+      "line": 1181
     },
     {
-      "fingerprint": "520ba091f7c3b3e3a72d52333fe0c6a62e6404b528454b9367b5c9d0800b60cd",
+      "fingerprint": "5425a666ffd22ea11e5f9ab4e3e2c725cd5df5b1a3dce731cbf126d94a047808",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/engine/scanner.rs",
-      "line": 1108
+      "line": 1190
     },
     {
       "fingerprint": "464c8ccaaf6ec054b86a455e65b4052da35e8731775a26b908395e6708384671",
@@ -704,16 +704,16 @@
       "line": 2428
     },
     {
-      "fingerprint": "374b0ff66113994199b7d339a43ed0ad5d83bd7624b8b2c7fca1eafeaf910224",
+      "fingerprint": "eb75458a67eb2208df1fc6cbf82f82f2e6f419fa0947fefa4df49247c9336faa",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/semgrep_taint.rs",
-      "line": 2438
+      "line": 2462
     },
     {
-      "fingerprint": "b02c0c485e932ef0aff81736c3aefdda31bd3add3b1c860d0fa4352eeb319b43",
+      "fingerprint": "ab8b77f9928a3d155600ff07db8cf419e5abff0809ec775d3a442e9690edb5f5",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/semgrep_taint.rs",
-      "line": 3619
+      "line": 3774
     },
     {
       "fingerprint": "424f64ea7f4a86b3ab44825776456181b4afef3cf46e9275e382d746bc58799f",
@@ -1734,6 +1734,12 @@
       "rule_id": "js/no-document-write",
       "file": "tests/fixtures/realistic/hono_app.ts",
       "line": 52
+    },
+    {
+      "fingerprint": "45dd85d437f4fc1e8e4b05d37aca344b0b03419908f72ea8927a21e52700c4c8",
+      "rule_id": "java/no-sql-injection",
+      "file": "tests/fixtures/realistic/java_chain/QueryHelper.java",
+      "line": 17
     },
     {
       "fingerprint": "18ea51460cbd3d71d66d9492153feccd5109a280505731a940605efcf40f6752",
@@ -4862,10 +4868,10 @@
       "line": 1400
     },
     {
-      "fingerprint": "2954722afcdef70cb818a31240d03d4a2d5c1ef27d0d4a3016b63b73b6621834",
+      "fingerprint": "24aebc5d73d224cda874c5a9b37e38b3f41432d5bb42738eb0e1d7ab95d73c86",
       "rule_id": "rs/no-path-traversal",
       "file": "tests/integration.rs",
-      "line": 2685
+      "line": 2756
     },
     {
       "fingerprint": "9117a4b6813d43e352bbeba89c57d41ddd65427c55167738d626587d237b296d",

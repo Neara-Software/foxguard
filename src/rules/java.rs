@@ -1345,24 +1345,68 @@ fn map_java_taint_finding(
 }
 
 /// Run every enabled Java taint rule over `tree`.
+///
+/// Intra-file findings come from [`java_taint::analyze_tree`]. When the
+/// scanner supplied pass-1 cross-file summaries plus same-package sibling
+/// paths (multi-file Java scan), a second pass resolves helper-method calls
+/// to those summaries and emits cross-file findings. See `java_taint.rs`
+/// for the (name-based) resolution scope.
 pub fn run_java_taint_batched(
     source: &str,
     tree: &tree_sitter::Tree,
+    ctx: &crate::rules::FileContext<'_>,
     enabled_rule_ids: &std::collections::HashSet<&str>,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
-    for (rule_id, spec) in java_taint::java_taint_rule_specs() {
+    let rule_specs = java_taint::java_taint_rule_specs();
+    for (rule_id, spec) in &rule_specs {
         if !enabled_rule_ids.contains(rule_id) {
             continue;
         }
         let Some(meta) = java_taint_meta(rule_id) else {
             continue;
         };
-        let raw = java_taint::analyze_tree(tree.root_node(), source, &spec, None);
+        let raw = java_taint::analyze_tree(tree.root_node(), source, spec, None);
         for finding in raw {
             findings.push(map_java_taint_finding(&meta, source, finding));
         }
     }
+
+    // Cross-file resolution: only when pass-1 summaries and same-package
+    // sibling paths are both available (i.e. a multi-file Java scan).
+    if let (Some(summaries), Some(paths)) = (
+        ctx.cross_file_summaries,
+        ctx.java_same_package_paths.as_ref(),
+    ) {
+        let allowed: std::collections::HashSet<String> =
+            enabled_rule_ids.iter().map(|id| id.to_string()).collect();
+        let enabled_specs: Vec<(&str, java_taint::TaintSpec)> = rule_specs
+            .iter()
+            .filter(|(id, _)| enabled_rule_ids.contains(id))
+            .map(|(id, spec)| (*id, spec.clone()))
+            .collect();
+        let cross = java_taint::CrossFileInfo {
+            same_package_paths: paths,
+            summaries,
+            allowed_rule_ids: &allowed,
+        };
+        let raw = java_taint::extract_cross_file_findings(
+            tree.root_node(),
+            source,
+            &enabled_specs,
+            &cross,
+        );
+        for finding in raw {
+            let Some(rule_id) = finding.rule_id_hint.as_deref() else {
+                continue;
+            };
+            let Some(meta) = java_taint_meta(rule_id) else {
+                continue;
+            };
+            findings.push(map_java_taint_finding(&meta, source, finding));
+        }
+    }
+
     findings
 }
 

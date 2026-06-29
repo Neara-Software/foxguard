@@ -1,0 +1,8 @@
+scan:
+  baseline: .foxguard/baseline.json
+  ignore_rules:
+  - path: src/app.js
+    rules:
+    - js/no-eval
+secrets:
+  baseline: .foxguard/secrets-baseline.json
