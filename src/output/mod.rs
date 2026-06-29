@@ -46,6 +46,7 @@ pub fn emit_scan_report(
         ),
         OutputFormat::Sarif => emit_sarif(findings, args.output.as_deref()),
         OutputFormat::Cbom => emit_cbom(findings, args.output.as_deref()),
+        OutputFormat::SemgrepJson => emit_semgrep_json(findings, args.output.as_deref()),
     }
 }
 
@@ -75,6 +76,7 @@ pub fn emit_secrets_report(
         ),
         OutputFormat::Sarif => emit_sarif(findings, args.output.as_deref()),
         OutputFormat::Cbom => emit_cbom(findings, args.output.as_deref()),
+        OutputFormat::SemgrepJson => emit_semgrep_json(findings, args.output.as_deref()),
     }
 }
 
@@ -104,6 +106,7 @@ pub fn emit_diff_report(
         ),
         OutputFormat::Sarif => emit_sarif(findings, args.output.as_deref()),
         OutputFormat::Cbom => emit_cbom(findings, args.output.as_deref()),
+        OutputFormat::SemgrepJson => emit_semgrep_json(findings, args.output.as_deref()),
     }
 }
 
@@ -123,6 +126,13 @@ fn emit_sarif(findings: &[Finding], output_path: Option<&str>) -> Result<(), Str
     let content = serde_json::to_string_pretty(&sarif)
         .map_err(|e| format!("Failed to serialize SARIF: {e}"))?;
     write_report(&content, output_path, "SARIF")
+}
+
+fn emit_semgrep_json(findings: &[Finding], output_path: Option<&str>) -> Result<(), String> {
+    let doc = crate::report::semgrep_json::build_semgrep_json(findings);
+    let content = serde_json::to_string_pretty(&doc)
+        .map_err(|e| format!("Failed to serialize Semgrep JSON: {e}"))?;
+    write_report(&content, output_path, "Semgrep JSON")
 }
 
 fn emit_cbom(findings: &[Finding], output_path: Option<&str>) -> Result<(), String> {

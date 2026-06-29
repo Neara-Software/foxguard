@@ -74,6 +74,12 @@
       "line": 386
     },
     {
+      "fingerprint": "b8eb10230d96cb7f52990ea1a76ec3869b2052297be24190c0afd507b76bb741",
+      "rule_id": "rs/no-path-traversal",
+      "file": "examples/taint_diag.rs",
+      "line": 74
+    },
+    {
       "fingerprint": "3601d07229fb6207c7c995cdf6a09b45835040822f50c75516acafc6123deac3",
       "rule_id": "rs/no-path-traversal",
       "file": "src/app.rs",
@@ -368,28 +374,28 @@
       "line": 35
     },
     {
-      "fingerprint": "90a5b776d65fed0f8246fc0d0aebd5def54215a5d049e4363a2f7947e6667d2b",
+      "fingerprint": "ace6de8972214081f7b5ce8946bf23be069da0f4cc815d471c95d9a6d6d50581",
       "rule_id": "rs/no-path-traversal",
       "file": "src/output/mod.rs",
-      "line": 146
+      "line": 156
     },
     {
-      "fingerprint": "0728fb7a48c46be0ca9fb75d1d1f0b8c6110da9da718db9594eb675ab0973910",
+      "fingerprint": "3da21f30a603277eee1d946841d39dc2e5c95527ca7509b5d2c5cda2f7a4647c",
       "rule_id": "rs/no-path-traversal",
       "file": "src/output/mod.rs",
-      "line": 187
+      "line": 197
     },
     {
-      "fingerprint": "ea2f6470c0412f57b3644de02464e9a19b31e45921f43cb790a80e1071d8e02b",
+      "fingerprint": "993b64595dbf2095f5a59fd1b449ab70edb24d8b796fb9cd6b3bb6b460be4156",
       "rule_id": "rs/no-path-traversal",
       "file": "src/output/mod.rs",
-      "line": 191
+      "line": 201
     },
     {
-      "fingerprint": "5c3ea38e16db527321eed1fc35b9d94d66348490be1093fae084e90f1bd6bc9a",
+      "fingerprint": "ccb538846f69cc32a2788f00d2af0ef4619608c7e5b5f75cdb3f6ead54136ed1",
       "rule_id": "rs/no-path-traversal",
       "file": "src/output/mod.rs",
-      "line": 236
+      "line": 246
     },
     {
       "fingerprint": "dc364934659dee287c6ca3b292b5fee761104705b9b78aa2e6a6bfa1318288c4",
@@ -674,40 +680,40 @@
       "line": 19
     },
     {
-      "fingerprint": "5a2108b20a8830d3a5f42509e5004ab7b2f8ca8a94d5990083681ac08725c26e",
+      "fingerprint": "e74d4e751c6bbc572c88959a8c3e4bfc4899018d0b084cd36d0851a96ce8637f",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/semgrep_compat.rs",
-      "line": 996
+      "line": 1037
     },
     {
-      "fingerprint": "a7922c60dc1dc415411627741e2ce9de3ea42aa785e0deba30b95dbae29adfb2",
+      "fingerprint": "ac77718a4d471c22690579f21a400d38d1397ed5cb802d02da273bdc80a01c38",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/semgrep_compat.rs",
-      "line": 1004
+      "line": 1045
     },
     {
-      "fingerprint": "4713ba3a6f327fca2f9a0032d97e1065e2ff494e04ac74f15c6a1671310015fa",
+      "fingerprint": "efde28442b4cafc14ae13a3b82d1eb8a8dd51a4848ece19e08f84fd5251f73a1",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/semgrep_compat.rs",
-      "line": 1590
+      "line": 1631
     },
     {
-      "fingerprint": "6ee3bffe1a71bed07d13e9e7529c4c45ad631389f9e55cc97dc0a78da2c1d728",
+      "fingerprint": "3660bda7c0d441dc4f20ed2125d5f8e057762dd247ecd66c43d2b93f4b967a6e",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/semgrep_compat.rs",
-      "line": 2387
+      "line": 2428
     },
     {
-      "fingerprint": "ad8afcbd82fab02f4e2b04a8e1c42b6eac79220632efe11aa1d49785bd5e6f0a",
+      "fingerprint": "374b0ff66113994199b7d339a43ed0ad5d83bd7624b8b2c7fca1eafeaf910224",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/semgrep_taint.rs",
-      "line": 2298
+      "line": 2438
     },
     {
-      "fingerprint": "2675a2c701a5630748cd9f6115d371f0c4c6bdf3abad217b8e67abf792f0fb87",
+      "fingerprint": "b02c0c485e932ef0aff81736c3aefdda31bd3add3b1c860d0fa4352eeb319b43",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/semgrep_taint.rs",
-      "line": 3462
+      "line": 3619
     },
     {
       "fingerprint": "424f64ea7f4a86b3ab44825776456181b4afef3cf46e9275e382d746bc58799f",

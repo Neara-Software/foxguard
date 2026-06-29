@@ -3,12 +3,16 @@ use clap::{Args, Parser, Subcommand};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum OutputFormat {
     Terminal,
     Json,
     Sarif,
     Cbom,
+    /// Semgrep CLI-compatible JSON (`results[]` with `check_id`/`extra`),
+    /// for pipelines that consume `semgrep --json`.
+    #[value(name = "semgrep-json")]
+    SemgrepJson,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Deserialize)]
