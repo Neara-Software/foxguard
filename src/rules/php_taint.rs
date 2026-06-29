@@ -281,6 +281,162 @@ pub fn php_taint_sanitizers() -> Vec<NodeMatcher> {
     ]
 }
 
+// ─── Built-in rule specs ───────────────────────────────────────────────────
+
+/// All PHP taint rule IDs paired with their specs.
+///
+/// Consumed by [`crate::rules::builtin_taint_specs_for_language`]. Each rule
+/// reuses the shared [`php_taint_sources`] and [`php_taint_sanitizers`]
+/// aggregates and curates the subset of [`php_taint_sinks`] relevant to that
+/// vulnerability class. The five highest-value PHP flows are covered:
+/// command injection, SQL injection, XSS (output), local/remote file
+/// inclusion, and unsafe deserialization.
+pub fn php_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
+    vec![
+        ("php/taint-command-injection", command_injection_spec()),
+        ("php/taint-sql-injection", sql_injection_spec()),
+        ("php/taint-xss", xss_spec()),
+        ("php/taint-file-inclusion", file_inclusion_spec()),
+        (
+            "php/taint-unsafe-deserialization",
+            unsafe_deserialization_spec(),
+        ),
+    ]
+}
+
+fn command_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: php_taint_sources(),
+        sinks: vec![
+            NodeMatcher::Call {
+                canonical: "system".into(),
+                description: "system() with tainted argument (OS command injection)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "exec".into(),
+                description: "exec() with tainted argument (OS command injection)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "shell_exec".into(),
+                description: "shell_exec() with tainted argument (OS command injection)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "passthru".into(),
+                description: "passthru() with tainted argument (OS command injection)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "popen".into(),
+                description: "popen() with tainted argument (OS command injection)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "proc_open".into(),
+                description: "proc_open() with tainted argument (OS command injection)".into(),
+            },
+        ],
+        sanitizers: php_taint_sanitizers(),
+    }
+}
+
+fn sql_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: php_taint_sources(),
+        sinks: vec![
+            // Procedural MySQL APIs.
+            NodeMatcher::Call {
+                canonical: "mysqli_query".into(),
+                description: "mysqli_query() with tainted query (SQL injection)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "mysql_query".into(),
+                description: "mysql_query() with tainted query (SQL injection)".into(),
+            },
+            // PDO method calls: $pdo->query / ->exec / ->prepare.
+            NodeMatcher::MethodName {
+                method: "query".into(),
+                description: "->query() with tainted query (SQL injection)".into(),
+            },
+            NodeMatcher::MethodName {
+                method: "exec".into(),
+                description: "->exec() with tainted query (SQL injection)".into(),
+            },
+            NodeMatcher::MethodName {
+                method: "prepare".into(),
+                description: "->prepare() with tainted query (SQL injection)".into(),
+            },
+        ],
+        sanitizers: php_taint_sanitizers(),
+    }
+}
+
+fn xss_spec() -> TaintSpec {
+    TaintSpec {
+        sources: php_taint_sources(),
+        sinks: vec![
+            // `echo` is an `echo_statement`; `print` is a `print_intrinsic`;
+            // `printf` is a `function_call_expression`. All three are
+            // dispatched in `dispatch_walk_node`.
+            NodeMatcher::Call {
+                canonical: "echo".into(),
+                description: "echo of tainted value (reflected XSS)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "print".into(),
+                description: "print of tainted value (reflected XSS)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "printf".into(),
+                description: "printf() of tainted value (reflected XSS)".into(),
+            },
+        ],
+        sanitizers: php_taint_sanitizers(),
+    }
+}
+
+fn file_inclusion_spec() -> TaintSpec {
+    TaintSpec {
+        sources: php_taint_sources(),
+        sinks: vec![
+            // PHP `include`/`require` (+`_once`) are language constructs
+            // parsed as `include_expression` / `require_expression` /
+            // `include_once_expression` / `require_once_expression`, NOT
+            // `function_call_expression`. They are dispatched separately in
+            // `dispatch_walk_node` (see `handle_include_require`).
+            NodeMatcher::Call {
+                canonical: "include".into(),
+                description: "include of tainted path (local/remote file inclusion)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "require".into(),
+                description: "require of tainted path (local/remote file inclusion)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "include_once".into(),
+                description: "include_once of tainted path (local/remote file inclusion)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "require_once".into(),
+                description: "require_once of tainted path (local/remote file inclusion)".into(),
+            },
+        ],
+        sanitizers: php_taint_sanitizers(),
+    }
+}
+
+fn unsafe_deserialization_spec() -> TaintSpec {
+    TaintSpec {
+        sources: php_taint_sources(),
+        sinks: vec![NodeMatcher::Call {
+            canonical: "unserialize".into(),
+            description: "unserialize() of tainted data (unsafe deserialization)".into(),
+        }],
+        // No broadly-accepted sanitizer for unserialize() — gadget chains
+        // bypass `allowed_classes` filtering in practice, so a tainted
+        // reaches-sink is always reported. Users should replace the sink
+        // with `json_decode` rather than sanitize the input.
+        sanitizers: vec![],
+    }
+}
+
 // ─── Language adapter ─────────────────────────────────────────────────────
 
 struct PhpTaintAdapter;
@@ -322,6 +478,21 @@ impl TaintLanguageAdapter<()> for PhpTaintAdapter {
         // echo is a statement in PHP grammar, not a function call node
         if node.kind() == "echo_statement" {
             handle_echo(node, ctx, state, findings);
+        }
+        // `print` is a language construct parsed as `print_intrinsic`.
+        if node.kind() == "print_intrinsic" {
+            handle_print(node, ctx, state, findings);
+        }
+        // `include`/`require` (+`_once`) are language constructs parsed as
+        // `*_expression` nodes, not function calls.
+        if matches!(
+            node.kind(),
+            "include_expression"
+                | "include_once_expression"
+                | "require_expression"
+                | "require_once_expression"
+        ) {
+            handle_include_require(node, ctx, state, findings);
         }
     }
 
@@ -549,6 +720,104 @@ fn handle_echo(
     }
 }
 
+/// Handle `print_intrinsic`: `print $x;` / `print($x);` is an XSS sink.
+///
+/// Mirrors [`handle_echo`]. `print` is a PHP language construct parsed as a
+/// `print_intrinsic` node whose single named child is the printed expression
+/// (either a bare expression or a `parenthesized_expression`).
+fn handle_print(
+    node: Node<'_>,
+    ctx: &PhpCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let print_sink_desc = ctx.spec.sinks.iter().find_map(|m| {
+        if let NodeMatcher::Call {
+            canonical,
+            description,
+        } = m
+        {
+            if canonical == "print" {
+                Some(description.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+    let Some(sink_desc) = print_sink_desc else {
+        return;
+    };
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some((source_desc, src_line)) = expression_taint(child, ctx, state) {
+            findings.push(taint_finding_for_node(
+                node,
+                source_desc,
+                sink_desc.clone(),
+                src_line,
+                None,
+                1,
+            ));
+            return;
+        }
+    }
+}
+
+/// Handle `include`/`require` (+`_once`) language constructs: a tainted
+/// included path is a local/remote file inclusion sink.
+///
+/// PHP parses these as `include_expression` / `include_once_expression` /
+/// `require_expression` / `require_once_expression`. The canonical sink name
+/// is derived by stripping the trailing `_expression` from the node kind
+/// (e.g. `include_once_expression` → `include_once`), matching the
+/// `NodeMatcher::Call` canonicals in [`file_inclusion_spec`]. The included
+/// expression is the sole named child.
+fn handle_include_require(
+    node: Node<'_>,
+    ctx: &PhpCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let kind = node.kind();
+    let canonical = kind.strip_suffix("_expression").unwrap_or(kind);
+    let sink_desc = ctx.spec.sinks.iter().find_map(|m| {
+        if let NodeMatcher::Call {
+            canonical: c,
+            description,
+        } = m
+        {
+            if c.as_str() == canonical {
+                Some(description.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+    let Some(sink_desc) = sink_desc else {
+        return;
+    };
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some((source_desc, src_line)) = expression_taint(child, ctx, state) {
+            findings.push(taint_finding_for_node(
+                node,
+                source_desc,
+                sink_desc.clone(),
+                src_line,
+                None,
+                1,
+            ));
+            return;
+        }
+    }
+}
+
 /// Check `arguments` of a call/method node for tainted arguments reaching a sink.
 fn check_args_for_sink(
     node: Node<'_>,
@@ -633,6 +902,18 @@ fn expression_taint(
         let name = node_text(expr, ctx.source);
         if let Some(info) = state.info(name) {
             return Some((info.description.clone(), info.line));
+        }
+    }
+
+    // ── Parenthesized expression: `($tainted)` ────────────────────────────
+    // Parens are semantically transparent — recurse into the sole named child.
+    // Covers parenthesized forms such as `print($x)`, `include($x)`, and
+    // `system(($x))`.
+    if expr.kind() == "parenthesized_expression" {
+        if let Some(inner) = expr.named_child(0) {
+            if let Some(result) = expression_taint(inner, ctx, state) {
+                return Some(result);
+            }
         }
     }
 

@@ -74,12 +74,6 @@
       "line": 386
     },
     {
-      "fingerprint": "7002967a8eedb4cf9bf636b5f1a657d382fe1bff1fbf04480fc2720cffed7ce8",
-      "rule_id": "rs/no-path-traversal",
-      "file": "examples/taint_diag.rs",
-      "line": 56
-    },
-    {
       "fingerprint": "3601d07229fb6207c7c995cdf6a09b45835040822f50c75516acafc6123deac3",
       "rule_id": "rs/no-path-traversal",
       "file": "src/app.rs",
@@ -236,24 +230,6 @@
       "line": 566
     },
     {
-      "fingerprint": "79dfe4b7298094e25dc36f34a97b4d87f76f17909b96672c1dc16597c1361edb",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/config.rs",
-      "line": 1014
-    },
-    {
-      "fingerprint": "e60c8b6f5c0a36a069c06bb2182737d824ab65d2fc3180316914df027419fc30",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/config.rs",
-      "line": 1051
-    },
-    {
-      "fingerprint": "d58714e2235512273ed1a406facb30d1cfc14763af38d895b7f480371fa8b2da",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/config.rs",
-      "line": 1052
-    },
-    {
       "fingerprint": "8743008557f19d2733cb4ffcbe4230d659d74b3610778ec6c10d8cbeec65cd7c",
       "rule_id": "rs/no-path-traversal",
       "file": "src/diff.rs",
@@ -390,30 +366,6 @@
       "rule_id": "rs/no-path-traversal",
       "file": "src/git.rs",
       "line": 35
-    },
-    {
-      "fingerprint": "5d315de54a14d36976745097224aa9bb5a8288313abc10a72468a83be1f6e0cd",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/main.rs",
-      "line": 139
-    },
-    {
-      "fingerprint": "d75ed31bcc0f9cd23639c4f23b5afe310e01d81f15ff2dddf929c4f84ad24516",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/main.rs",
-      "line": 147
-    },
-    {
-      "fingerprint": "049a80f0ba0bc17490a7a40b4814cc392cbf20f55a154af2838e5157456e914b",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/main.rs",
-      "line": 152
-    },
-    {
-      "fingerprint": "352940cb2c2176bc685db52ae3dee8f726f46f10a5d3d013e94c3153b3454056",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/main.rs",
-      "line": 280
     },
     {
       "fingerprint": "90a5b776d65fed0f8246fc0d0aebd5def54215a5d049e4363a2f7947e6667d2b",
@@ -710,10 +662,10 @@
       "line": 49
     },
     {
-      "fingerprint": "b8b1cd44ce08967582d35330b5f944a184d9f8dad8bf2761fca436ced48b65ea",
+      "fingerprint": "f2283e2dfa6d29ad0bd0f800bb56a36cce694edba58826e68e49f3eaef4fbf08",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/php.rs",
-      "line": 22
+      "line": 23
     },
     {
       "fingerprint": "d713b0625cc1279c1d0e6f8193d63837efd877a6d739cdeceae2ba78c1caf936",
@@ -2094,6 +2046,18 @@
       "rule_id": "js/no-xss-innerhtml",
       "file": "tests/fixtures/safe_nextjs_taint.ts",
       "line": 22
+    },
+    {
+      "fingerprint": "ad718181d7d3cf36f7a1b5b83fd898bbdc2f6f5fa478c518790c85ccbe98509b",
+      "rule_id": "php/no-command-injection",
+      "file": "tests/fixtures/safe_php_taint.php",
+      "line": 16
+    },
+    {
+      "fingerprint": "bc7192710b6f18ae27aea656ced577b2af6a4f1b627a463786d378453f1402c7",
+      "rule_id": "php/no-unserialize",
+      "file": "tests/fixtures/safe_php_taint.php",
+      "line": 53
     },
     {
       "fingerprint": "bbff26802e3d60dc88c31b39af8e3c70549fa07aae05bcd32373b4ae5eb6c1d4",
@@ -4350,6 +4314,24 @@
       "rule_id": "js/no-document-write",
       "file": "tests/fixtures/vulnerable_nextjs_taint.ts",
       "line": 19
+    },
+    {
+      "fingerprint": "f4c56e53dbf4f97675ecb3e559263a4f9a6f30e35d5f4ed1fdf2b34a96858ed3",
+      "rule_id": "php/no-command-injection",
+      "file": "tests/fixtures/vulnerable_php_taint.php",
+      "line": 11
+    },
+    {
+      "fingerprint": "6f9e53c677ebd83ed837ff76ef243d0dc409fe4d4947b158fee42b73886bfcc7",
+      "rule_id": "php/no-file-inclusion",
+      "file": "tests/fixtures/vulnerable_php_taint.php",
+      "line": 32
+    },
+    {
+      "fingerprint": "2cf0abb8b4772e12d779d93a79407ae43d405043ea85359c89f8da4e9ce5f9fb",
+      "rule_id": "php/no-unserialize",
+      "file": "tests/fixtures/vulnerable_php_taint.php",
+      "line": 39
     },
     {
       "fingerprint": "91ae20fa132bac2d728a99c352ff61ca8854bd4a597b4cc1479191ab09a11c36",
