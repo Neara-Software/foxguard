@@ -416,6 +416,47 @@ impl fmt::Debug for CompiledAstPattern {
     }
 }
 
+impl CompiledAstPattern {
+    /// Compile a Semgrep pattern string for use as a negative (exclusion)
+    /// matcher — the `pattern-not` constraint inside a taint `patterns:`
+    /// AND-block. Returns `None` when the pattern does not parse into a
+    /// usable tree-sitter pattern node, so callers can warn and skip
+    /// instead of silently storing an unmatchable pattern.
+    ///
+    /// This reuses the same compilation path as SEARCH-mode `pattern-not`
+    /// (see `build_matcher`), so positive and negative patterns agree on
+    /// grammar handling, metavariable rewriting, and ellipsis behaviour.
+    pub(crate) fn try_new(pattern: &str, lang: Language) -> Option<Self> {
+        let compiled = Self::new(pattern.to_string(), lang);
+        if compiled.pattern_node().is_some() {
+            Some(compiled)
+        } else {
+            None
+        }
+    }
+
+    /// Run this pattern against every node in `root` and return `true` if
+    /// any match's byte range overlaps the half-open `[start_byte, end_byte)`
+    /// span — i.e. the pattern matches *at* the candidate location.
+    ///
+    /// Used by the taint bridge's post-filter to enforce `pattern-not`
+    /// against a finding's sink node: if a negative pattern matches the
+    /// sink's range, the finding is suppressed. The overlap test mirrors
+    /// SEARCH mode's `ranges_overlap` semantics (`build_matcher`), keeping
+    /// positive/negative intersection behaviour consistent across modes.
+    pub(crate) fn overlaps_range(
+        &self,
+        root: tree_sitter::Node<'_>,
+        source: &str,
+        start_byte: usize,
+        end_byte: usize,
+    ) -> bool {
+        match_single_pattern(self, root, source)
+            .iter()
+            .any(|m| m.start_byte < end_byte && start_byte < m.end_byte)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PathFilter {
     include: Option<GlobSet>,
