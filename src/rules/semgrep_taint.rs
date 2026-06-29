@@ -2337,6 +2337,30 @@ fn compile_entry(
                     return;
                 }
             }
+            // ── Regex-bounded metavariable-RECEIVER SINK shape ──────────────
+            //
+            // The receiver-side analogue of the regex-bounded callee shape: a
+            // `patterns:` AND-block that pairs a metavariable-receiver call with
+            // a CONCRETE method (`$OBJ.method(...)`) and a `metavariable-regex`
+            // whose anchored alternation pins the *receiver* metavariable, e.g.
+            //
+            //   patterns:
+            //     - pattern: $CONN.execute(...)
+            //     - metavariable-regex: { metavariable: $CONN, regex: ^(db|conn)$ }
+            //
+            // Without the pin, `$OBJ.method(...)` compiles (via the normal
+            // pattern path) to a receiver-agnostic `MethodName { method }` sink
+            // that fires on EVERY `*.method(...)` call, and the receiver
+            // `metavariable-regex` is dropped — a documented broadening / FP.
+            // WITH an anchored-alternation pin we enumerate one concrete
+            // `Call { canonical: "<recv>.method" }` per listed receiver, so only
+            // calls whose receiver is a named identifier fire. Sink/sanitizer
+            // only — a call argument is a destination, not an origin.
+            if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
+                if try_compile_regex_constrained_receiver_block(v, role, out) {
+                    return;
+                }
+            }
             // `patterns:` is a Semgrep AND-block: all sub-items must hold
             // simultaneously. foxguard's taint engine cannot express all AND
             // semantics (no nested scope / contextual constraints), so we
@@ -3088,6 +3112,137 @@ fn try_compile_regex_constrained_callee_block(
             out.push(GenericMatcher::MethodNameRegex { regex, description });
         } else {
             out.push(GenericMatcher::CallRegex { regex, description });
+        }
+    }
+
+    out.len() > before
+}
+
+/// If `pat` is a call whose callee is `$OBJ.method` — a single Semgrep
+/// metavariable receiver segment followed by exactly one plain-identifier
+/// method (no further dots) — return `(receiver_metavariable, method)`.
+///
+/// This is the shape that the normal pattern compiler turns into a
+/// receiver-agnostic `MethodName { method }` sink (see
+/// [`parse_metavar_dot_method`]); recognising it here lets a companion
+/// `metavariable-regex` on the receiver pin the otherwise-any receiver.
+/// A concrete receiver (`db.method` — already a plain `Call`), a metavariable
+/// method (`$OBJ.$M` — handled by the callee-regex path), or a nested receiver
+/// (`$OBJ.sub.method`) all return `None`.
+fn metavar_receiver_concrete_method(pat: &str) -> Option<(String, String)> {
+    let c = pat.trim().trim_end_matches(';').trim();
+    let open = c.find('(')?;
+    if !c.ends_with(')') {
+        return None;
+    }
+    let callee = c[..open].trim();
+    let dot = callee.find('.')?;
+    let recv = &callee[..dot];
+    let method = &callee[dot + 1..];
+    if is_metavariable(recv) && !method.contains('.') && is_identifier(method) {
+        Some((recv.to_string(), method.to_string()))
+    } else {
+        None
+    }
+}
+
+/// Collect, across a `patterns:` block (recursing into `pattern-either:`),
+/// every metavariable-receiver concrete-method call shape (`$OBJ.method(...)`)
+/// from `pattern:` texts and every `metavariable-regex` (metavariable, regex)
+/// pin. Companion to [`collect_regex_callee_parts`] for the receiver side.
+fn collect_regex_receiver_parts(
+    items: &[YamlValue],
+    receivers: &mut Vec<(String, String)>,
+    pins: &mut Vec<(String, String)>,
+) {
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (key, val) in map {
+            match key.as_str() {
+                Some("pattern") => {
+                    if let Some(text) = val.as_str() {
+                        if let Some(rm) = metavar_receiver_concrete_method(text) {
+                            receivers.push(rm);
+                        }
+                    }
+                }
+                Some("metavariable-regex") => {
+                    if let Some(mm) = val.as_mapping() {
+                        let mv = mm
+                            .get(YamlValue::from("metavariable"))
+                            .and_then(|x| x.as_str());
+                        let re = mm.get(YamlValue::from("regex")).and_then(|x| x.as_str());
+                        if let (Some(mv), Some(re)) = (mv, re) {
+                            pins.push((mv.to_string(), re.to_string()));
+                        }
+                    }
+                }
+                Some("pattern-either") => {
+                    if let Some(seq) = val.as_sequence() {
+                        collect_regex_receiver_parts(seq, receivers, pins);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Try to recognise the "regex-bounded metavariable-RECEIVER" SINK shape: a
+/// `patterns:` AND-block pairing a metavariable-receiver concrete-method call
+/// (`$OBJ.method(...)`) with a `metavariable-regex` whose anchored alternation
+/// pins the receiver metavariable `$OBJ` to a fixed set of plain-identifier
+/// receiver names.
+///
+/// On recognition, enumerates one concrete [`GenericMatcher::Call`]
+/// (`canonical: "<recv>.method"`) per listed receiver name and returns `true`.
+/// The exact-callee `Call` sink matching in
+/// [`taint_engine::match_call_sink`] then fires only when the resolved callee
+/// equals one of those names — strictly narrower than the receiver-agnostic
+/// `MethodName { method }` the unpinned pattern would otherwise produce.
+///
+/// Returns `false` (pushing nothing) when the receiver is not pinned by an
+/// *anchored alternation of plain identifiers* — a general receiver regex has
+/// no exact-callee enumeration, so the entry falls through to the normal
+/// graceful-degradation extraction (still the broad `MethodName`). Only the
+/// Sink/Sanitizer roles call this.
+///
+/// Deferral (FP-safe narrowing): an enumerated `Call { "<recv>.method" }`
+/// requires the runtime receiver to equal one listed name *exactly*; a deeper
+/// receiver chain (`a.b.method`, where Semgrep would bind `$OBJ = a.b`) is
+/// intentionally NOT matched. We never over-fire.
+fn try_compile_regex_constrained_receiver_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+    let mut receivers: Vec<(String, String)> = Vec::new();
+    let mut pins: Vec<(String, String)> = Vec::new();
+    collect_regex_receiver_parts(items, &mut receivers, &mut pins);
+
+    if receivers.is_empty() || pins.is_empty() {
+        return false;
+    }
+
+    let before = out.len();
+    for (recv_mv, method) in &receivers {
+        // The receiver metavariable MUST be pinned by an anchored alternation of
+        // plain identifiers; otherwise we stay FP-safe and let the entry fall
+        // through to the broad `MethodName` extraction.
+        let Some(names) = regex_alternatives_for(recv_mv, &pins) else {
+            continue;
+        };
+        for name in names {
+            let canonical = format!("{name}.{method}");
+            out.push(GenericMatcher::Call {
+                description: describe(&canonical, role),
+                canonical,
+            });
         }
     }
 
@@ -8700,6 +8855,143 @@ pattern-sinks:
         assert!(
             matches!(parse_taint_rule(&v), TaintRuleParse::Skip(_)),
             "a bare-metavar callee sink with no metavariable-regex pin must not compile"
+        );
+    }
+
+    // ── Regex-bounded metavariable-RECEIVER SINK shape ──────────────────────
+
+    /// `$OBJ.method(...)` + an anchored-alternation `metavariable-regex` on the
+    /// RECEIVER `$OBJ` → enumerated concrete `Call { "<recv>.method" }` sinks.
+    /// A tainted value reaching `db.execute(...)` (receiver in the alternation)
+    /// FIRES; the same method on a receiver NOT in the alternation
+    /// (`session.execute(...)`) does NOT fire — proving the receiver regex is
+    /// enforced at match time instead of being dropped to a receiver-agnostic
+    /// `MethodName`.
+    #[test]
+    fn receiver_regex_sink_fires_on_matching_receiver_and_not_on_near_miss() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-db-execute
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted input reaches a db/conn execute()"
+pattern-sources:
+  - pattern: input(...)
+pattern-sinks:
+  - patterns:
+      - pattern: $CONN.execute(...)
+      - metavariable-regex:
+          metavariable: $CONN
+          regex: ^(db|conn)$
+"#,
+        );
+
+        // Receiver `db` is in the alternation → must fire.
+        let fire_src = r#"
+def handler():
+    data = input()
+    db.execute(data)
+"#;
+        let tree = parse_file(fire_src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(fire_src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "tainted value into db.execute() (receiver matches the regex) must fire, got {:?}",
+            findings
+        );
+
+        // Near-miss: receiver `session` is NOT in the alternation → must NOT fire.
+        let miss_src = r#"
+def handler():
+    data = input()
+    session.execute(data)
+"#;
+        let tree = parse_file(miss_src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(miss_src, &tree);
+        assert!(
+            findings.is_empty(),
+            "tainted value into a receiver NOT matching the regex must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Control: the SAME `$OBJ.method(...)` sink WITHOUT the receiver
+    /// `metavariable-regex` compiles to a receiver-agnostic `MethodName` and
+    /// therefore OVER-FIRES on the near-miss receiver — demonstrating the
+    /// broadening that the receiver-regex pin removes.
+    #[test]
+    fn receiver_method_sink_without_pin_overfires_on_any_receiver() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-any-execute
+mode: taint
+languages: [python]
+severity: ERROR
+message: "Tainted input reaches any .execute()"
+pattern-sources:
+  - pattern: input(...)
+pattern-sinks:
+  - pattern: $CONN.execute(...)
+"#,
+        );
+
+        // Without the receiver pin, ANY `*.execute(...)` receiver fires — this is
+        // the over-fire the pinned rule above suppresses.
+        let miss_src = r#"
+def handler():
+    data = input()
+    session.execute(data)
+"#;
+        let tree = parse_file(miss_src, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(miss_src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "an unpinned `$OBJ.execute(...)` sink fires on any receiver (the broadening), got {:?}",
+            findings
+        );
+    }
+
+    /// A metavariable-receiver concrete-method sink whose receiver pin is a
+    /// GENERAL (non-alternation) regex is NOT enumerable to exact callees, so
+    /// the receiver-regex recognizer declines and the entry falls through to
+    /// the broad `MethodName` extraction — i.e. it still compiles (no panic, no
+    /// FP-unsafe relaxation), proving the recognizer is bounded to anchored
+    /// alternations of plain identifiers.
+    #[test]
+    fn receiver_regex_general_regex_falls_through_to_method_name() {
+        let g = compiled(
+            r#"
+id: py-general-receiver
+mode: taint
+languages: [python]
+severity: ERROR
+message: "x"
+pattern-sources:
+  - pattern: input(...)
+pattern-sinks:
+  - patterns:
+      - pattern: $CONN.execute(...)
+      - metavariable-regex:
+          metavariable: $CONN
+          regex: ^db.*$
+"#,
+        )
+        .spec;
+        // A general receiver regex cannot enumerate exact callees, so the sink
+        // degrades to the receiver-agnostic `MethodName { execute }` rather than
+        // an enumerated `Call`.
+        assert_eq!(g.sinks.len(), 1, "expected a single fallback sink matcher");
+        assert!(
+            matches!(&g.sinks[0], GenericMatcher::MethodName { method, .. } if method == "execute"),
+            "a general receiver regex must fall through to MethodName, got {:?}",
+            g.sinks[0]
         );
     }
 }
