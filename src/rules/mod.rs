@@ -316,6 +316,9 @@ pub struct FileContext<'a> {
     /// share the same package and can call each other's functions.
     /// Excludes the current file itself.
     pub go_same_package_paths: Option<Vec<std::path::PathBuf>>,
+    /// Java same-package file paths (same-directory proxy). Used to resolve
+    /// cross-file helper-method calls by name. Excludes the current file.
+    pub java_same_package_paths: Option<Vec<std::path::PathBuf>>,
     /// Per-scan hardcoded-secret thresholds captured from the registry.
     pub secret_thresholds: common::SecretScanThresholds,
 }

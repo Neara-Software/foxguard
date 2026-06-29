@@ -29,7 +29,7 @@ The taint engine supports:
 Known limitations:
 
 - **Multi-hop interprocedural chains**: only one level of helper-call propagation is supported. A helper that itself calls another helper is not tracked through the deeper hop.
-- **Cross-file**: Cross-file taint is supported for Python (import resolution), JavaScript (require/import/export default), and Go (same-package) via two-pass function summary analysis. Kotlin, C, and Java are intrafile today.
+- **Cross-file**: Cross-file taint is supported for Python (import resolution), JavaScript (require/import/export default), Go (same-package), and Java (same-directory, name-based method resolution) via two-pass function summary analysis. Kotlin and C are intrafile today. The Java cross-file pass resolves a helper-method call to a summarized method *by method name* within the same directory (a same-package proxy); it does not model type-based instance dispatch, interface/subclass dispatch, overload selection, cross-package `import` resolution, or multi-hop chains. See "Supported Java frameworks" below.
 - **Instance and class methods in interprocedural summaries**: only top-level `function_declaration`s and `const/let/var foo = ...` arrow/function-expression helpers are summarized. `obj.method()` and `self.helper()` calls are not looked up in the summary map.
 - **Argument taint propagation**: helper summaries are computed with only their parameters' taint sources seeded (via `ParamName`). Passing an already-tainted local into a helper does not influence the helper's return summary — pass 1 analyzes helpers with a conservative view of their parameters.
 - **Per-finding sanitization**: Semgrep's `mode: taint` distinguishes "this specific flow was sanitized" from "the value is now clean"; it can still fire on secondary flows that bypassed the sanitizer along a different path. foxguard's v1 collapses both cases into "clean" and does not track per-finding sanitization state.
@@ -167,7 +167,7 @@ Taint rules do not replace direct-sink rules. For example, `py/no-pickle` fires 
 
 ## Performance
 
-The taint engines run only for languages with enabled taint-backed rules. Each walk is over the already-parsed AST with small in-memory state. No additional parsing, no network, no disk. Go, Python, and JavaScript batch compatible taint rules to avoid repeated summary walks; Kotlin, C, and Java use lightweight intrafile dispatchers.
+The taint engines run only for languages with enabled taint-backed rules. Each walk is over the already-parsed AST with small in-memory state. No additional parsing, no network, no disk. Go, Python, and JavaScript batch compatible taint rules to avoid repeated summary walks; Kotlin and C use lightweight intrafile dispatchers. Java uses an intrafile dispatcher plus an optional cross-file pass that only runs when more than one Java file is scanned.
 
 ## Semgrep-compatible YAML bridge
 
@@ -315,7 +315,27 @@ Sources currently covered:
   parity coverage, and Java fixtures in this repo, so #449 chose Java as
   the lower-risk next taint engine.
 - **Scope**: method, constructor, and lambda bodies are analyzed
-  independently. There is no Java cross-file/type-resolution pass yet.
+  independently.
+- **Cross-file (name-based, same-package proxy)**: when more than one Java
+  file is scanned, pass 1 builds a [`FunctionTaintSummary`] for every method
+  declaration (keyed by the bare method name, last-write-wins on collisions),
+  recording which parameters reach a sink (`params_to_sink`) and which flow to
+  a return value (`params_to_return`). Pass 2 resolves a `method_invocation`
+  to a summary whenever the invoked method name matches a summarized method in
+  a *sibling file of the same directory* (used as a same-package proxy, the
+  way the Go engine treats same-directory `.go` files). A tainted argument
+  landing on a parameter with a recorded sink flow produces a cross-file
+  finding in the caller file, labelled `... (via cross-file call to <name>)`.
+  This is deliberately the **tractable subset**: resolution is by method name
+  and argument arity only.
+  - **Not covered** (needs a Java type/symbol table the engine does not
+    build): type-based instance-method dispatch (`helper.process(x)` resolving
+    via `helper`'s declared type → class → file), interface/subclass dispatch,
+    overload selection by parameter *types*, `import`-based class resolution
+    across packages/directories, and multi-hop chains (a cross-file helper
+    that itself calls another cross-file helper). Name-based resolution
+    intentionally over-approximates: any same-package method whose name and
+    arity match will resolve, regardless of the receiver's declared type.
 - **Propagation**: local variables, assignment, string concatenation,
   constructor wrappers, nested source calls, and method calls on tainted
   receivers propagate taint.
