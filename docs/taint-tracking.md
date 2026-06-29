@@ -12,7 +12,7 @@ The taint engine answers the second, on a narrower footprint. It lets us ship ru
 
 The taint engine supports:
 
-- **Built-in taint rules for seven languages**: Python, JavaScript/TypeScript, Go, Kotlin, C, Java, and C#. Each has source/sink specs wired into the scanner (`builtin_taint_specs_for_language`) and a grammar-aware engine (`src/rules/*_taint.rs`) sharing the same user-facing trace surface (`TaintSpec`, `NodeMatcher`, `TaintFinding`, `analyze_tree`). `.ts` and `.tsx` files use dedicated tree-sitter TypeScript/TSX grammars, then run through the JavaScript-compatible rule and taint surface where semantics align.
+- **Built-in taint rules for eight languages**: Python, JavaScript/TypeScript, Go, Kotlin, C, Java, C#, and Ruby. Each has source/sink specs wired into the scanner (`builtin_taint_specs_for_language`) and a grammar-aware engine (`src/rules/*_taint.rs`) sharing the same user-facing trace surface (`TaintSpec`, `NodeMatcher`, `TaintFinding`, `analyze_tree`). `.ts` and `.tsx` files use dedicated tree-sitter TypeScript/TSX grammars, then run through the JavaScript-compatible rule and taint surface where semantics align.
 - **Intraprocedural**: each function body is analyzed independently.
 - **Flow-insensitive**: statements are processed in source order. Reassigning a tainted variable to a clean value drops the taint. Branches are not modeled — taint observed in one branch of an `if` persists through the fall-through.
 - **One level of attribute propagation**: `x.y` is tainted when `x` is tainted.
@@ -36,7 +36,7 @@ Known limitations:
 - **Field sensitivity**: `d["key"]` is tainted because `d` is. Different keys are not distinguished.
 - **Object attribute propagation beyond one level**: `x.y.z` is tainted when `x` is tainted, but the engine does not persist taint on `x.y` as a distinct name.
 - **Dynamic import forms**: `importlib.import_module(...)` does not interact with the alias table, so sinks reached through it are not recognized.
-- **Other languages**: Ruby, PHP, Bash, Solidity, Scala, Apex, and Swift have grammar-aware taint engines for Semgrep-compatible external taint rules, but no built-in first-party taint rules are wired into the default scanner registry yet. Rust, Haskell, and other source languages have no taint engine today. JavaScript/TypeScript uses the same scope as Python (intraprocedural, flow-insensitive, one-level subscript propagation, template-literal and wrapping-call propagation, collapse-to-clean sanitizers) with a `JsImportAliases` table for `import`/`require` forms. Go (see "Supported Go frameworks" below) uses `GoImportAliases` for grouped / aliased import specs and the same flow-insensitive, one-level propagation semantics, plus native multi-return destructuring and binary `+` string-concatenation propagation.
+- **Other languages**: PHP, Bash, Solidity, Scala, Apex, and Swift have grammar-aware taint engines for Semgrep-compatible external taint rules, but no built-in first-party taint rules are wired into the default scanner registry yet. Rust, Haskell, and other source languages have no taint engine today. JavaScript/TypeScript uses the same scope as Python (intraprocedural, flow-insensitive, one-level subscript propagation, template-literal and wrapping-call propagation, collapse-to-clean sanitizers) with a `JsImportAliases` table for `import`/`require` forms. Go (see "Supported Go frameworks" below) uses `GoImportAliases` for grouped / aliased import specs and the same flow-insensitive, one-level propagation semantics, plus native multi-return destructuring and binary `+` string-concatenation propagation.
 
 ## API
 
@@ -167,7 +167,7 @@ Taint rules do not replace direct-sink rules. For example, `py/no-pickle` fires 
 
 ## Performance
 
-The taint engines run only for languages with enabled taint-backed rules. Each walk is over the already-parsed AST with small in-memory state. No additional parsing, no network, no disk. Go, Python, and JavaScript batch compatible taint rules to avoid repeated summary walks; Kotlin, C, Java, and C# use lightweight intrafile dispatchers.
+The taint engines run only for languages with enabled taint-backed rules. Each walk is over the already-parsed AST with small in-memory state. No additional parsing, no network, no disk. Go, Python, and JavaScript batch compatible taint rules to avoid repeated summary walks; Kotlin, C, Java, C#, and Ruby use lightweight intrafile dispatchers.
 
 ## Semgrep-compatible YAML bridge
 
@@ -374,6 +374,58 @@ repository; in particular, several sink entries are receiver-less
 method-name matchers (`Load`, `Write`, `Redirect`, `Start`, `Query`,
 `Execute`) and can over-match unrelated same-named methods. Track narrow,
 receiver-constrained sink variants as a follow-up.
+
+## Supported Ruby frameworks
+
+`src/rules/ruby_taint.rs` ships five first-consumer rules. The engine reuses
+the shared source/sanitizer catalogs (`ruby_taint_sources`,
+`ruby_taint_sanitizers`) and selects a rule-specific subset of
+`ruby_taint_sinks`.
+
+| Rule | CWE | Sink families |
+| ---- | --- | ------------- |
+| `rb/taint-command-injection` | CWE-78 | `system`, `exec`, `spawn` (bare and `Kernel.*`), `eval`, `instance_eval` |
+| `rb/taint-sql-injection` | CWE-89 | ActiveRecord `where`, `find_by_sql`, `connection.execute` |
+| `rb/taint-xss` | CWE-79 | `raw(...)`, `.html_safe` |
+| `rb/taint-unsafe-deserialization` | CWE-502 | `Marshal.load`, `YAML.load`, `YAML.unsafe_load` |
+| `rb/taint-open-redirect` | CWE-601 | `redirect_to` |
+
+Sources currently covered:
+
+| Framework / surface | Sources |
+| ------------------- | ------- |
+| Rails / Sinatra / Rack | `params[...]`, `request.params`, `request.body`, `request.env`, the `request` / `req` handler parameter |
+| CLI / stdin | `gets`, `STDIN.gets`, `STDIN.read`, `STDIN.readline` |
+| Environment | `ENV[...]`, `ENV.fetch` |
+
+### Ruby-specific engine notes
+
+- **Scope**: each `method` / `singleton_method` body is analyzed
+  independently (including methods nested inside `class` / `module`
+  bodies). Top-level code outside any method definition is not analyzed.
+  There is no Ruby cross-file or type-resolution pass yet.
+- **Sources**: the primary Rails source is `params`, modeled as a
+  `ParamName` matcher. It matches both the bare identifier and the
+  `params[:key]` `element_reference` shape, so controller actions that call
+  the implicit `params` method (not just ones that take a `params` formal
+  argument) are covered.
+- **Propagation**: local variables, assignments, string interpolation
+  (`"...#{expr}..."`), binary `+` concatenation, subscript/element-reference
+  on tainted receivers, and call arguments propagate taint. Backtick / `%x`
+  subshells with tainted interpolation are flagged directly.
+- **Sanitizers**: `Shellwords.escape`, `ERB::Util.html_escape`,
+  `CGI.escapeHTML`, and `sanitize` collapse taint to clean.
+- **Argument-only sink matching**: the v1 engine checks a sink call's
+  *arguments* for taint, not its receiver. Argument-style sinks (`system(x)`,
+  `raw(x)`, `Marshal.load(x)`, `redirect_to(x)`, `where("...#{x}...")`) fire
+  end-to-end. Receiver-style XSS (`.html_safe` on a tainted receiver) is
+  matched as a sink but its receiver is not inspected, so the receiver-taint
+  form does not produce a finding yet — track receiver-taint handling as a
+  follow-up.
+- **ActiveRecord parameter binding**: `where("col = ?", val)` is safe in
+  practice, but the engine does not model `?` binding and flags a tainted
+  second argument. This is the same precision limitation the C# engine
+  documents for `SqlCommand` parameterization.
 
 ## Open questions for the full #10
 

@@ -74,12 +74,6 @@
       "line": 386
     },
     {
-      "fingerprint": "b8eb10230d96cb7f52990ea1a76ec3869b2052297be24190c0afd507b76bb741",
-      "rule_id": "rs/no-path-traversal",
-      "file": "examples/taint_diag.rs",
-      "line": 74
-    },
-    {
       "fingerprint": "3601d07229fb6207c7c995cdf6a09b45835040822f50c75516acafc6123deac3",
       "rule_id": "rs/no-path-traversal",
       "file": "src/app.rs",
@@ -2136,6 +2130,18 @@
       "rule_id": "py/no-sql-injection",
       "file": "tests/fixtures/safe_py_taint.py",
       "line": 184
+    },
+    {
+      "fingerprint": "ea4d1919eb7dee984fbf5561ab61cadc900a7b1eb9a6efcc042db96ad7036437",
+      "rule_id": "rb/no-command-injection",
+      "file": "tests/fixtures/safe_ruby_taint.rb",
+      "line": 26
+    },
+    {
+      "fingerprint": "83e0c5ab2c65a198c8d313135018f4e030f6399abfb8ab61dc73bf397a7384eb",
+      "rule_id": "rb/no-unsafe-deserialization",
+      "file": "tests/fixtures/safe_ruby_taint.rb",
+      "line": 55
     },
     {
       "fingerprint": "991c5d4d95aa796175cf96ac1e3a8b0f899c776f5b0a12b99c268a12d02974d6",
@@ -4766,6 +4772,42 @@
       "line": 247
     },
     {
+      "fingerprint": "43b0cdbd4e21558deb1435f766adbe9467214144bbc1f726e04a6b7c2fac1966",
+      "rule_id": "rb/no-command-injection",
+      "file": "tests/fixtures/vulnerable_ruby_taint.rb",
+      "line": 17
+    },
+    {
+      "fingerprint": "f005818ed33d8a5a4ef0a5241da543e73039bda5b316dc9b03ff0a7686d66cab",
+      "rule_id": "rb/no-sql-injection",
+      "file": "tests/fixtures/vulnerable_ruby_taint.rb",
+      "line": 24
+    },
+    {
+      "fingerprint": "754fad68bac0beb205ab63f5df5b4636526a66c814b62987bd007b5f5304e875",
+      "rule_id": "rb/no-html-safe",
+      "file": "tests/fixtures/vulnerable_ruby_taint.rb",
+      "line": 34
+    },
+    {
+      "fingerprint": "f9cc35394133fda8f099234f87723732bac57640663267c657678dd2020bc18f",
+      "rule_id": "rb/no-unsafe-deserialization",
+      "file": "tests/fixtures/vulnerable_ruby_taint.rb",
+      "line": 41
+    },
+    {
+      "fingerprint": "f68fa65e3a7e224c26cbe724a699489e937a22482c598b092dd5bea0cbab0eb5",
+      "rule_id": "rb/no-open-redirect",
+      "file": "tests/fixtures/vulnerable_ruby_taint.rb",
+      "line": 48
+    },
+    {
+      "fingerprint": "1be19a9e7798e3812db207cd6c36897c6077a70fc85fd19ca28db8b2309f964a",
+      "rule_id": "rb/no-command-injection",
+      "file": "tests/fixtures/vulnerable_ruby_taint.rb",
+      "line": 70
+    },
+    {
       "fingerprint": "2c62e40f4e1d63c4cf3d57e1fe93c1197840b7fb73bc5d367953e9c0149a3326",
       "rule_id": "js/no-eval",
       "file": "tests/fixtures/vulnerable_tsx.tsx",
@@ -4784,10 +4826,10 @@
       "line": 1400
     },
     {
-      "fingerprint": "47e50f5ebd8c55e6e2332e7d12a74f0a928f2eb23ae73552024fc682ccc1eab8",
+      "fingerprint": "2954722afcdef70cb818a31240d03d4a2d5c1ef27d0d4a3016b63b73b6621834",
       "rule_id": "rs/no-path-traversal",
       "file": "tests/integration.rs",
-      "line": 2608
+      "line": 2685
     },
     {
       "fingerprint": "9117a4b6813d43e352bbeba89c57d41ddd65427c55167738d626587d237b296d",

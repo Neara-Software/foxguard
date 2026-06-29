@@ -1399,6 +1399,28 @@ fn scan_files(
                 ));
             }
 
+            // Ruby taint rules: same batched approach as C#/Java above.
+            // Intraprocedural, no cross-file analysis; each method body is
+            // analyzed independently.
+            let enabled_ruby_taint_ids: std::collections::HashSet<&str> =
+                if matches!(language, Language::Ruby) {
+                    analysis_plan
+                        .taint_specs
+                        .iter()
+                        .filter(|spec| matches!(spec.engine, TaintEngine::Ruby))
+                        .map(|spec| spec.rule_id)
+                        .collect()
+                } else {
+                    std::collections::HashSet::new()
+                };
+            if !enabled_ruby_taint_ids.is_empty() {
+                file_findings.extend(crate::rules::ruby::run_ruby_taint_batched(
+                    source,
+                    tree,
+                    &enabled_ruby_taint_ids,
+                ));
+            }
+
             file_findings.extend(ast_rule_batch.run(source, tree, &ctx));
 
             for finding in &mut file_findings {

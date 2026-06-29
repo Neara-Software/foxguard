@@ -1,9 +1,10 @@
 use crate::impl_rule;
 use crate::rules::common::{
-    hardcoded_secret_re, is_secret_value_long_enough, looks_like_secret_value, make_finding,
-    walk_tree,
+    confidence_for_hops, get_source_line, hardcoded_secret_re, is_secret_value_long_enough,
+    looks_like_secret_value, make_finding, walk_tree,
 };
-use crate::{Language, Severity};
+use crate::rules::ruby_taint;
+use crate::{Finding, Language, Severity};
 
 /// Returns `true` if a tree-sitter `string` node contains interpolation
 /// children (i.e., `#{}` segments). Plain string literals like `"ls -la"`
@@ -934,6 +935,293 @@ impl_rule! {
         });
         findings
 
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ruby taint rules (first-party)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Five `rb/taint-*` rules that consume the taint engine in
+// `crate::rules::ruby_taint`. Each rule's `check()` looks up the rule's
+// declarative `TaintSpec` from `ruby_taint::ruby_taint_rule_specs()`,
+// hands it to `ruby_taint::analyze_tree`, and maps returned `TaintFinding`s
+// onto the project's `Finding` type — same shape as the C#, Java, and C
+// taint rules.
+//
+// The scanner skips the rule's `check()` when the same rule id is
+// registered as a `RegistryTaintSpec` via `builtin_taint_specs_for_language`,
+// and runs the batched dispatcher `run_ruby_taint_batched` instead. The
+// `check()` path is kept working so unit tests that construct a Rule struct
+// directly continue to function.
+
+/// Per-rule metadata for Ruby taint findings.
+struct RubyTaintRuleMeta<'a> {
+    rule_id: &'a str,
+    severity: Severity,
+    cwe: Option<&'a str>,
+    fix_suggestion: Option<&'a str>,
+    format_description: fn(&str, &str) -> String,
+}
+
+fn ruby_taint_command_injection_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted input can inject OS commands or Ruby code")
+}
+
+fn ruby_taint_sql_injection_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted input can inject SQL")
+}
+
+fn ruby_taint_xss_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted input reaches an HTML output sink (XSS)")
+}
+
+fn ruby_taint_unsafe_deserialization_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted input can trigger unsafe deserialization")
+}
+
+fn ruby_taint_open_redirect_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted input can drive an open redirect")
+}
+
+fn ruby_taint_meta(rule_id: &str) -> Option<RubyTaintRuleMeta<'static>> {
+    match rule_id {
+        "rb/taint-command-injection" => Some(RubyTaintRuleMeta {
+            rule_id: "rb/taint-command-injection",
+            severity: Severity::Critical,
+            cwe: Some("CWE-78"),
+            fix_suggestion: Some(
+                "Avoid invoking shell commands or eval with request-controlled data; use Shellwords.escape on validated argument arrays and avoid eval entirely",
+            ),
+            format_description: ruby_taint_command_injection_desc,
+        }),
+        "rb/taint-sql-injection" => Some(RubyTaintRuleMeta {
+            rule_id: "rb/taint-sql-injection",
+            severity: Severity::Critical,
+            cwe: Some("CWE-89"),
+            fix_suggestion: Some(
+                "Use ActiveRecord parameter binding (where(\"col = ?\", val)) instead of interpolating request input into query strings",
+            ),
+            format_description: ruby_taint_sql_injection_desc,
+        }),
+        "rb/taint-xss" => Some(RubyTaintRuleMeta {
+            rule_id: "rb/taint-xss",
+            severity: Severity::High,
+            cwe: Some("CWE-79"),
+            fix_suggestion: Some(
+                "HTML-escape untrusted values (ERB::Util.html_escape / CGI.escapeHTML) instead of marking them html_safe / passing them to raw()",
+            ),
+            format_description: ruby_taint_xss_desc,
+        }),
+        "rb/taint-unsafe-deserialization" => Some(RubyTaintRuleMeta {
+            rule_id: "rb/taint-unsafe-deserialization",
+            severity: Severity::Critical,
+            cwe: Some("CWE-502"),
+            fix_suggestion: Some(
+                "Do not Marshal.load / YAML.unsafe_load request-controlled data; prefer YAML.safe_load with an explicit permit list or a structured format",
+            ),
+            format_description: ruby_taint_unsafe_deserialization_desc,
+        }),
+        "rb/taint-open-redirect" => Some(RubyTaintRuleMeta {
+            rule_id: "rb/taint-open-redirect",
+            severity: Severity::Medium,
+            cwe: Some("CWE-601"),
+            fix_suggestion: Some(
+                "Validate redirect targets against an allowlist of permitted destinations",
+            ),
+            format_description: ruby_taint_open_redirect_desc,
+        }),
+        _ => None,
+    }
+}
+
+/// Map a single `TaintFinding` from the Ruby engine onto a `Finding`.
+fn map_ruby_taint_finding(
+    meta: &RubyTaintRuleMeta<'_>,
+    source: &str,
+    finding: ruby_taint::TaintFinding,
+) -> Finding {
+    Finding {
+        rule_id: meta.rule_id.to_string(),
+        severity: meta.severity,
+        cwe: meta.cwe.map(|s| s.to_string()),
+        description: (meta.format_description)(
+            &finding.source_description,
+            &finding.sink_description,
+        ),
+        file: String::new(),
+        line: finding.sink_line,
+        column: finding.sink_column,
+        end_line: finding.sink_end_line,
+        end_column: finding.sink_end_column,
+        snippet: get_source_line(source, finding.sink_start_byte),
+        source_line: Some(finding.source_line),
+        source_description: Some(finding.source_description),
+        sink_line: Some(finding.sink_line),
+        sink_description: Some(finding.sink_description),
+        fix_suggestion: meta.fix_suggestion.map(|s| s.to_string()),
+        sink_start_byte: Some(finding.sink_start_byte),
+        sink_end_byte: Some(finding.sink_end_byte),
+        confidence: confidence_for_hops(finding.hops),
+        taint_hops: Some(finding.hops),
+        tags: vec![],
+        crypto_algorithm: None,
+        cnsa2_deadline: None,
+        dep_name: None,
+        dep_version: None,
+        dep_ecosystem: None,
+        dep_purl: None,
+        dep_vulnerability_id: None,
+        dep_fixed_version: None,
+        dep_source: None,
+        dep_vulnerability_severity: None,
+        dep_path: vec![],
+    }
+}
+
+/// Run every enabled Ruby taint rule over `tree` in a single dispatch.
+///
+/// Mirrors `run_csharp_taint_batched` in `csharp.rs`.
+pub fn run_ruby_taint_batched(
+    source: &str,
+    tree: &tree_sitter::Tree,
+    enabled_rule_ids: &std::collections::HashSet<&str>,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for (rule_id, spec) in ruby_taint::ruby_taint_rule_specs() {
+        if !enabled_rule_ids.contains(rule_id) {
+            continue;
+        }
+        let Some(meta) = ruby_taint_meta(rule_id) else {
+            continue;
+        };
+        let raw = ruby_taint::analyze_tree(tree.root_node(), source, &spec, None);
+        for finding in raw {
+            findings.push(map_ruby_taint_finding(&meta, source, finding));
+        }
+    }
+    findings
+}
+
+/// Run a single Ruby taint rule over a tree. Used by the rule structs'
+/// `check()` path for direct unit tests.
+fn run_ruby_taint_single(
+    rule_id: &str,
+    source: &str,
+    tree: &tree_sitter::Tree,
+    spec: &ruby_taint::TaintSpec,
+) -> Vec<Finding> {
+    let Some(meta) = ruby_taint_meta(rule_id) else {
+        return Vec::new();
+    };
+    let raw = ruby_taint::analyze_tree(tree.root_node(), source, spec, None);
+    raw.into_iter()
+        .map(|finding| map_ruby_taint_finding(&meta, source, finding))
+        .collect()
+}
+
+// ─── Rule 1: rb/taint-command-injection ─────────────────────────────────────
+
+pub struct TaintCommandInjection;
+
+impl_rule! {
+    TaintCommandInjection,
+    id = "rb/taint-command-injection",
+    severity = Severity::Critical,
+    cwe = Some("CWE-78"),
+    description = "Untrusted Ruby input reaches a command execution or eval sink",
+    language = Language::Ruby,
+    fn check(_self, source, tree) {
+        let spec = ruby_taint::ruby_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_ruby_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 2: rb/taint-sql-injection ─────────────────────────────────────────
+
+pub struct TaintSqlInjection;
+
+impl_rule! {
+    TaintSqlInjection,
+    id = "rb/taint-sql-injection",
+    severity = Severity::Critical,
+    cwe = Some("CWE-89"),
+    description = "Untrusted Ruby input reaches a SQL query sink",
+    language = Language::Ruby,
+    fn check(_self, source, tree) {
+        let spec = ruby_taint::ruby_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_ruby_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 3: rb/taint-xss ───────────────────────────────────────────────────
+
+pub struct TaintXss;
+
+impl_rule! {
+    TaintXss,
+    id = "rb/taint-xss",
+    severity = Severity::High,
+    cwe = Some("CWE-79"),
+    description = "Untrusted Ruby input reaches an HTML output sink",
+    language = Language::Ruby,
+    fn check(_self, source, tree) {
+        let spec = ruby_taint::ruby_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_ruby_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 4: rb/taint-unsafe-deserialization ────────────────────────────────
+
+pub struct TaintUnsafeDeserialization;
+
+impl_rule! {
+    TaintUnsafeDeserialization,
+    id = "rb/taint-unsafe-deserialization",
+    severity = Severity::Critical,
+    cwe = Some("CWE-502"),
+    description = "Untrusted Ruby input reaches an unsafe deserialization sink",
+    language = Language::Ruby,
+    fn check(_self, source, tree) {
+        let spec = ruby_taint::ruby_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_ruby_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 5: rb/taint-open-redirect ─────────────────────────────────────────
+
+pub struct TaintOpenRedirect;
+
+impl_rule! {
+    TaintOpenRedirect,
+    id = "rb/taint-open-redirect",
+    severity = Severity::Medium,
+    cwe = Some("CWE-601"),
+    description = "Untrusted Ruby input reaches a redirect sink",
+    language = Language::Ruby,
+    fn check(_self, source, tree) {
+        let spec = ruby_taint::ruby_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_ruby_taint_single(_self.id(), source, tree, &spec)
     }
 }
 

@@ -63,6 +63,7 @@ pub enum TaintEngine {
     JavaScript,
     Kotlin,
     Python,
+    Ruby,
 }
 
 #[derive(Debug, Clone)]
@@ -575,6 +576,11 @@ impl RuleRegistry {
                 ruby::NoWeakCrypto,
                 ruby::NoSsrf,
                 ruby::NoPathTraversal,
+                ruby::TaintCommandInjection,
+                ruby::TaintSqlInjection,
+                ruby::TaintXss,
+                ruby::TaintUnsafeDeserialization,
+                ruby::TaintOpenRedirect,
             ]
         );
 
@@ -913,6 +919,15 @@ fn builtin_taint_specs_for_language(language: Language) -> Vec<RegistryTaintSpec
                 rule_id,
                 language,
                 engine: TaintEngine::Kotlin,
+                spec,
+            })
+            .collect(),
+        Language::Ruby => ruby_taint::ruby_taint_rule_specs()
+            .into_iter()
+            .map(|(rule_id, spec)| RegistryTaintSpec {
+                rule_id,
+                language,
+                engine: TaintEngine::Ruby,
                 spec,
             })
             .collect(),

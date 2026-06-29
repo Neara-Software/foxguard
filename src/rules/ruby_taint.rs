@@ -79,6 +79,101 @@ pub fn analyze_tree(
     findings
 }
 
+// ─── Built-in specs ──────────────────────────────────────────────────────────
+
+/// All Ruby first-party taint rule IDs paired with their specs.
+///
+/// Mirrors `csharp_taint_rule_specs` in shape: each entry pairs a
+/// `rb/taint-*` rule id with a `TaintSpec` built from the shared
+/// [`ruby_taint_sources`] / [`ruby_taint_sanitizers`] and a rule-specific
+/// subset of [`ruby_taint_sinks`].
+pub fn ruby_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
+    vec![
+        ("rb/taint-command-injection", command_injection_spec()),
+        ("rb/taint-sql-injection", sql_injection_spec()),
+        ("rb/taint-xss", xss_spec()),
+        ("rb/taint-unsafe-deserialization", unsafe_deserialization_spec()),
+        ("rb/taint-open-redirect", open_redirect_spec()),
+    ]
+}
+
+/// Return the subset of [`ruby_taint_sinks`] whose callee (for `Call`) or
+/// method name (for `MethodName`) appears in `keys`. This lets each rule
+/// below reuse the centralized sink catalog without duplicating matcher
+/// definitions (and drifting out of sync with the Semgrep bridge).
+fn pick_sinks(keys: &[&str]) -> Vec<NodeMatcher> {
+    ruby_taint_sinks()
+        .into_iter()
+        .filter(|m| match m {
+            NodeMatcher::Call { canonical, .. } => keys.contains(&canonical.as_str()),
+            NodeMatcher::MethodName { method, .. } => keys.contains(&method.as_str()),
+            _ => false,
+        })
+        .collect()
+}
+
+fn command_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: ruby_taint_sources(),
+        // OS command execution + dynamic code evaluation: `system`, `exec`,
+        // `spawn` (bare and `Kernel.*`), plus `eval` / `instance_eval`.
+        sinks: pick_sinks(&[
+            "system",
+            "exec",
+            "spawn",
+            "Kernel.system",
+            "Kernel.exec",
+            "Kernel.spawn",
+            "eval",
+            "instance_eval",
+        ]),
+        sanitizers: ruby_taint_sanitizers(),
+    }
+}
+
+fn sql_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: ruby_taint_sources(),
+        // ActiveRecord / connection SQL sinks: `where`, `find_by_sql`,
+        // `connection.execute`.
+        sinks: pick_sinks(&["where", "find_by_sql", "execute"]),
+        sanitizers: ruby_taint_sanitizers(),
+    }
+}
+
+fn xss_spec() -> TaintSpec {
+    TaintSpec {
+        sources: ruby_taint_sources(),
+        // HTML-escaping bypasses: `raw(...)` and `.html_safe`. NOTE: the
+        // intraprocedural engine only checks sink *arguments*, so `raw(x)`
+        // (argument taint) fires end-to-end; `.html_safe` is receiver-taint
+        // (`x.html_safe`) and is matched as a sink but its receiver is not
+        // inspected by `handle_call`, so the receiver-taint form does not
+        // produce a finding in v1 (documented precision limitation).
+        sinks: pick_sinks(&["html_safe", "raw"]),
+        sanitizers: ruby_taint_sanitizers(),
+    }
+}
+
+fn unsafe_deserialization_spec() -> TaintSpec {
+    TaintSpec {
+        sources: ruby_taint_sources(),
+        // Ruby deserialization gadgets: `Marshal.load`, `YAML.load`,
+        // `YAML.unsafe_load`.
+        sinks: pick_sinks(&["Marshal.load", "YAML.load", "YAML.unsafe_load"]),
+        sanitizers: ruby_taint_sanitizers(),
+    }
+}
+
+fn open_redirect_spec() -> TaintSpec {
+    TaintSpec {
+        sources: ruby_taint_sources(),
+        // Rails `redirect_to`.
+        sinks: pick_sinks(&["redirect_to"]),
+        sanitizers: ruby_taint_sanitizers(),
+    }
+}
+
 /// Canonical set of untrusted-input sources for Ruby web handlers.
 ///
 /// Covers Rails/Sinatra/Rack request parameters, environment variables,

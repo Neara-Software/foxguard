@@ -1578,6 +1578,83 @@ mod ruby {
     }
 }
 
+// ─── Ruby taint (first-party) ────────────────────────────────────────────────
+
+mod ruby_taint {
+    use super::*;
+
+    /// Positive fixture for the Ruby taint engine. Each controller action
+    /// flows an untrusted Rails `params[...]` source into a taint sink.
+    /// Every `rb/taint-*` rule must fire exactly once.
+    #[test]
+    fn test_vulnerable_ruby_taint_catches_every_flow() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/vulnerable_ruby_taint.rb", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        assert!(!output.status.success());
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for f in &findings {
+            if let Some(rule) = f["rule_id"].as_str() {
+                *counts.entry(rule).or_insert(0) += 1;
+            }
+        }
+
+        for (taint_rule, expected) in [
+            ("rb/taint-command-injection", 1usize),
+            ("rb/taint-sql-injection", 1),
+            ("rb/taint-xss", 1),
+            ("rb/taint-unsafe-deserialization", 1),
+            ("rb/taint-open-redirect", 1),
+        ] {
+            assert_eq!(
+                counts.get(taint_rule).copied(),
+                Some(expected),
+                "{} should fire exactly {} time(s) on vulnerable_ruby_taint.rb. counts={:?}",
+                taint_rule,
+                expected,
+                counts
+            );
+        }
+    }
+
+    /// Negative counterpart for the Ruby taint engine. Every method in
+    /// `safe_ruby_taint.rb` either uses a literal argument, has its taint
+    /// killed by a sanitizer, or never lets the tainted value reach a sink.
+    /// No rb/taint-* rule may fire.
+    #[test]
+    fn test_safe_ruby_taint_has_no_taint_findings() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/safe_ruby_taint.rb", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        for taint_rule in [
+            "rb/taint-command-injection",
+            "rb/taint-sql-injection",
+            "rb/taint-xss",
+            "rb/taint-unsafe-deserialization",
+            "rb/taint-open-redirect",
+        ] {
+            let n = findings
+                .iter()
+                .filter(|f| f["rule_id"].as_str() == Some(taint_rule))
+                .count();
+            assert_eq!(
+                n, 0,
+                "{} should not fire on safe_ruby_taint.rb, got {} findings",
+                taint_rule, n
+            );
+        }
+    }
+}
+
 // ─── C# ─────────────────────────────────────────────────────────────────────
 
 mod csharp {

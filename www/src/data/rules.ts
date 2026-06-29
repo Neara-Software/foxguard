@@ -144,6 +144,11 @@ const rubyRules: Rule[] = [
   { id: 'rb/no-ssrf', cwe: 'CWE-918', desc: 'Potential SSRF via dynamic outbound HTTP request URL', severity: 'high' },
   { id: 'rb/no-unsafe-deserialization', cwe: 'CWE-502', desc: 'Unsafe deserialization via Marshal.load or YAML.load', severity: 'critical' },
   { id: 'rb/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak cryptographic hash (MD5/SHA1)', severity: 'medium' },
+  { id: 'rb/taint-command-injection', cwe: 'CWE-78', desc: 'Untrusted Ruby input reaches a command execution or eval sink', severity: 'critical' },
+  { id: 'rb/taint-open-redirect', cwe: 'CWE-601', desc: 'Untrusted Ruby input reaches a redirect sink', severity: 'medium' },
+  { id: 'rb/taint-sql-injection', cwe: 'CWE-89', desc: 'Untrusted Ruby input reaches a SQL query sink', severity: 'critical' },
+  { id: 'rb/taint-unsafe-deserialization', cwe: 'CWE-502', desc: 'Untrusted Ruby input reaches an unsafe deserialization sink', severity: 'critical' },
+  { id: 'rb/taint-xss', cwe: 'CWE-79', desc: 'Untrusted Ruby input reaches an HTML output sink', severity: 'high' },
 ];
 
 const javaRules: Rule[] = [
