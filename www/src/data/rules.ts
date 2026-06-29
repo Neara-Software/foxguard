@@ -204,6 +204,12 @@ const csharpRules: Rule[] = [
   { id: 'cs/no-unsafe-deserialization', cwe: 'CWE-502', desc: 'Use of unsafe deserialization API', severity: 'critical' },
   { id: 'cs/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak cryptographic algorithm', severity: 'medium' },
   { id: 'cs/no-xxe', cwe: 'CWE-611', desc: 'Potential XXE vulnerability in XML parsing', severity: 'high' },
+  { id: 'csharp/taint-command-injection', cwe: 'CWE-78', desc: 'Untrusted ASP.NET request input reaches a command execution sink', severity: 'critical' },
+  { id: 'csharp/taint-open-redirect', cwe: 'CWE-601', desc: 'Untrusted ASP.NET request input reaches a redirect sink', severity: 'medium' },
+  { id: 'csharp/taint-sql-injection', cwe: 'CWE-89', desc: 'Untrusted ASP.NET request input reaches a SQL query sink', severity: 'critical' },
+  { id: 'csharp/taint-unsafe-load', cwe: 'CWE-502', desc: 'Untrusted ASP.NET request input reaches an assembly/type load sink', severity: 'critical' },
+  { id: 'csharp/taint-xss', cwe: 'CWE-79', desc: 'Untrusted ASP.NET request input reaches an HTML output sink', severity: 'high' },
+  { id: 'csharp/taint-xxe', cwe: 'CWE-611', desc: 'Untrusted ASP.NET request input reaches an XML parser sink', severity: 'high' },
 ];
 
 const swiftRules: Rule[] = [

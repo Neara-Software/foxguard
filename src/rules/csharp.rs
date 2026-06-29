@@ -4,9 +4,11 @@ use regex::Regex;
 
 use crate::impl_rule;
 use crate::rules::common::{
-    csharp_hardcoded_secret_re, is_secret_value_long_enough, make_finding, walk_tree,
+    confidence_for_hops, csharp_hardcoded_secret_re, get_source_line,
+    is_secret_value_long_enough, make_finding, walk_tree,
 };
-use crate::{Language, Severity};
+use crate::rules::csharp_taint;
+use crate::{Finding, Language, Severity};
 
 // ─── Static regex helpers (compiled once) ────────────────────────────────────
 
@@ -989,5 +991,328 @@ impl_rule! {
         });
         findings
 
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// C# taint rules
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Six `csharp/taint-*` rules that consume the taint engine in
+// `crate::rules::csharp_taint`. Each rule's `check()` looks up the rule's
+// declarative `TaintSpec` from `csharp_taint::csharp_taint_rule_specs()`,
+// hands it to `csharp_taint::analyze_tree`, and maps returned
+// `TaintFinding`s onto the project's `Finding` type — same shape as the
+// Java and C taint rules.
+//
+// The scanner skips the rule's `check()` when the same rule id is
+// registered as a `RegistryTaintSpec` via `builtin_taint_specs_for_language`,
+// and runs the batched dispatcher `run_csharp_taint_batched` instead. The
+// `check()` path is kept working so unit tests that construct a Rule struct
+// directly continue to function.
+
+/// Per-rule metadata for C# taint findings.
+struct CSharpTaintRuleMeta<'a> {
+    rule_id: &'a str,
+    severity: Severity,
+    cwe: Option<&'a str>,
+    fix_suggestion: Option<&'a str>,
+    format_description: fn(&str, &str) -> String,
+}
+
+fn csharp_taint_sql_injection_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted ASP.NET input can inject SQL")
+}
+
+fn csharp_taint_command_injection_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted ASP.NET input can inject OS commands")
+}
+
+fn csharp_taint_xss_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted input reaches an HTML output sink (XSS)")
+}
+
+fn csharp_taint_open_redirect_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted input can drive an open redirect")
+}
+
+fn csharp_taint_xxe_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted input reaches an XML parser sink (XXE)")
+}
+
+fn csharp_taint_unsafe_load_desc(src: &str, sink: &str) -> String {
+    format!(
+        "{src} reaches {sink} — untrusted input can load arbitrary code or types (unsafe load)"
+    )
+}
+
+fn csharp_taint_meta(rule_id: &str) -> Option<CSharpTaintRuleMeta<'static>> {
+    match rule_id {
+        "csharp/taint-sql-injection" => Some(CSharpTaintRuleMeta {
+            rule_id: "csharp/taint-sql-injection",
+            severity: Severity::Critical,
+            cwe: Some("CWE-89"),
+            fix_suggestion: Some(
+                "Use parameterized queries (SqlCommand.Parameters.AddWithValue) instead of concatenating request input into SQL",
+            ),
+            format_description: csharp_taint_sql_injection_desc,
+        }),
+        "csharp/taint-command-injection" => Some(CSharpTaintRuleMeta {
+            rule_id: "csharp/taint-command-injection",
+            severity: Severity::Critical,
+            cwe: Some("CWE-78"),
+            fix_suggestion: Some(
+                "Avoid invoking shell commands with request-controlled data; pass fixed executable names and validated argument arrays",
+            ),
+            format_description: csharp_taint_command_injection_desc,
+        }),
+        "csharp/taint-xss" => Some(CSharpTaintRuleMeta {
+            rule_id: "csharp/taint-xss",
+            severity: Severity::High,
+            cwe: Some("CWE-79"),
+            fix_suggestion: Some(
+                "HTML-encode untrusted values before writing them to the response (HttpUtility.HtmlEncode)",
+            ),
+            format_description: csharp_taint_xss_desc,
+        }),
+        "csharp/taint-open-redirect" => Some(CSharpTaintRuleMeta {
+            rule_id: "csharp/taint-open-redirect",
+            severity: Severity::Medium,
+            cwe: Some("CWE-601"),
+            fix_suggestion: Some(
+                "Validate redirect targets against an allowlist of permitted destinations",
+            ),
+            format_description: csharp_taint_open_redirect_desc,
+        }),
+        "csharp/taint-xxe" => Some(CSharpTaintRuleMeta {
+            rule_id: "csharp/taint-xxe",
+            severity: Severity::High,
+            cwe: Some("CWE-611"),
+            fix_suggestion: Some(
+                "Resolve untrusted XML only through a parser configured with DTD/entity processing disabled",
+            ),
+            format_description: csharp_taint_xxe_desc,
+        }),
+        "csharp/taint-unsafe-load" => Some(CSharpTaintRuleMeta {
+            rule_id: "csharp/taint-unsafe-load",
+            severity: Severity::Critical,
+            cwe: Some("CWE-502"),
+            fix_suggestion: Some(
+                "Do not load assemblies or activate types from request-controlled input; bind against a fixed, validated type set",
+            ),
+            format_description: csharp_taint_unsafe_load_desc,
+        }),
+        _ => None,
+    }
+}
+
+/// Map a single `TaintFinding` from the C# engine onto a `Finding`.
+fn map_csharp_taint_finding(
+    meta: &CSharpTaintRuleMeta<'_>,
+    source: &str,
+    finding: csharp_taint::TaintFinding,
+) -> Finding {
+    Finding {
+        rule_id: meta.rule_id.to_string(),
+        severity: meta.severity,
+        cwe: meta.cwe.map(|s| s.to_string()),
+        description: (meta.format_description)(
+            &finding.source_description,
+            &finding.sink_description,
+        ),
+        file: String::new(),
+        line: finding.sink_line,
+        column: finding.sink_column,
+        end_line: finding.sink_end_line,
+        end_column: finding.sink_end_column,
+        snippet: get_source_line(source, finding.sink_start_byte),
+        source_line: Some(finding.source_line),
+        source_description: Some(finding.source_description),
+        sink_line: Some(finding.sink_line),
+        sink_description: Some(finding.sink_description),
+        fix_suggestion: meta.fix_suggestion.map(|s| s.to_string()),
+        sink_start_byte: Some(finding.sink_start_byte),
+        sink_end_byte: Some(finding.sink_end_byte),
+        confidence: confidence_for_hops(finding.hops),
+        taint_hops: Some(finding.hops),
+        tags: vec![],
+        crypto_algorithm: None,
+        cnsa2_deadline: None,
+        dep_name: None,
+        dep_version: None,
+        dep_ecosystem: None,
+        dep_purl: None,
+        dep_vulnerability_id: None,
+        dep_fixed_version: None,
+        dep_source: None,
+        dep_vulnerability_severity: None,
+        dep_path: vec![],
+    }
+}
+
+/// Run every enabled C# taint rule over `tree` in a single dispatch.
+///
+/// Mirrors `run_java_taint_batched` in `java.rs`.
+pub fn run_csharp_taint_batched(
+    source: &str,
+    tree: &tree_sitter::Tree,
+    enabled_rule_ids: &std::collections::HashSet<&str>,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for (rule_id, spec) in csharp_taint::csharp_taint_rule_specs() {
+        if !enabled_rule_ids.contains(rule_id) {
+            continue;
+        }
+        let Some(meta) = csharp_taint_meta(rule_id) else {
+            continue;
+        };
+        let raw = csharp_taint::analyze_tree(tree.root_node(), source, &spec, None);
+        for finding in raw {
+            findings.push(map_csharp_taint_finding(&meta, source, finding));
+        }
+    }
+    findings
+}
+
+/// Run a single C# taint rule over a tree. Used by the rule structs'
+/// `check()` path for direct unit tests.
+fn run_csharp_taint_single(
+    rule_id: &str,
+    source: &str,
+    tree: &tree_sitter::Tree,
+    spec: &csharp_taint::TaintSpec,
+) -> Vec<Finding> {
+    let Some(meta) = csharp_taint_meta(rule_id) else {
+        return Vec::new();
+    };
+    let raw = csharp_taint::analyze_tree(tree.root_node(), source, spec, None);
+    raw.into_iter()
+        .map(|finding| map_csharp_taint_finding(&meta, source, finding))
+        .collect()
+}
+
+// ─── Rule 1: csharp/taint-sql-injection ─────────────────────────────────────
+
+pub struct TaintSqlInjection;
+
+impl_rule! {
+    TaintSqlInjection,
+    id = "csharp/taint-sql-injection",
+    severity = Severity::Critical,
+    cwe = Some("CWE-89"),
+    description = "Untrusted ASP.NET request input reaches a SQL query sink",
+    language = Language::CSharp,
+    fn check(_self, source, tree) {
+        let spec = csharp_taint::csharp_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_csharp_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 2: csharp/taint-command-injection ─────────────────────────────────
+
+pub struct TaintCommandInjection;
+
+impl_rule! {
+    TaintCommandInjection,
+    id = "csharp/taint-command-injection",
+    severity = Severity::Critical,
+    cwe = Some("CWE-78"),
+    description = "Untrusted ASP.NET request input reaches a command execution sink",
+    language = Language::CSharp,
+    fn check(_self, source, tree) {
+        let spec = csharp_taint::csharp_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_csharp_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 3: csharp/taint-xss ───────────────────────────────────────────────
+
+pub struct TaintXss;
+
+impl_rule! {
+    TaintXss,
+    id = "csharp/taint-xss",
+    severity = Severity::High,
+    cwe = Some("CWE-79"),
+    description = "Untrusted ASP.NET request input reaches an HTML output sink",
+    language = Language::CSharp,
+    fn check(_self, source, tree) {
+        let spec = csharp_taint::csharp_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_csharp_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 4: csharp/taint-open-redirect ─────────────────────────────────────
+
+pub struct TaintOpenRedirect;
+
+impl_rule! {
+    TaintOpenRedirect,
+    id = "csharp/taint-open-redirect",
+    severity = Severity::Medium,
+    cwe = Some("CWE-601"),
+    description = "Untrusted ASP.NET request input reaches a redirect sink",
+    language = Language::CSharp,
+    fn check(_self, source, tree) {
+        let spec = csharp_taint::csharp_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_csharp_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 5: csharp/taint-xxe ───────────────────────────────────────────────
+
+pub struct TaintXxe;
+
+impl_rule! {
+    TaintXxe,
+    id = "csharp/taint-xxe",
+    severity = Severity::High,
+    cwe = Some("CWE-611"),
+    description = "Untrusted ASP.NET request input reaches an XML parser sink",
+    language = Language::CSharp,
+    fn check(_self, source, tree) {
+        let spec = csharp_taint::csharp_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_csharp_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 6: csharp/taint-unsafe-load ───────────────────────────────────────
+
+pub struct TaintUnsafeLoad;
+
+impl_rule! {
+    TaintUnsafeLoad,
+    id = "csharp/taint-unsafe-load",
+    severity = Severity::Critical,
+    cwe = Some("CWE-502"),
+    description = "Untrusted ASP.NET request input reaches an assembly/type load sink",
+    language = Language::CSharp,
+    fn check(_self, source, tree) {
+        let spec = csharp_taint::csharp_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_csharp_taint_single(_self.id(), source, tree, &spec)
     }
 }

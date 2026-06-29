@@ -1377,6 +1377,28 @@ fn scan_files(
                 ));
             }
 
+            // C# taint rules: same batched approach as Java/C above.
+            // Intraprocedural, no cross-file analysis; each method body is
+            // analyzed independently.
+            let enabled_csharp_taint_ids: std::collections::HashSet<&str> =
+                if matches!(language, Language::CSharp) {
+                    analysis_plan
+                        .taint_specs
+                        .iter()
+                        .filter(|spec| matches!(spec.engine, TaintEngine::CSharp))
+                        .map(|spec| spec.rule_id)
+                        .collect()
+                } else {
+                    std::collections::HashSet::new()
+                };
+            if !enabled_csharp_taint_ids.is_empty() {
+                file_findings.extend(crate::rules::csharp::run_csharp_taint_batched(
+                    source,
+                    tree,
+                    &enabled_csharp_taint_ids,
+                ));
+            }
+
             file_findings.extend(ast_rule_batch.run(source, tree, &ctx));
 
             for finding in &mut file_findings {

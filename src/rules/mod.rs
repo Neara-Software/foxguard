@@ -57,6 +57,7 @@ static BUNDLED_RULES: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_M
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaintEngine {
     C,
+    CSharp,
     Go,
     Java,
     JavaScript,
@@ -590,6 +591,12 @@ impl RuleRegistry {
                 csharp::NoXxe,
                 csharp::NoLdapInjection,
                 csharp::NoCorsStar,
+                csharp::TaintSqlInjection,
+                csharp::TaintCommandInjection,
+                csharp::TaintXss,
+                csharp::TaintOpenRedirect,
+                csharp::TaintXxe,
+                csharp::TaintUnsafeLoad,
             ]
         );
 
@@ -852,6 +859,15 @@ fn builtin_taint_specs_for_language(language: Language) -> Vec<RegistryTaintSpec
                 rule_id,
                 language,
                 engine: TaintEngine::C,
+                spec,
+            })
+            .collect(),
+        Language::CSharp => csharp_taint::csharp_taint_rule_specs()
+            .into_iter()
+            .map(|(rule_id, spec)| RegistryTaintSpec {
+                rule_id,
+                language,
+                engine: TaintEngine::CSharp,
                 spec,
             })
             .collect(),

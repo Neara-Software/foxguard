@@ -74,10 +74,10 @@
       "line": 386
     },
     {
-      "fingerprint": "7002967a8eedb4cf9bf636b5f1a657d382fe1bff1fbf04480fc2720cffed7ce8",
+      "fingerprint": "b8eb10230d96cb7f52990ea1a76ec3869b2052297be24190c0afd507b76bb741",
       "rule_id": "rs/no-path-traversal",
       "file": "examples/taint_diag.rs",
-      "line": 56
+      "line": 74
     },
     {
       "fingerprint": "3601d07229fb6207c7c995cdf6a09b45835040822f50c75516acafc6123deac3",
@@ -236,24 +236,6 @@
       "line": 566
     },
     {
-      "fingerprint": "79dfe4b7298094e25dc36f34a97b4d87f76f17909b96672c1dc16597c1361edb",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/config.rs",
-      "line": 1014
-    },
-    {
-      "fingerprint": "e60c8b6f5c0a36a069c06bb2182737d824ab65d2fc3180316914df027419fc30",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/config.rs",
-      "line": 1051
-    },
-    {
-      "fingerprint": "d58714e2235512273ed1a406facb30d1cfc14763af38d895b7f480371fa8b2da",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/config.rs",
-      "line": 1052
-    },
-    {
       "fingerprint": "8743008557f19d2733cb4ffcbe4230d659d74b3610778ec6c10d8cbeec65cd7c",
       "rule_id": "rs/no-path-traversal",
       "file": "src/diff.rs",
@@ -390,30 +372,6 @@
       "rule_id": "rs/no-path-traversal",
       "file": "src/git.rs",
       "line": 35
-    },
-    {
-      "fingerprint": "5d315de54a14d36976745097224aa9bb5a8288313abc10a72468a83be1f6e0cd",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/main.rs",
-      "line": 139
-    },
-    {
-      "fingerprint": "d75ed31bcc0f9cd23639c4f23b5afe310e01d81f15ff2dddf929c4f84ad24516",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/main.rs",
-      "line": 147
-    },
-    {
-      "fingerprint": "049a80f0ba0bc17490a7a40b4814cc392cbf20f55a154af2838e5157456e914b",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/main.rs",
-      "line": 152
-    },
-    {
-      "fingerprint": "352940cb2c2176bc685db52ae3dee8f726f46f10a5d3d013e94c3153b3454056",
-      "rule_id": "rs/no-path-traversal",
-      "file": "src/main.rs",
-      "line": 280
     },
     {
       "fingerprint": "90a5b776d65fed0f8246fc0d0aebd5def54215a5d049e4363a2f7947e6667d2b",
@@ -554,10 +512,10 @@
       "line": 94
     },
     {
-      "fingerprint": "51646a5804f21d44db4332489c19d956be0d0b44781c7b527f28feb53e5cd37a",
+      "fingerprint": "99ce44526537ab44e783d372b0859c58b4b005d169177fbbefb14094bfa9943f",
       "rule_id": "rs/no-unwrap-in-lib",
       "file": "src/rules/csharp.rs",
-      "line": 16
+      "line": 18
     },
     {
       "fingerprint": "137daf0d9e9e2599dad6fed59a3b51675d4016062f4e5850599837fae2bd7289",
@@ -3842,6 +3800,18 @@
       "line": 37
     },
     {
+      "fingerprint": "43ac65d3f3d964fd45df3937575fd6e2f8afb0b01f5c179876783408517662fd",
+      "rule_id": "cs/no-command-injection",
+      "file": "tests/fixtures/vulnerable_csharp_taint.cs",
+      "line": 30
+    },
+    {
+      "fingerprint": "4b1d4b5c41e684f32ffa231a1362287adf9993e18bfdcd0e7f1c4fb4a47b035b",
+      "rule_id": "cs/no-xxe",
+      "file": "tests/fixtures/vulnerable_csharp_taint.cs",
+      "line": 54
+    },
+    {
       "fingerprint": "379b4b3006d8c8936a5f6f3aae7bebf316aea9ed2022ad0d3205d1f5c21bb4c6",
       "rule_id": "js/taint-xss-innerhtml",
       "file": "tests/fixtures/vulnerable_deno_taint.ts",
@@ -4814,10 +4784,10 @@
       "line": 1400
     },
     {
-      "fingerprint": "d9a45fd2cc3c99a2e427f180b0ed630d271f0ed6b18108ababa17bec7cef41e9",
+      "fingerprint": "47e50f5ebd8c55e6e2332e7d12a74f0a928f2eb23ae73552024fc682ccc1eab8",
       "rule_id": "rs/no-path-traversal",
       "file": "tests/integration.rs",
-      "line": 2529
+      "line": 2608
     },
     {
       "fingerprint": "9117a4b6813d43e352bbeba89c57d41ddd65427c55167738d626587d237b296d",

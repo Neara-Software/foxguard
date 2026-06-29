@@ -366,9 +366,20 @@ fn xxe_spec() -> TaintSpec {
                 method: "LoadXml".into(),
                 description: "XmlDocument.LoadXml() with tainted input (XXE)".into(),
             },
-            NodeMatcher::MethodName {
-                method: "Load".into(),
+            // Receiver-constrained. A bare `MethodName { method: "Load" }` matches
+            // ANY `.Load(tainted)` call — e.g. `Assembly.Load`, already covered by
+            // unsafe-load — producing a false XXE. Constrain to the XML receivers.
+            // `XDocument.Load` is a static call; `XmlDocument.Load` instance calls on
+            // a local (`doc.Load`) aren't textually distinguishable from other
+            // `.Load` calls without type info, so the programmatic XmlDocument vector
+            // is covered by the `LoadXml` sink above instead.
+            NodeMatcher::Call {
+                canonical: "XmlDocument.Load".into(),
                 description: "XmlDocument.Load() with tainted input (XXE)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "XDocument.Load".into(),
+                description: "XDocument.Load() with tainted input (XXE)".into(),
             },
         ],
         sanitizers: csharp_taint_sanitizers(),
@@ -615,10 +626,13 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                     }
                 }
                 // `Request.QueryString["key"]` → element_access_expression { expression=member_access }
+                // Propagate the inner expression's matched source description rather
+                // than this (outer) matcher's — otherwise the first Attribute matcher
+                // (e.g. `Request.QueryString`) claims every `Request.<field>[…]` access.
                 if node.kind() == "element_access_expression" {
                     if let Some(expr) = node.child_by_field_name("expression") {
-                        if classify_source_expr(expr, source, spec).is_some() {
-                            return Some(description.clone());
+                        if let Some(found) = classify_source_expr(expr, source, spec) {
+                            return Some(found);
                         }
                     }
                 }

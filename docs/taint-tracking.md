@@ -12,7 +12,7 @@ The taint engine answers the second, on a narrower footprint. It lets us ship ru
 
 The taint engine supports:
 
-- **Built-in taint rules for six languages**: Python, JavaScript/TypeScript, Go, Kotlin, C, and Java. Each has source/sink specs wired into the scanner (`builtin_taint_specs_for_language`) and a grammar-aware engine (`src/rules/*_taint.rs`) sharing the same user-facing trace surface (`TaintSpec`, `NodeMatcher`, `TaintFinding`, `analyze_tree`). `.ts` and `.tsx` files use dedicated tree-sitter TypeScript/TSX grammars, then run through the JavaScript-compatible rule and taint surface where semantics align.
+- **Built-in taint rules for seven languages**: Python, JavaScript/TypeScript, Go, Kotlin, C, Java, and C#. Each has source/sink specs wired into the scanner (`builtin_taint_specs_for_language`) and a grammar-aware engine (`src/rules/*_taint.rs`) sharing the same user-facing trace surface (`TaintSpec`, `NodeMatcher`, `TaintFinding`, `analyze_tree`). `.ts` and `.tsx` files use dedicated tree-sitter TypeScript/TSX grammars, then run through the JavaScript-compatible rule and taint surface where semantics align.
 - **Intraprocedural**: each function body is analyzed independently.
 - **Flow-insensitive**: statements are processed in source order. Reassigning a tainted variable to a clean value drops the taint. Branches are not modeled — taint observed in one branch of an `if` persists through the fall-through.
 - **One level of attribute propagation**: `x.y` is tainted when `x` is tainted.
@@ -36,7 +36,7 @@ Known limitations:
 - **Field sensitivity**: `d["key"]` is tainted because `d` is. Different keys are not distinguished.
 - **Object attribute propagation beyond one level**: `x.y.z` is tainted when `x` is tainted, but the engine does not persist taint on `x.y` as a distinct name.
 - **Dynamic import forms**: `importlib.import_module(...)` does not interact with the alias table, so sinks reached through it are not recognized.
-- **Other languages**: Ruby, PHP, C#, Bash, Solidity, Scala, Apex, and Swift have grammar-aware taint engines for Semgrep-compatible external taint rules, but no built-in first-party taint rules are wired into the default scanner registry yet. Rust, Haskell, and other source languages have no taint engine today. JavaScript/TypeScript uses the same scope as Python (intraprocedural, flow-insensitive, one-level subscript propagation, template-literal and wrapping-call propagation, collapse-to-clean sanitizers) with a `JsImportAliases` table for `import`/`require` forms. Go (see "Supported Go frameworks" below) uses `GoImportAliases` for grouped / aliased import specs and the same flow-insensitive, one-level propagation semantics, plus native multi-return destructuring and binary `+` string-concatenation propagation.
+- **Other languages**: Ruby, PHP, Bash, Solidity, Scala, Apex, and Swift have grammar-aware taint engines for Semgrep-compatible external taint rules, but no built-in first-party taint rules are wired into the default scanner registry yet. Rust, Haskell, and other source languages have no taint engine today. JavaScript/TypeScript uses the same scope as Python (intraprocedural, flow-insensitive, one-level subscript propagation, template-literal and wrapping-call propagation, collapse-to-clean sanitizers) with a `JsImportAliases` table for `import`/`require` forms. Go (see "Supported Go frameworks" below) uses `GoImportAliases` for grouped / aliased import specs and the same flow-insensitive, one-level propagation semantics, plus native multi-return destructuring and binary `+` string-concatenation propagation.
 
 ## API
 
@@ -167,7 +167,7 @@ Taint rules do not replace direct-sink rules. For example, `py/no-pickle` fires 
 
 ## Performance
 
-The taint engines run only for languages with enabled taint-backed rules. Each walk is over the already-parsed AST with small in-memory state. No additional parsing, no network, no disk. Go, Python, and JavaScript batch compatible taint rules to avoid repeated summary walks; Kotlin, C, and Java use lightweight intrafile dispatchers.
+The taint engines run only for languages with enabled taint-backed rules. Each walk is over the already-parsed AST with small in-memory state. No additional parsing, no network, no disk. Go, Python, and JavaScript batch compatible taint rules to avoid repeated summary walks; Kotlin, C, Java, and C# use lightweight intrafile dispatchers.
 
 ## Semgrep-compatible YAML bridge
 
@@ -325,6 +325,55 @@ Sources currently covered:
   statements, fixed executable names and validated argument arrays,
   outbound host allowlists, and avoiding Java native deserialization for
   request data.
+
+## Supported C# frameworks
+
+`src/rules/csharp_taint.rs` ships six first-consumer rules. Unlike the
+Java engine, the C# engine carries a shared sanitizer list (HTML/URL
+encoders, `SqlParameter`, numeric conversions, path canonicalizers).
+
+| Rule | CWE | Sink families |
+| ---- | --- | ------------- |
+| `csharp/taint-sql-injection` | CWE-89 | `new SqlCommand(...)` / `OleDbCommand` / `MySqlCommand`, `ExecuteReader` / `ExecuteNonQuery` / `ExecuteScalar` / `ExecuteXmlReader`, EF Core `FromSqlRaw` / `ExecuteSqlRaw`, Dapper `Query` / `Execute` |
+| `csharp/taint-command-injection` | CWE-78 | `Process.Start(...)`, `new ProcessStartInfo(...)` plus its `.Arguments` / `.FileName` assignments |
+| `csharp/taint-xss` | CWE-79 | `Response.Write(...)` |
+| `csharp/taint-open-redirect` | CWE-601 | `Response.Redirect(...)` |
+| `csharp/taint-xxe` | CWE-611 | `XmlReader.Create(...)`, `XmlDocument.LoadXml(...)`, `XmlDocument.Load(...)` |
+| `csharp/taint-unsafe-load` | CWE-502 | `Assembly.Load(...)`, `Assembly.LoadFrom(...)`, `Activator.CreateInstance(...)`, `Type.GetType(...)` |
+
+Sources currently covered:
+
+| Framework / surface | Sources |
+| ------------------- | ------- |
+| ASP.NET (System.Web) | `Request.QueryString`, `Request.Form`, `Request.Params`, `Request.Cookies`, `Request.Headers`, `Request.RawUrl`, `Request.Url`, `Request.Path`, `Request.UserAgent`, `Request.ServerVariables`, `HttpContext.Request` |
+| Console / stdin | `Console.ReadLine()`, `Console.Read()`, `Console.ReadKey()` |
+| Environment / CLI args | `Environment.GetEnvironmentVariable()`, `Environment.GetCommandLineArgs()` |
+
+### C#-specific engine notes
+
+- **Scope**: method, constructor, local-function, lambda, and anonymous
+  method bodies are analyzed independently. There is no C# cross-file or
+  type-resolution pass yet.
+- **Dotted sources**: the primary ASP.NET sources are dotted
+  (`Request.QueryString`, `Request.Form`). They arrive as `Attribute`
+  matchers and are matched against `member_access_expression` and
+  `element_access_expression` nodes (`Request.QueryString["key"]`), not
+  bare identifiers. This is the "bridge lesson from Ruby" called out in
+  the `csharp_taint.rs` header — the same engine serves both the
+  first-party rules and the Semgrep YAML bridge.
+- **Propagation**: local variables, assignments, `+` string
+  concatenation, interpolated strings (`$"...{expr}..."`), member/element
+  access on tainted receivers, and call arguments propagate taint.
+- **Sanitizers**: `HttpUtility.HtmlEncode` / `HtmlAttributeEncode` /
+  `UrlEncode`, `HtmlEncoder.Default.Encode`, `SqlParameter`,
+  `int.Parse` / `Convert.ToInt32` / `Convert.ToInt64`, and
+  `Path.GetFileName` / `Path.GetFullPath` collapse taint to clean.
+
+Known precision limitations of the v1 sink set are documented in the
+repository; in particular, several sink entries are receiver-less
+method-name matchers (`Load`, `Write`, `Redirect`, `Start`, `Query`,
+`Execute`) and can over-match unrelated same-named methods. Track narrow,
+receiver-constrained sink variants as a follow-up.
 
 ## Open questions for the full #10
 

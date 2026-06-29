@@ -1625,6 +1625,85 @@ mod csharp {
     }
 }
 
+// ─── C# taint (first-party) ─────────────────────────────────────────────────
+
+mod csharp_taint {
+    use super::*;
+
+    /// Positive fixture for the C# taint engine. Each method flows an
+    /// untrusted ASP.NET request source into a taint sink. Every
+    /// `csharp/taint-*` rule must fire exactly once.
+    #[test]
+    fn test_vulnerable_csharp_taint_catches_every_flow() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/vulnerable_csharp_taint.cs", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        assert!(!output.status.success());
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for f in &findings {
+            if let Some(rule) = f["rule_id"].as_str() {
+                *counts.entry(rule).or_insert(0) += 1;
+            }
+        }
+
+        for (taint_rule, expected) in [
+            ("csharp/taint-sql-injection", 1usize),
+            ("csharp/taint-command-injection", 1),
+            ("csharp/taint-xss", 1),
+            ("csharp/taint-open-redirect", 1),
+            ("csharp/taint-xxe", 1),
+            ("csharp/taint-unsafe-load", 1),
+        ] {
+            assert_eq!(
+                counts.get(taint_rule).copied(),
+                Some(expected),
+                "{} should fire exactly {} time(s) on vulnerable_csharp_taint.cs. counts={:?}",
+                taint_rule,
+                expected,
+                counts
+            );
+        }
+    }
+
+    /// Negative counterpart for the C# taint engine. Every function in
+    /// `safe_csharp_taint.cs` either uses a literal argument, has its taint
+    /// killed by a sanitizer, or never lets the tainted value reach a sink.
+    /// No csharp/taint-* rule may fire.
+    #[test]
+    fn test_safe_csharp_taint_has_no_taint_findings() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/safe_csharp_taint.cs", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        for taint_rule in [
+            "csharp/taint-sql-injection",
+            "csharp/taint-command-injection",
+            "csharp/taint-xss",
+            "csharp/taint-open-redirect",
+            "csharp/taint-xxe",
+            "csharp/taint-unsafe-load",
+        ] {
+            let n = findings
+                .iter()
+                .filter(|f| f["rule_id"].as_str() == Some(taint_rule))
+                .count();
+            assert_eq!(
+                n, 0,
+                "{} should not fire on safe_csharp_taint.cs, got {} findings",
+                taint_rule, n
+            );
+        }
+    }
+}
+
 // ─── Swift ──────────────────────────────────────────────────────────────────
 
 mod swift {
