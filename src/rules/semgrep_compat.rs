@@ -322,8 +322,29 @@ pub struct SemgrepMetavariablePatternClause {
     pub pattern: Option<String>,
     #[serde(default, rename = "pattern-regex")]
     pub pattern_regex: Option<String>,
+    #[serde(default, rename = "pattern-not-regex")]
+    pub pattern_not_regex: Option<String>,
     #[serde(default, rename = "pattern-either")]
     pub pattern_either: Option<Vec<PatternEntry>>,
+    /// Nested `patterns:` block (AND): each item contributes a positive
+    /// (`pattern` / `pattern-regex`) or negative (`pattern-not-regex`) check
+    /// against the metavariable's bound text. All items must hold.
+    #[serde(default)]
+    pub patterns: Option<Vec<MetavarPatternsItem>>,
+}
+
+/// A single item inside a `metavariable-pattern: { patterns: [...] }` block.
+///
+/// Only the regex/text forms our bridge can evaluate against bound text are
+/// supported; an item carrying none of them is warn-skipped at build time.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct MetavarPatternsItem {
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default, rename = "pattern-regex")]
+    pub pattern_regex: Option<String>,
+    #[serde(default, rename = "pattern-not-regex")]
+    pub pattern_not_regex: Option<String>,
 }
 
 /// A `metavariable-analysis:` clause inside a `patterns:` block.
@@ -394,8 +415,13 @@ pub enum PatternMatcher {
     Combined {
         positives: Vec<PatternMatcher>,
         negatives: Vec<NegativeMatcher>,
-        inside: Option<CompiledAstPattern>,
-        not_inside: Option<CompiledAstPattern>,
+        /// `pattern-inside:` clauses (AND): a candidate is kept only when it is
+        /// enclosed — with unifiable metavariable bindings — by EVERY one.
+        insides: Vec<CompiledAstPattern>,
+        /// `pattern-not-inside:` clauses: a candidate is dropped when it is
+        /// enclosed — with unifiable bindings — by ANY one. Semgrep allows
+        /// several in one `patterns:` block; each list item is honoured.
+        not_insides: Vec<CompiledAstPattern>,
         metavariable_regexes: Vec<MetavariableRegexConstraint>,
         metavariable_comparisons: Vec<MetavariableComparisonConstraint>,
         metavariable_patterns: Vec<MetavariablePatternConstraint>,
@@ -535,14 +561,27 @@ pub struct MetavariableComparisonConstraint {
 /// A compiled `metavariable-pattern:` constraint.
 ///
 /// The binding text for `metavariable` is re-parsed as a snippet and matched
-/// against `sub_matcher`. Supported sub-matcher forms: `Single` (pattern),
-/// `Regex` (pattern-regex), and `Either` (pattern-either of those). Any
-/// unsupported nested shape is warn-skipped at build time.
+/// against every check in `checks` (AND). Supported forms: `pattern` and
+/// `pattern-either` (AST), `pattern-regex` / `pattern-not-regex` (regex over the
+/// bound text), and a nested `patterns:` block combining those. Any unsupported
+/// nested shape is warn-skipped at build time.
 #[derive(Debug, Clone)]
 pub struct MetavariablePatternConstraint {
     metavariable: String,
-    sub_matcher: PatternMatcher,
+    checks: Vec<MetavarCheck>,
     lang: Language,
+}
+
+/// One AND-clause of a `metavariable-pattern` constraint, evaluated against the
+/// metavariable's bound text.
+#[derive(Debug, Clone)]
+enum MetavarCheck {
+    /// AST sub-pattern (`pattern:` / `pattern-either:`): re-parse the bound text
+    /// and require a match somewhere within it.
+    Ast(PatternMatcher),
+    /// Regex (`pattern-regex:` / `pattern-not-regex:`) against the bound text;
+    /// `negate` flips the sense for `pattern-not-regex`.
+    Regex { re: CompiledRegex, negate: bool },
 }
 
 /// Shannon entropy threshold (bits per character) above which a string is
@@ -1063,72 +1102,110 @@ impl MetavariableComparisonConstraint {
 impl MetavariablePatternConstraint {
     /// Build a `MetavariablePatternConstraint` from a YAML clause.
     ///
-    /// Returns `None` (after printing a warning) for unsupported nested shapes
-    /// such as nested `patterns:`, `metavariable-pattern:`, or a `language:`
-    /// override — consistent with the codebase's graceful-degradation style.
+    /// Accepts the direct forms (`pattern`, `pattern-regex`, `pattern-not-regex`,
+    /// `pattern-either`) and a nested `patterns:` block of those, AND-combined.
+    /// Returns `None` (after printing a warning) when no supported form is
+    /// present — consistent with the codebase's graceful-degradation style.
     fn from_yaml(clause: &SemgrepMetavariablePatternClause, lang: Language) -> Option<Self> {
-        let sub_matcher = if let Some(ref pat) = clause.pattern {
-            PatternMatcher::Single(CompiledAstPattern::new(pat.clone(), lang))
-        } else if let Some(ref regex) = clause.pattern_regex {
+        let metavar = &clause.metavariable;
+        let compile_re = |regex: &str, negate: bool| -> Option<MetavarCheck> {
             match compile_regex(regex) {
-                Ok(r) => PatternMatcher::Regex(r),
+                Ok(re) => Some(MetavarCheck::Regex { re, negate }),
                 Err(e) => {
                     eprintln!(
-                        "Warning: metavariable-pattern for {} has invalid pattern-regex: {}; skipping constraint",
-                        clause.metavariable, e
+                        "Warning: metavariable-pattern for {} has invalid {}: {}; skipping constraint",
+                        metavar,
+                        if negate { "pattern-not-regex" } else { "pattern-regex" },
+                        e
                     );
-                    return None;
+                    None
                 }
             }
-        } else if let Some(ref entries) = clause.pattern_either {
+        };
+
+        let mut checks: Vec<MetavarCheck> = Vec::new();
+
+        if let Some(ref pat) = clause.pattern {
+            checks.push(MetavarCheck::Ast(PatternMatcher::Single(
+                CompiledAstPattern::new(pat.clone(), lang),
+            )));
+        }
+        if let Some(ref regex) = clause.pattern_regex {
+            checks.push(compile_re(regex, false)?);
+        }
+        if let Some(ref regex) = clause.pattern_not_regex {
+            checks.push(compile_re(regex, true)?);
+        }
+        if let Some(ref entries) = clause.pattern_either {
             match build_either_matchers(entries, lang) {
-                Ok(matchers) => PatternMatcher::Either(matchers),
+                Ok(matchers) => checks.push(MetavarCheck::Ast(PatternMatcher::Either(matchers))),
                 Err(e) => {
                     eprintln!(
                         "Warning: metavariable-pattern for {} has invalid pattern-either: {}; skipping constraint",
-                        clause.metavariable, e
+                        metavar, e
                     );
                     return None;
                 }
             }
-        } else {
+        }
+        if let Some(ref items) = clause.patterns {
+            for item in items {
+                if let Some(ref pat) = item.pattern {
+                    checks.push(MetavarCheck::Ast(PatternMatcher::Single(
+                        CompiledAstPattern::new(pat.clone(), lang),
+                    )));
+                } else if let Some(ref regex) = item.pattern_regex {
+                    checks.push(compile_re(regex, false)?);
+                } else if let Some(ref regex) = item.pattern_not_regex {
+                    checks.push(compile_re(regex, true)?);
+                } else {
+                    eprintln!(
+                        "Warning: metavariable-pattern for {} has a patterns: item with no supported form \
+                        (pattern, pattern-regex, pattern-not-regex); skipping constraint",
+                        metavar
+                    );
+                    return None;
+                }
+            }
+        }
+
+        if checks.is_empty() {
             eprintln!(
                 "Warning: metavariable-pattern for {} has no supported nested pattern form \
-                (pattern, pattern-regex, or pattern-either); skipping constraint",
-                clause.metavariable
+                (pattern, pattern-regex, pattern-not-regex, pattern-either, or patterns:); skipping constraint",
+                metavar
             );
             return None;
-        };
+        }
 
         Some(Self {
             metavariable: clause.metavariable.clone(),
-            sub_matcher,
+            checks,
             lang,
         })
     }
 
-    /// Returns `true` when the bound text for `self.metavariable` matches
-    /// `self.sub_matcher`. Unparseable binding text is treated as no-match.
+    /// Returns `true` when the bound text for `self.metavariable` satisfies every
+    /// check (AND). Unparseable binding text is treated as no-match.
     fn matches(&self, bindings: &HashMap<String, String>) -> bool {
         let Some(bound_text) = bindings.get(&self.metavariable) else {
             return false;
         };
 
-        match &self.sub_matcher {
-            // For a regex sub-matcher we don't need to re-parse the binding.
-            PatternMatcher::Regex(regex) => regex.is_match(bound_text),
+        self.checks.iter().all(|check| match check {
+            // Regex checks run directly against the bound text; `negate` flips
+            // the sense for `pattern-not-regex`.
+            MetavarCheck::Regex { re, negate } => re.is_match(bound_text) != *negate,
 
-            // For AST sub-matchers, re-parse the binding text as a snippet
-            // in the rule's language.  If parsing yields no tree we treat
-            // it as no-match rather than crashing.
-            _ => {
-                let Some(tree) = parse_file(bound_text, self.lang) else {
-                    return false;
-                };
-                let root = tree.root_node();
-                !match_pattern_in_tree(&self.sub_matcher, root, bound_text).is_empty()
-            }
-        }
+            // AST checks re-parse the binding text as a snippet in the rule's
+            // language. Parse failure is treated as no-match rather than crashing.
+            MetavarCheck::Ast(matcher) => match parse_file(bound_text, self.lang) {
+                Some(tree) => {
+                    !match_pattern_in_tree(matcher, tree.root_node(), bound_text).is_empty()
+                }
+                None => false,
+            },
+        })
     }
 }
 
@@ -1252,8 +1329,8 @@ fn match_pattern_in_tree(
         PatternMatcher::Combined {
             positives,
             negatives,
-            inside,
-            not_inside,
+            insides,
+            not_insides,
             metavariable_regexes,
             metavariable_comparisons,
             metavariable_patterns,
@@ -1261,26 +1338,25 @@ fn match_pattern_in_tree(
             metavariable_types,
             focus_metavariables,
         } => {
-            // If we have an inside pattern, only search within matching contexts
-            let search_roots = if let Some(inside_pat) = inside {
-                let inside_matches = match_single_pattern(inside_pat, root, source);
-                inside_matches
-                    .iter()
-                    .map(|m| (m.start_byte, m.end_byte))
-                    .collect::<Vec<_>>()
-            } else {
-                vec![]
-            };
+            // Evaluate `pattern-inside` / `pattern-not-inside` to full matches
+            // (NOT just byte ranges): their metavariable bindings must unify with
+            // the candidate's bindings, so a metavar named the same in both the
+            // main `pattern:` and the `inside`/`not_inside` pattern is forced to
+            // the same source text. See `candidate_is_inside` below. Discarding
+            // the bindings here (keeping only the range) was the historical bug —
+            // a shared metavar matched anything inside the enclosing context.
+            // Each `pattern-inside` / `pattern-not-inside` is evaluated to FULL
+            // matches (not just byte ranges) so its metavariable bindings can
+            // unify with the candidate's — see `candidate_is_inside`.
+            let inside_match_sets: Vec<Vec<MatchRange>> = insides
+                .iter()
+                .map(|inside_pat| match_single_pattern(inside_pat, root, source))
+                .collect();
 
-            let excluded_roots = if let Some(not_inside_pat) = not_inside {
-                let excluded_matches = match_single_pattern(not_inside_pat, root, source);
-                excluded_matches
-                    .iter()
-                    .map(|m| (m.start_byte, m.end_byte))
-                    .collect::<Vec<_>>()
-            } else {
-                vec![]
-            };
+            let excluded_match_sets: Vec<Vec<MatchRange>> = not_insides
+                .iter()
+                .map(|not_inside_pat| match_single_pattern(not_inside_pat, root, source))
+                .collect();
 
             // Find all positive matches
             let mut candidates: Option<Vec<MatchRange>> = None;
@@ -1300,21 +1376,17 @@ fn match_pattern_in_tree(
                 results.retain(|r| !neg_matches.iter().any(|n| ranges_overlap(r, n)));
             }
 
-            // If inside constraint, filter to only matches within those ranges
-            if !search_roots.is_empty() {
-                results.retain(|r| {
-                    search_roots
-                        .iter()
-                        .any(|(start, end)| r.start_byte >= *start && r.end_byte <= *end)
-                });
+            // `pattern-inside` (AND): keep only candidates enclosed — with
+            // unifiable bindings — by EVERY inside pattern. An inside pattern that
+            // matched nothing drops all candidates.
+            for inside_matches in &inside_match_sets {
+                results.retain(|r| candidate_is_inside(r, inside_matches));
             }
 
-            if !excluded_roots.is_empty() {
-                results.retain(|r| {
-                    !excluded_roots
-                        .iter()
-                        .any(|(start, end)| r.start_byte >= *start && r.end_byte <= *end)
-                });
+            // `pattern-not-inside`: drop a candidate enclosed — with unifiable
+            // bindings — by ANY not-inside pattern; keep the rest.
+            for excluded_matches in &excluded_match_sets {
+                results.retain(|r| !candidate_is_inside(r, excluded_matches));
             }
 
             for constraint in metavariable_regexes {
@@ -1697,19 +1769,88 @@ fn match_children_with_ellipsis(
         let pat_child = pat_children[pi];
         let pat_text = &pat_src[pat_child.byte_range()];
 
-        if is_ellipsis_pattern(pat_text) {
+        // A pattern that omits modifiers/annotations (e.g. `$RET $M(...) { ... }`)
+        // should still match a declaration that has them. When the target's
+        // current child is a `modifiers` node and the pattern isn't trying to
+        // match modifiers here, skip it so the rest aligns (type, name, …).
+        // Without this, a metavariable like `$RET` would mis-bind to `modifiers`.
+        if ti < target_children.len()
+            && target_children[ti].kind() == "modifiers"
+            && pat_child.kind() != "modifiers"
+            && !is_ellipsis_pattern(pat_text)
+            && ellipsis_metavariable_key(pat_text).is_none()
+        {
+            ti += 1;
+            continue;
+        }
+
+        if let Some(metavar) = ellipsis_metavariable_key(pat_text) {
+            // `$...NAME`: behave like ellipsis but capture the skipped run's
+            // combined source span and bind it to the metavariable.
+            pi += 1;
+            let run_start = ti;
+            if pi >= pat_children.len() {
+                bind_ellipsis_run(
+                    target_children,
+                    run_start,
+                    target_children.len(),
+                    target_src,
+                    &metavar,
+                    bindings,
+                    binding_ranges,
+                );
+                return true;
+            }
+            let next_pat = pat_children[pi];
+            let mut matched = false;
+            while ti < target_children.len() {
+                let mut sub_bindings = bindings.clone();
+                let mut sub_ranges = binding_ranges.clone();
+                if match_node(
+                    target_children[ti],
+                    target_src,
+                    next_pat,
+                    pat_src,
+                    &mut sub_bindings,
+                    &mut sub_ranges,
+                ) {
+                    *bindings = sub_bindings;
+                    *binding_ranges = sub_ranges;
+                    bind_ellipsis_run(
+                        target_children,
+                        run_start,
+                        ti,
+                        target_src,
+                        &metavar,
+                        bindings,
+                        binding_ranges,
+                    );
+                    pi += 1;
+                    ti += 1;
+                    matched = true;
+                    break;
+                }
+                ti += 1;
+            }
+            if !matched {
+                return false;
+            }
+        } else if is_ellipsis_pattern(pat_text) {
             // Ellipsis: skip zero or more target children
             pi += 1;
             if pi >= pat_children.len() {
                 // ... at the end matches everything remaining
                 return true;
             }
-            // Try to find a target child that matches the next pattern child
+            // Find the next pattern child anywhere after here within the same
+            // function scope — lambda- and declaration-transparent (see
+            // `clause_matches_in_scope`), so `...` reaches into `db.run(ctx -> {…})`
+            // bodies and through `T x = check(…)` / `if (check(…))` wrappers.
             let next_pat = pat_children[pi];
             while ti < target_children.len() {
                 let mut sub_bindings = bindings.clone();
                 let mut sub_ranges = binding_ranges.clone();
-                if match_node(
+                if clause_matches_in_scope(
                     target_children[ti],
                     target_src,
                     next_pat,
@@ -1777,6 +1918,114 @@ fn match_children_with_ellipsis(
     true
 }
 
+/// True for AST node kinds that open a new *named* function or type scope, across
+/// the grammars foxguard supports. Block-ellipsis deep search
+/// (`clause_matches_in_scope`) stops at these so a `...` stays within a single
+/// method/function — it deliberately omits lambda/closure/arrow kinds, which are
+/// treated as transparent (the same logical scope as the enclosing method, so
+/// `db.run(ctx -> { ... })` reads through).
+fn opens_new_named_scope(kind: &str) -> bool {
+    matches!(
+        kind,
+        "method_declaration"
+            | "constructor_declaration"
+            | "compact_constructor_declaration"
+            | "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "annotation_type_declaration"
+            | "object_declaration"
+            | "function_declaration"
+            | "function_definition"
+            | "method_definition"
+            | "class_definition"
+            | "function_item"
+            | "impl_item"
+            | "trait_item"
+            | "struct_item"
+            | "struct_declaration"
+            | "enum_item"
+            | "mod_item"
+            | "protocol_declaration"
+    )
+}
+
+/// If `node` is an `expression_statement` wrapping a single expression (the
+/// trailing `;` is an anonymous child), return that inner expression; otherwise
+/// return `node` unchanged. Lets a statement-shaped pattern clause match a bare
+/// expression target and vice-versa.
+fn unwrap_expr_statement(node: tree_sitter::Node) -> tree_sitter::Node {
+    if node.kind() == "expression_statement" && node.named_child_count() == 1 {
+        if let Some(inner) = node.named_child(0) {
+            return inner;
+        }
+    }
+    node
+}
+
+/// Match `pattern` against `target` or any descendant within the SAME named
+/// function scope: descent passes through statement wrappers (declarations,
+/// `if`/`return`/… conditions) and INTO lambda/closure bodies, stopping only at
+/// nodes that open a new named scope (`opens_new_named_scope`).
+///
+/// This lets a block `...` ellipsis locate a clause that is lambda-wrapped
+/// (`db.run(ctx -> { check(id); })`) or carried by a declaration/condition
+/// (`T x = check(id);`, `if (check(id))`) — not only a bare expression statement.
+/// A direct match at `target` is preferred (shallowest, leftmost); on success the
+/// caller's `bindings`/`binding_ranges` are updated to the match found.
+fn clause_matches_in_scope(
+    target: tree_sitter::Node,
+    target_src: &str,
+    pattern: tree_sitter::Node,
+    pat_src: &str,
+    bindings: &mut HashMap<String, String>,
+    binding_ranges: &mut HashMap<String, MetavarRange>,
+) -> bool {
+    // Prefer a direct match here (covers the bare-statement case and keeps
+    // behaviour closest to the original shallow matcher). Unwrap a trailing-`;`
+    // `expression_statement` on either side so a statement-shaped clause
+    // (`check(id);`) also matches a bare-expression target — the same call as a
+    // declaration initializer (`T x = check(id)`) or an `if`/`return` condition,
+    // which is how access checks commonly appear.
+    let pat_core = unwrap_expr_statement(pattern);
+    let target_core = unwrap_expr_statement(target);
+    let mut sub_bindings = bindings.clone();
+    let mut sub_ranges = binding_ranges.clone();
+    if match_node(
+        target_core,
+        target_src,
+        pat_core,
+        pat_src,
+        &mut sub_bindings,
+        &mut sub_ranges,
+    ) {
+        *bindings = sub_bindings;
+        *binding_ranges = sub_ranges;
+        return true;
+    }
+
+    // Otherwise descend, in source order, into children that remain within the
+    // current named-function scope (lambda bodies included).
+    let mut cursor = target.walk();
+    for child in target.named_children(&mut cursor) {
+        if opens_new_named_scope(child.kind()) {
+            continue;
+        }
+        if clause_matches_in_scope(
+            child,
+            target_src,
+            pattern,
+            pat_src,
+            bindings,
+            binding_ranges,
+        ) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Check if text looks like a Semgrep metavariable: $VAR, $X, $DB, etc.
 #[cfg(test)]
 fn is_metavar(text: &str) -> bool {
@@ -1823,7 +2072,63 @@ fn metavariable_key(text: &str) -> Option<String> {
 }
 
 fn is_ellipsis_pattern(text: &str) -> bool {
-    matches!(text.trim(), "..." | GO_ELLIPSIS_PLACEHOLDER)
+    // Bare `...` (and the Go placeholder). Also treat a parameter-list ellipsis
+    // that tree-sitter folds into an ERROR node carrying the separating comma
+    // (e.g. `", ..."` for `(X, ...)`, or `"..., "` for `(..., X)`) as an ellipsis
+    // — Java's grammar rejects a bare `...` parameter so it surfaces as ERROR.
+    let t = text
+        .trim()
+        .trim_matches(|c: char| c == ',' || c.is_whitespace());
+    matches!(t, "..." | GO_ELLIPSIS_PLACEHOLDER)
+}
+
+/// Recognise an ellipsis-capture metavariable like `$...BODY` (Semgrep's
+/// statement/argument-sequence metavariable). Returns the binding key exactly as
+/// written (`$...BODY`) so it lines up with `metavariable: $...BODY` in YAML.
+///
+/// `$...NAME` is not valid in the target grammars, so tree-sitter parses it into
+/// a small garbled subtree whose *combined node text* is `$...NAME`; we match on
+/// that text rather than the internal structure.
+fn ellipsis_metavariable_key(text: &str) -> Option<String> {
+    let t = text.trim();
+    let rest = t.strip_prefix("$...")?;
+    if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Some(format!("$...{rest}"))
+    } else {
+        None
+    }
+}
+
+/// Bind an ellipsis-capture metavariable to the combined source span of the
+/// target children in `[start, end)`. An empty run binds the empty string.
+/// First binding wins (consistent with single-node metavariable binding).
+fn bind_ellipsis_run(
+    target_children: &[tree_sitter::Node],
+    start: usize,
+    end: usize,
+    target_src: &str,
+    metavar: &str,
+    bindings: &mut HashMap<String, String>,
+    binding_ranges: &mut HashMap<String, MetavarRange>,
+) {
+    if bindings.contains_key(metavar) {
+        return;
+    }
+    if start < end {
+        let first = target_children[start];
+        let last = target_children[end - 1];
+        let text = target_src[first.start_byte()..last.end_byte()].to_string();
+        let sp = first.start_position();
+        let ep = last.end_position();
+        bindings.insert(metavar.to_string(), text);
+        binding_ranges.insert(
+            metavar.to_string(),
+            (sp.row + 1, sp.column + 1, ep.row + 1, ep.column + 1),
+        );
+    } else {
+        bindings.insert(metavar.to_string(), String::new());
+        binding_ranges.insert(metavar.to_string(), (0, 0, 0, 0));
+    }
 }
 
 // ─── metavariable-type resolution ────────────────────────────────────────────
@@ -2106,6 +2411,23 @@ fn find_source_line_by_line(source: &str, line: usize) -> Option<String> {
 
 fn ranges_overlap(left: &MatchRange, right: &MatchRange) -> bool {
     left.start_byte < right.end_byte && right.start_byte < left.end_byte
+}
+
+/// True when `candidate` is structurally enclosed by at least one of the
+/// `enclosing` matches AND that enclosing match's metavariable bindings unify
+/// with the candidate's (same metavar name → same source text, per
+/// `merge_bindings`).
+///
+/// Used to evaluate `pattern-inside` (keep candidates that are inside) and
+/// `pattern-not-inside` (drop candidates that are inside). Unification means a
+/// metavar shared between the main `pattern:` and the inside/not-inside pattern
+/// is forced to the same value, rather than matching independently.
+fn candidate_is_inside(candidate: &MatchRange, enclosing: &[MatchRange]) -> bool {
+    enclosing.iter().any(|e| {
+        candidate.start_byte >= e.start_byte
+            && candidate.end_byte <= e.end_byte
+            && merge_bindings(&candidate.bindings, &e.bindings).is_some()
+    })
 }
 
 fn merge_bindings(
@@ -2672,8 +2994,8 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
     if let Some(ref clauses) = yaml.patterns {
         let mut positives = Vec::new();
         let mut negatives = Vec::new();
-        let mut inside = None;
-        let mut not_inside = None;
+        let mut insides: Vec<CompiledAstPattern> = Vec::new();
+        let mut not_insides: Vec<CompiledAstPattern> = Vec::new();
         let mut metavariable_regexes = Vec::new();
         let mut metavariable_comparisons = Vec::new();
         let mut metavariable_patterns = Vec::new();
@@ -2721,11 +3043,11 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                 }
             }
             if let Some(ref pi) = clause.pattern_inside {
-                inside = Some(CompiledAstPattern::new(pi.clone(), lang));
+                insides.push(CompiledAstPattern::new(pi.clone(), lang));
             }
             if let Some(pni) = clause.pattern_not_inside.clone() {
                 if let Some(pat_str) = pni.into_pattern_string() {
-                    not_inside = Some(CompiledAstPattern::new(pat_str, lang));
+                    not_insides.push(CompiledAstPattern::new(pat_str, lang));
                 }
                 // If into_pattern_string returns None it already printed a warning;
                 // the constraint is gracefully skipped.
@@ -2783,8 +3105,8 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
         return Ok(PatternMatcher::Combined {
             positives,
             negatives,
-            inside,
-            not_inside,
+            insides,
+            not_insides,
             metavariable_regexes,
             metavariable_comparisons,
             metavariable_patterns,
@@ -2856,11 +3178,13 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
         return Ok(PatternMatcher::Combined {
             positives,
             negatives,
-            inside: yaml
+            insides: yaml
                 .pattern_inside
                 .as_ref()
-                .map(|pattern| CompiledAstPattern::new(pattern.clone(), lang)),
-            not_inside: not_inside_pat,
+                .map(|pattern| CompiledAstPattern::new(pattern.clone(), lang))
+                .into_iter()
+                .collect(),
+            not_insides: not_inside_pat.into_iter().collect(),
             metavariable_regexes: Vec::new(),
             metavariable_comparisons: Vec::new(),
             metavariable_patterns: Vec::new(),
@@ -3069,15 +3393,43 @@ fn compile_globset(patterns: &[String]) -> Result<Option<GlobSet>, String> {
 
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
-        let glob =
-            Glob::new(pattern).map_err(|e| format!("Invalid paths glob '{}': {}", pattern, e))?;
-        builder.add(glob);
+        for variant in expand_path_glob(pattern) {
+            let glob = Glob::new(&variant)
+                .map_err(|e| format!("Invalid paths glob '{}': {}", pattern, e))?;
+            builder.add(glob);
+        }
     }
 
     builder
         .build()
         .map(Some)
         .map_err(|e| format!("Failed to build paths globset: {}", e))
+}
+
+/// Expand a Semgrep `paths.include`/`paths.exclude` entry into the glob variants
+/// that reproduce Semgrep's matching semantics. Semgrep matches a bare path or
+/// directory entry against files anywhere beneath it (implicit `**`), and not
+/// only at the project root. `globset` globs are literal, so we add:
+///   - the entry itself (exact file match),
+///   - `<entry>/**` (everything under a directory),
+///   - `**/<entry>` and `**/<entry>/**` (the same, matched at any depth, so it
+///     works whether the scanned paths are project-relative or absolute).
+fn expand_path_glob(pattern: &str) -> Vec<String> {
+    let trimmed = pattern.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return vec![pattern.to_string()];
+    }
+    let mut variants = vec![
+        trimmed.to_string(),
+        format!("{trimmed}/**"),
+        format!("**/{trimmed}"),
+        format!("**/{trimmed}/**"),
+    ];
+    // Keep the original spelling too (e.g. it already carried a trailing `/`).
+    if pattern != trimmed {
+        variants.push(pattern.to_string());
+    }
+    variants
 }
 
 fn normalize_rule_path(path: &Path) -> String {
@@ -3616,6 +3968,186 @@ rules:
         assert_eq!(findings[0].line, 5);
     }
 
+    // ─── metavariable unification across pattern + pattern-inside/not-inside ──
+
+    /// Compile a single-clause Java `patterns:` rule from `patterns_body`
+    /// (indented YAML list items), run it over `source`, and return the sorted
+    /// 1-based line numbers of the findings. Keeps the unification cases below
+    /// down to one assertion each.
+    fn java_finding_lines(patterns_body: &str, source: &str) -> Vec<usize> {
+        let yaml = format!(
+            "rules:\n  - id: unif-probe\n    languages: [java]\n    severity: ERROR\n    \
+             message: probe\n    patterns:\n{patterns_body}"
+        );
+        let f = make_yaml(&yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+        let tree = parse_file(source, Language::Java).unwrap();
+        let mut lines: Vec<usize> = rules[0]
+            .check(source, &tree)
+            .into_iter()
+            .map(|finding| finding.line)
+            .collect();
+        lines.sort_unstable();
+        lines
+    }
+
+    /// `removeUnsafe` checks `req.otherId` but deletes by `req.recordId` (the
+    /// IDOR — delete on line 4). `removeSafe` checks and deletes the same
+    /// `req.recordId` (delete on line 8).
+    const IDOR_JAVA: &str = "\
+class Idor {
+  public void removeUnsafe(AuthContext authContext, Req req) {
+    checkAccess(ctx, authContext, req.otherId);
+    RECORDS.delete(ctx, new DbKey<>(req.recordId));
+  }
+  public void removeSafe(AuthContext authContext, Req req) {
+    checkAccess(ctx, authContext, req.recordId);
+    RECORDS.delete(ctx, new DbKey<>(req.recordId));
+  }
+}
+";
+
+    #[test]
+    fn pattern_inside_unifies_shared_metavar() {
+        // `$REQ.$ID` in the delete must equal `$REQ.$ID` in the enclosing check.
+        // Only removeSafe (delete on line 8) satisfies that — removeUnsafe
+        // checks a different id, so its delete (line 4) must NOT match.
+        let body = "      - pattern: $TBL.delete($CTX, new DbKey<>($REQ.$ID))\n      \
+                    - pattern-inside: |\n          $RT $M(...) { ... $CHK(..., $REQ.$ID); ... }\n";
+        assert_eq!(java_finding_lines(body, IDOR_JAVA), vec![8]);
+    }
+
+    #[test]
+    fn pattern_not_inside_unifies_shared_metavar() {
+        // The complementary IDOR detector: a by-id delete whose id was NOT
+        // checked in the enclosing method. Fires only on removeUnsafe (line 4).
+        let body = "      - pattern: $TBL.delete($CTX, new DbKey<>($REQ.$ID))\n      \
+                    - pattern-not-inside: |\n          $RT $M(...) { ... $CHK(..., $REQ.$ID); ... }\n";
+        assert_eq!(java_finding_lines(body, IDOR_JAVA), vec![4]);
+    }
+
+    #[test]
+    fn pattern_inside_without_shared_metavar_is_purely_positional() {
+        // No metavar shared with the inside pattern → behaves as a plain
+        // containment filter: both deletes (lines 4 and 8) are inside a method.
+        let body = "      - pattern: $TBL.delete($CTX, new DbKey<>($REQ.$ID))\n      \
+                    - pattern-inside: |\n          $RT $M(...) { ... }\n";
+        assert_eq!(java_finding_lines(body, IDOR_JAVA), vec![4, 8]);
+    }
+
+    // ─── multiple pattern-not-inside + lambda/declaration-aware block match ──
+
+    /// Two distinct safe-check shapes. `viaOwnership` (delete L4) is checked by
+    /// `checkHasOwnershipOfEntity`, `viaTeam` (delete L8) by `checkTeamAccess`,
+    /// `viaNeither` (delete L11) by nothing.
+    const IDOR_MULTI_JAVA: &str = "\
+class IdorMulti {
+  public void viaOwnership(AuthContext authContext, Req req) {
+    accessCheckService.checkHasOwnershipOfEntity(ctx, req.recordId);
+    RECORDS.delete(ctx, new DbKey<>(req.recordId));
+  }
+  public void viaTeam(AuthContext authContext, Req req) {
+    accessCheckService.checkTeamAccess(ctx, req.recordId);
+    RECORDS.delete(ctx, new DbKey<>(req.recordId));
+  }
+  public void viaNeither(AuthContext authContext, Req req) {
+    RECORDS.delete(ctx, new DbKey<>(req.recordId));
+  }
+}
+";
+
+    #[test]
+    fn multiple_pattern_not_inside_are_all_honored() {
+        // Both exclusions must apply (Semgrep ANDs them). Only viaNeither (L11),
+        // whose id is never checked, survives. With a single honored not-inside
+        // the shape excluded by the other clause would leak.
+        let body = "      - pattern: $TBL.delete($CTX, new DbKey<>($REQ.$ID))\n      \
+            - pattern-not-inside: |\n          $RT $M(...) { ... $A.checkHasOwnershipOfEntity(..., $REQ.$ID); ... }\n      \
+            - pattern-not-inside: |\n          $RT $M(...) { ... $A.checkTeamAccess(..., $REQ.$ID); ... }\n";
+        assert_eq!(java_finding_lines(body, IDOR_MULTI_JAVA), vec![11]);
+    }
+
+    /// Same as `IDOR_JAVA` but the check + delete are wrapped in a
+    /// `db.run(ctx -> { ... })` lambda. `removeUnsafe` delete = L5 (checks a
+    /// different id), `removeSafe` delete = L11 (checks the same id).
+    const IDOR_LAMBDA_JAVA: &str = "\
+class IdorLambda {
+  public void removeUnsafe(AuthContext authContext, Req req) {
+    db.run(ctx -> {
+      checkAccess(ctx, authContext, req.otherId);
+      RECORDS.delete(ctx, new DbKey<>(req.recordId));
+    });
+  }
+  public void removeSafe(AuthContext authContext, Req req) {
+    db.run(ctx -> {
+      checkAccess(ctx, authContext, req.recordId);
+      RECORDS.delete(ctx, new DbKey<>(req.recordId));
+    });
+  }
+}
+";
+
+    #[test]
+    fn pattern_not_inside_descends_into_lambda_body() {
+        // The check + delete live inside a `db.run(ctx -> {…})` lambda. The
+        // not-inside method pattern must descend into the lambda to find the
+        // same-id check; only removeUnsafe (L5) is flagged.
+        let body = "      - pattern: $TBL.delete($CTX, new DbKey<>($REQ.$ID))\n      \
+            - pattern-not-inside: |\n          $RT $M(...) { ... $CHK(..., $REQ.$ID); ... }\n";
+        assert_eq!(java_finding_lines(body, IDOR_LAMBDA_JAVA), vec![5]);
+    }
+
+    /// The same-id check is written as a declaration initializer (L3) and as an
+    /// `if` condition (L7); `removeUnchecked` (delete L12) has neither.
+    const IDOR_DECL_JAVA: &str = "\
+class IdorDecl {
+  public void removeAssigned(AuthContext authContext, Req req) {
+    boolean ok = checkAccess(ctx, authContext, req.recordId);
+    RECORDS.delete(ctx, new DbKey<>(req.recordId));
+  }
+  public void removeIf(AuthContext authContext, Req req) {
+    if (checkAccess(ctx, authContext, req.recordId)) {
+      RECORDS.delete(ctx, new DbKey<>(req.recordId));
+    }
+  }
+  public void removeUnchecked(AuthContext authContext, Req req) {
+    RECORDS.delete(ctx, new DbKey<>(req.recordId));
+  }
+}
+";
+
+    #[test]
+    fn pattern_not_inside_matches_declaration_and_if_condition_checks() {
+        // A check carried by `T x = check(…)` or `if (check(…))` must count, not
+        // only a bare `check(…);` statement. Only removeUnchecked (L12) fires.
+        let body = "      - pattern: $TBL.delete($CTX, new DbKey<>($REQ.$ID))\n      \
+            - pattern-not-inside: |\n          $RT $M(...) { ... $CHK(..., $REQ.$ID); ... }\n";
+        assert_eq!(java_finding_lines(body, IDOR_DECL_JAVA), vec![12]);
+    }
+
+    /// The same-id check sits inside a *nested* local class (its own named
+    /// scope), not the mutating method. The delete (L6) must still fire — deep
+    /// search stops at the nested declaration.
+    const IDOR_NESTED_SCOPE_JAVA: &str = "\
+class IdorNested {
+  public void removeUnchecked(AuthContext authContext, Req req) {
+    class Helper {
+      void verify() { checkAccess(ctx, authContext, req.recordId); }
+    }
+    RECORDS.delete(ctx, new DbKey<>(req.recordId));
+  }
+}
+";
+
+    #[test]
+    fn block_ellipsis_stops_at_nested_named_scope() {
+        // The check in the nested local class must NOT suppress the delete in the
+        // enclosing method (different scope). Guards `opens_new_named_scope`.
+        let body = "      - pattern: $TBL.delete($CTX, new DbKey<>($REQ.$ID))\n      \
+            - pattern-not-inside: |\n          $RT $M(...) { ... $CHK(..., $REQ.$ID); ... }\n";
+        assert_eq!(java_finding_lines(body, IDOR_NESTED_SCOPE_JAVA), vec![6]);
+    }
+
     // ─── metavariable-comparison unit tests ─────────────────────────────────
 
     #[test]
@@ -3767,6 +4299,32 @@ rules:
         assert_eq!(parse_numeric(&strip_numeric_suffixes("0xFF")), Some(255.0));
         assert_eq!(parse_numeric(&strip_numeric_suffixes("0xff")), Some(255.0));
         assert_eq!(parse_numeric(&strip_numeric_suffixes("0b101")), Some(5.0));
+    }
+
+    /// A bare directory entry in `paths.include` matches files beneath it
+    /// (Semgrep semantics), at any depth, while `paths.exclude` still filters.
+    #[test]
+    fn test_path_filter_directory_include_matches_descendants() {
+        let paths = SemgrepPaths {
+            include: vec!["powerlines/src/com/powerlinespro/appserver/handler/".into()],
+            exclude: vec!["**/Generated.java".into()],
+        };
+        let pf = PathFilter::from_yaml(Some(&paths)).unwrap().unwrap();
+        // Under the included dir (project-relative and absolute) -> match.
+        assert!(pf.matches(std::path::Path::new(
+            "powerlines/src/com/powerlinespro/appserver/handler/BlobHandler.java"
+        )));
+        assert!(pf.matches(std::path::Path::new(
+            "/abs/repo/powerlines/src/com/powerlinespro/appserver/handler/sub/Deep.java"
+        )));
+        // Excluded file under the dir -> no match.
+        assert!(!pf.matches(std::path::Path::new(
+            "powerlines/src/com/powerlinespro/appserver/handler/Generated.java"
+        )));
+        // Outside the included dir -> no match.
+        assert!(!pf.matches(std::path::Path::new(
+            "powerlines/src/com/powerlinespro/service/impl/DesignServiceImpl.java"
+        )));
     }
 
     #[test]
@@ -3952,6 +4510,67 @@ rules:
             1,
             "expected exactly one finding for user_ variable"
         );
+        assert_eq!(findings[0].line, 1);
+    }
+
+    /// pattern-not-regex nested form: the bound text must NOT match the regex.
+    #[test]
+    fn test_metavariable_pattern_not_regex_nested() {
+        let yaml = r#"
+rules:
+  - id: mvp-not-regex
+    patterns:
+      - pattern: '"..." + $VAR'
+      - metavariable-pattern:
+          metavariable: $VAR
+          pattern-not-regex: '^user_'
+    message: non-user-prefixed var in concat
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        let source = "q = \"SELECT \" + user_input\nq2 = \"SELECT \" + data\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly one finding for the non-user_ variable"
+        );
+        assert_eq!(findings[0].line, 2, "should flag `data`, not `user_input`");
+    }
+
+    /// Nested `patterns:` block under metavariable-pattern: an AND of
+    /// pattern-regex (must match) and pattern-not-regex (must not match),
+    /// both evaluated against the bound text.
+    #[test]
+    fn test_metavariable_pattern_patterns_block_and() {
+        let yaml = r#"
+rules:
+  - id: mvp-patterns-block
+    patterns:
+      - pattern: '"..." + $VAR'
+      - metavariable-pattern:
+          metavariable: $VAR
+          patterns:
+            - pattern-regex: '_input$'
+            - pattern-not-regex: '^admin_'
+    message: non-admin _input var in concat
+    severity: WARNING
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let rules = parse_semgrep_file(f.path()).unwrap();
+
+        // user_input: ends _input, not admin_ -> match.
+        // admin_input: ends _input but starts admin_ -> excluded by pattern-not-regex.
+        // data: no _input suffix -> excluded by pattern-regex.
+        let source = "a = \"x\" + user_input\nb = \"x\" + admin_input\nc = \"x\" + data\n";
+        let tree = parse_file(source, Language::Python).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(findings.len(), 1, "only user_input satisfies both clauses");
         assert_eq!(findings[0].line, 1);
     }
 
