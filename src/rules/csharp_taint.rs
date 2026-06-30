@@ -29,8 +29,11 @@
 //! references. The bridge path therefore fires end-to-end on the real CLI.
 
 use crate::rules::common::{walk_tree, AliasTable};
+use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary, ParamSinkFlow};
+use crate::rules::taint_engine::cross_file_taint_finding;
 pub use crate::rules::taint_engine::{NodeMatcher, TaintFinding, TaintSpec};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use tree_sitter::Node;
 
 // ─── Internal taint state ─────────────────────────────────────────────────────
@@ -422,12 +425,64 @@ fn analyze_scope(
     let body = find_scope_body(scope_node).unwrap_or(scope_node);
     let mut state = TaintState::default();
 
+    // Seed parameter sources (`ParamName` matchers) so bare-identifier
+    // parameter taint is recognized. The built-in C# specs use dotted sources,
+    // so this only fires for synthetic per-parameter specs (cross-file pass 1)
+    // or bridge-compiled `pattern: SomeName` sources.
+    collect_param_sources(scope_node, source, spec, &mut state);
+
     // Three passes cover `source -> local -> derived -> sink` chains without
     // a fixed-point loop.
     for _ in 0..3 {
         propagate_assignments(body, source, spec, &mut state);
     }
     find_sinks(body, source, spec, &state, out);
+}
+
+/// Seed taint state from parameters whose name matches a `ParamName` source.
+///
+/// The C# `expression_taint` resolves a bare identifier purely through the
+/// taint state (it does not re-classify identifiers as sources), so a
+/// parameter used directly as a tainted value must be present in `state`.
+/// `$<any-param>` (the wildcard) seeds every parameter.
+fn collect_param_sources(
+    scope_node: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
+    state: &mut TaintState,
+) {
+    let mut bare_names: Vec<&str> = Vec::new();
+    let mut wildcard = false;
+    for matcher in &spec.sources {
+        if let NodeMatcher::ParamName { names, .. } = matcher {
+            if crate::rules::taint_engine::param_names_are_wildcard(names) {
+                wildcard = true;
+            }
+            for name in names {
+                bare_names.push(name.as_str());
+            }
+        }
+    }
+    if bare_names.is_empty() && !wildcard {
+        return;
+    }
+
+    for param in scope_parameter_nodes(scope_node) {
+        let Some(name_node) = param.child_by_field_name("name") else {
+            continue;
+        };
+        let name = node_text(name_node, source);
+        if wildcard || bare_names.contains(&name) {
+            state.taint(
+                name.to_string(),
+                TaintInfo {
+                    description: format!("parameter '{name}'"),
+                    line: param.start_position().row + 1,
+                    hops: 0,
+                },
+            );
+        }
+    }
 }
 
 fn propagate_assignments(scope: Node<'_>, source: &str, spec: &TaintSpec, state: &mut TaintState) {
@@ -1037,6 +1092,293 @@ fn node_text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
     &source[node.byte_range()]
 }
 
+// ─── Cross-file (interprocedural across files) taint ─────────────────────
+//
+// Scope of the C# cross-file pass (deliberately narrow; mirrors the Java and
+// Go engines — see `docs/taint-tracking.md`):
+//
+// * **Resolution is NAME-based, not type-based.** A method (or local function)
+//   declaration is summarized by its bare method name. A call site resolves to
+//   a summary whenever the invoked method name matches a summarized method in a
+//   sibling file of the same directory (used as a same-namespace/same-package
+//   proxy, the way the Go engine treats same-directory `.go` files). This
+//   intentionally over-approximates: `Helper.Run(x)`, `helper.Run(x)`, and a
+//   bare `Run(x)` all resolve to *any* same-directory `Run` summary, regardless
+//   of the receiver's declared type. Argument count is only used as a positional
+//   bound (the flow's parameter index must be a valid argument index), not as a
+//   strict overload discriminator.
+// * **What is NOT modeled:** `using`/namespace resolution across directories,
+//   type-based instance dispatch through interfaces or subclasses, overload
+//   resolution by parameter *type* (only positional arity is honored), partial
+//   classes split across files, extension methods, and multi-hop chains (a
+//   helper that itself calls another cross-file helper). These need a C#
+//   type/symbol table the engine does not build.
+
+/// Extract cross-file taint summaries for every method / local function in
+/// `root`.
+///
+/// Pass 1 of the two-pass scanner. For each method, every parameter is treated
+/// as a synthetic taint source; a parameter that reaches a sink records a
+/// [`ParamSinkFlow`], and a parameter that flows to a `return` records a
+/// `params_to_return` index. Summaries are keyed by the bare method name
+/// (last-write-wins on name collisions, mirroring Go/Java).
+pub fn extract_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    _aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+) -> Vec<FunctionTaintSummary> {
+    let mut summaries = Vec::new();
+    walk_tree(root, source, &mut |node, src| {
+        if node.kind() != "method_declaration" && node.kind() != "local_function_statement" {
+            return;
+        }
+        let Some(method_name) = node
+            .child_by_field_name("name")
+            .map(|n| node_text(n, src).to_string())
+        else {
+            return;
+        };
+        let param_names = csharp_method_param_names(node, src);
+        if let Some(summary) =
+            summarize_csharp_method(node, &method_name, &param_names, src, rule_specs)
+        {
+            summaries.push(summary);
+        }
+    });
+    summaries
+}
+
+/// The `parameter` nodes of a method / local-function scope, in order.
+fn scope_parameter_nodes(scope_node: Node<'_>) -> Vec<Node<'_>> {
+    let mut out = Vec::new();
+    if let Some(plist) = scope_node.child_by_field_name("parameters") {
+        let mut cursor = plist.walk();
+        for child in plist.named_children(&mut cursor) {
+            if child.kind() == "parameter" {
+                out.push(child);
+            }
+        }
+    }
+    out
+}
+
+/// The parameter names of a method / local-function scope, in order.
+fn csharp_method_param_names(scope_node: Node<'_>, source: &str) -> Vec<String> {
+    scope_parameter_nodes(scope_node)
+        .into_iter()
+        .filter_map(|node| {
+            node.child_by_field_name("name")
+                .map(|n| node_text(n, source).to_string())
+        })
+        .collect()
+}
+
+/// Build a [`FunctionTaintSummary`] for a single method, or `None` if no
+/// parameter reaches a sink or a return value.
+fn summarize_csharp_method(
+    method_node: Node<'_>,
+    method_name: &str,
+    param_names: &[String],
+    source: &str,
+    rule_specs: &[(&str, TaintSpec)],
+) -> Option<FunctionTaintSummary> {
+    if param_names.is_empty() {
+        return None;
+    }
+
+    let mut params_to_sink: Vec<ParamSinkFlow> = Vec::new();
+    let mut params_to_return: Vec<usize> = Vec::new();
+
+    for (param_idx, param_name) in param_names.iter().enumerate() {
+        if csharp_param_flows_to_return(method_node, param_name, source) {
+            params_to_return.push(param_idx);
+        }
+
+        for (rule_id, rule_spec) in rule_specs {
+            let synthetic = TaintSpec {
+                sources: vec![NodeMatcher::ParamName {
+                    names: vec![param_name.clone()],
+                    description: format!("parameter '{param_name}'"),
+                }],
+                sinks: rule_spec.sinks.clone(),
+                sanitizers: rule_spec.sanitizers.clone(),
+            };
+            let mut findings = Vec::new();
+            analyze_scope(method_node, source, &synthetic, &mut findings);
+            if let Some(finding) = findings.first() {
+                params_to_sink.push(ParamSinkFlow {
+                    param_index: param_idx,
+                    sink_rule_id: rule_id.to_string(),
+                    sink_description: finding.sink_description.clone(),
+                });
+            }
+        }
+    }
+
+    if params_to_sink.is_empty() && params_to_return.is_empty() {
+        return None;
+    }
+
+    Some(FunctionTaintSummary {
+        name: method_name.to_string(),
+        params_to_return,
+        params_to_sink,
+    })
+}
+
+/// Does `param_name`, treated as a taint source, reach a `return` statement?
+///
+/// The C# intra engine seeds parameter sources implicitly (a bare identifier
+/// equal to a `ParamName` source matches in `classify_source_expr`), so we do
+/// not pre-populate the state — propagation through assignments plus the
+/// expression check on the returned value is sufficient.
+fn csharp_param_flows_to_return(method_node: Node<'_>, param_name: &str, source: &str) -> bool {
+    let synthetic = TaintSpec {
+        sources: vec![NodeMatcher::ParamName {
+            names: vec![param_name.to_string()],
+            description: format!("parameter '{param_name}'"),
+        }],
+        sinks: vec![],
+        sanitizers: vec![],
+    };
+    let body = find_scope_body(method_node).unwrap_or(method_node);
+    let mut state = TaintState::default();
+    collect_param_sources(method_node, source, &synthetic, &mut state);
+    for _ in 0..3 {
+        propagate_assignments(body, source, &synthetic, &mut state);
+    }
+
+    let mut flows = false;
+    walk_scope_nodes(body, source, &mut |node, src| {
+        if flows || node.kind() != "return_statement" {
+            return;
+        }
+        if let Some(expr) = node.named_child(0) {
+            if expression_taint(expr, src, &synthetic, &state).is_some() {
+                flows = true;
+            }
+        }
+    });
+    flows
+}
+
+/// Cross-file resolution info for the C# engine.
+///
+/// `same_package_paths` are the canonical paths of sibling C# files in the same
+/// directory (the same-namespace proxy); `summaries` is the pass-1 map keyed by
+/// canonical path; `allowed_rule_ids` gates which rules may emit cross-file
+/// findings in the current run.
+pub struct CrossFileInfo<'a> {
+    pub same_package_paths: &'a [PathBuf],
+    pub summaries: &'a CrossFileSummaryMap,
+    pub allowed_rule_ids: &'a HashSet<String>,
+}
+
+/// Pass 2 cross-file resolution: walk every scope, compute its intra-file taint
+/// state, and for each helper-method call that resolves to a sibling summary,
+/// emit a finding when a tainted argument lands on a parameter with a recorded
+/// sink flow.
+///
+/// Returns findings whose `rule_id_hint` carries the attributed rule id.
+pub fn extract_cross_file_findings(
+    root: Node<'_>,
+    source: &str,
+    rule_specs: &[(&str, TaintSpec)],
+    cross_file: &CrossFileInfo<'_>,
+) -> Vec<TaintFinding> {
+    // The caller-side taint state is driven by the real sources (shared across
+    // the built-in C# rules); union them so an inline source argument like
+    // `Helper.Run(Request.QueryString["x"])` is recognized.
+    let mut source_spec = TaintSpec::default();
+    for (_, spec) in rule_specs {
+        source_spec.sources.extend(spec.sources.iter().cloned());
+        source_spec
+            .sanitizers
+            .extend(spec.sanitizers.iter().cloned());
+    }
+
+    let mut out = Vec::new();
+    walk_tree(root, source, &mut |node, src| {
+        if is_scope_node(node.kind()) {
+            resolve_cross_file_scope(node, src, &source_spec, cross_file, &mut out);
+        }
+    });
+    out
+}
+
+fn resolve_cross_file_scope(
+    scope_node: Node<'_>,
+    source: &str,
+    source_spec: &TaintSpec,
+    cross_file: &CrossFileInfo<'_>,
+    out: &mut Vec<TaintFinding>,
+) {
+    let body = find_scope_body(scope_node).unwrap_or(scope_node);
+    let mut state = TaintState::default();
+    collect_param_sources(scope_node, source, source_spec, &mut state);
+    for _ in 0..3 {
+        propagate_assignments(body, source, source_spec, &mut state);
+    }
+
+    walk_scope_nodes(body, source, &mut |node, src| {
+        if node.kind() != "invocation_expression" {
+            return;
+        }
+        let Some(func) = node.child_by_field_name("function") else {
+            return;
+        };
+        let Some(method_name) = final_name_segment(func, src) else {
+            return;
+        };
+        let Some(summary) = lookup_cross_file_summary(cross_file, method_name) else {
+            return;
+        };
+        let Some(args) = node.child_by_field_name("arguments") else {
+            return;
+        };
+        let mut cursor = args.walk();
+        let arg_nodes: Vec<Node<'_>> = args
+            .named_children(&mut cursor)
+            .filter(|n| n.kind() == "argument")
+            .collect();
+
+        for flow in &summary.params_to_sink {
+            if !cross_file.allowed_rule_ids.contains(&flow.sink_rule_id) {
+                continue;
+            }
+            if flow.param_index >= arg_nodes.len() {
+                continue;
+            }
+            let arg = arg_nodes[flow.param_index];
+            if let Some(info) = expression_taint(arg, src, source_spec, &state) {
+                out.push(cross_file_taint_finding(
+                    node,
+                    info.description,
+                    info.line,
+                    &flow.sink_description,
+                    method_name,
+                    &flow.sink_rule_id,
+                ));
+            }
+        }
+    });
+}
+
+fn lookup_cross_file_summary<'a>(
+    cross_file: &'a CrossFileInfo<'_>,
+    method_name: &str,
+) -> Option<&'a FunctionTaintSummary> {
+    for path in cross_file.same_package_paths {
+        if let Some(file_summaries) = cross_file.summaries.get(path) {
+            if let Some(summary) = file_summaries.iter().find(|s| s.name == method_name) {
+                return Some(summary);
+            }
+        }
+    }
+    None
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1239,6 +1581,89 @@ class Dao {
             findings.is_empty(),
             "int.Parse should sanitize SQL injection: {findings:?}"
         );
+    }
+
+    // ── cross-file summary + resolution ──────────────────────────────────
+
+    #[test]
+    fn cross_file_summary_records_param_to_sink() {
+        let helper = r#"
+using System.Data.SqlClient;
+class QueryHelper {
+    public static void RunQuery(string term) {
+        string sql = "SELECT * FROM users WHERE name = '" + term + "'";
+        var cmd = new SqlCommand(sql);
+        cmd.ExecuteReader();
+    }
+}
+"#;
+        let tree = parse_file(helper, Language::CSharp).expect("parse");
+        let specs = csharp_taint_rule_specs();
+        let summaries =
+            extract_cross_file_summaries(tree.root_node(), helper, None, &specs);
+        let run = summaries
+            .iter()
+            .find(|s| s.name == "RunQuery")
+            .expect("RunQuery should be summarized");
+        assert!(
+            run.params_to_sink.iter().any(|f| f.param_index == 0
+                && f.sink_rule_id == "csharp/taint-sql-injection"),
+            "param 0 must reach the SQL sink: {run:?}"
+        );
+    }
+
+    #[test]
+    fn cross_file_findings_resolve_helper_call() {
+        use std::path::PathBuf;
+        let helper = r#"
+using System.Data.SqlClient;
+class QueryHelper {
+    public static void RunQuery(string term) {
+        var cmd = new SqlCommand("SELECT * FROM users WHERE name = '" + term + "'");
+        cmd.ExecuteReader();
+    }
+}
+"#;
+        let caller = r#"
+using System.Web;
+class Handler {
+    public void Search() {
+        string name = Request.QueryString["name"];
+        QueryHelper.RunQuery(name);
+    }
+}
+"#;
+        let specs = csharp_taint_rule_specs();
+        let helper_tree = parse_file(helper, Language::CSharp).expect("parse helper");
+        let helper_path = PathBuf::from("QueryHelper.cs");
+        let helper_summaries =
+            extract_cross_file_summaries(helper_tree.root_node(), helper, None, &specs);
+        let mut summary_map = CrossFileSummaryMap::new();
+        summary_map.insert(helper_path.clone(), helper_summaries);
+
+        let allowed: HashSet<String> =
+            ["csharp/taint-sql-injection".to_string()].into_iter().collect();
+        let paths = vec![helper_path];
+        let cross = CrossFileInfo {
+            same_package_paths: &paths,
+            summaries: &summary_map,
+            allowed_rule_ids: &allowed,
+        };
+        let caller_tree = parse_file(caller, Language::CSharp).expect("parse caller");
+        let findings = extract_cross_file_findings(
+            caller_tree.root_node(),
+            caller,
+            &specs.iter().map(|(id, s)| (*id, s.clone())).collect::<Vec<_>>(),
+            &cross,
+        );
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly one cross-file finding: {findings:?}"
+        );
+        assert!(findings[0]
+            .sink_description
+            .contains("via cross-file call to RunQuery"));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use crate::rules::cross_file::CrossFileSummaryMap;
+use crate::rules::csharp_taint;
 use crate::rules::go_taint::{self, go_aliases_from_tree};
 use crate::rules::java_taint;
 use crate::rules::javascript_taint::{self, js_aliases_from_tree};
@@ -41,9 +42,6 @@ fn run_kt_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &Hash
 fn run_c_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
     crate::rules::c::run_c_taint_batched(s, t, ids)
 }
-fn run_csharp_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
-    crate::rules::csharp::run_csharp_taint_batched(s, t, ids)
-}
 fn run_solidity_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
     crate::rules::solidity::run_solidity_taint_batched(s, t, ids)
 }
@@ -70,10 +68,10 @@ const TAINT_DISPATCH: &[(TaintEngine, TaintRunner)] = &[
     (TaintEngine::JavaScript, crate::rules::javascript::run_js_taint_batched),
     (TaintEngine::Ruby, crate::rules::ruby::run_ruby_taint_batched),
     (TaintEngine::Php, crate::rules::php::run_php_taint_batched),
+    (TaintEngine::CSharp, crate::rules::csharp::run_csharp_taint_batched),
     // Intra-file engines (adapted to ignore FileContext).
     (TaintEngine::Kotlin, run_kt_taint),
     (TaintEngine::C, run_c_taint),
-    (TaintEngine::CSharp, run_csharp_taint),
     (TaintEngine::Solidity, run_solidity_taint),
     (TaintEngine::Bash, run_bash_taint),
     (TaintEngine::Swift, run_swift_taint),
@@ -870,6 +868,9 @@ fn scan_files(
     let has_php_taint_rules = taint_specs_by_lang
         .get(&Language::Php)
         .is_some_and(|specs| !specs.is_empty());
+    let has_csharp_taint_rules = taint_specs_by_lang
+        .get(&Language::CSharp)
+        .is_some_and(|specs| !specs.is_empty());
     let mut prepared_files: HashMap<PathBuf, PreparedFile> = HashMap::new();
 
     // ── Pass 1: Extract cross-file taint summaries ────────────────────
@@ -889,6 +890,7 @@ fn scan_files(
     let java_files: Vec<_> = files_by_lang.remove(&Language::Java).unwrap_or_default();
     let ruby_files: Vec<_> = files_by_lang.remove(&Language::Ruby).unwrap_or_default();
     let php_files: Vec<_> = files_by_lang.remove(&Language::Php).unwrap_or_default();
+    let csharp_files: Vec<_> = files_by_lang.remove(&Language::CSharp).unwrap_or_default();
     let js_files: Vec<_> = files_by_lang
         .remove(&Language::JavaScript)
         .unwrap_or_default();
@@ -1230,6 +1232,62 @@ fn scan_files(
         cross_file_summaries.extend(php_summaries);
     }
 
+    // C# cross-file summaries: extract from all C# files. C# resolution is
+    // same-directory (same-namespace proxy) + name-based, so like Java/Go we
+    // only run pass 1 when there are multiple C# files.
+    let mut has_csharp_cross_file = false;
+    if has_csharp_taint_rules && csharp_files.len() > 1 {
+        let csharp_rule_specs: Vec<_> = taint_specs_by_lang
+            .get(&Language::CSharp)
+            .into_iter()
+            .flat_map(|specs| specs.iter())
+            .filter(|spec| matches!(spec.engine, TaintEngine::CSharp))
+            .map(|spec| (spec.rule_id, spec.spec.clone()))
+            .collect();
+        let prepared_csharp: Vec<_> = csharp_files
+            .par_iter()
+            .filter_map(|(path, _)| {
+                if std::fs::metadata(path).ok()?.len() > max_file_size {
+                    return None;
+                }
+                let source = std::fs::read_to_string(path).ok()?;
+                if is_minified(&source) {
+                    return None;
+                }
+                let tree = super::parser::parse_file(&source, Language::CSharp)?;
+                if tree.root_node().has_error() {
+                    return None;
+                }
+                let summaries = csharp_taint::extract_cross_file_summaries(
+                    tree.root_node(),
+                    &source,
+                    None,
+                    &csharp_rule_specs,
+                );
+                let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+                Some((
+                    path.clone(),
+                    PreparedFile {
+                        source,
+                        tree,
+                        aliases: AliasTable::default(),
+                        canonical_path: canonical,
+                    },
+                    summaries,
+                ))
+            })
+            .collect();
+        let mut csharp_summaries = CrossFileSummaryMap::new();
+        for (path, prepared, file_summaries) in prepared_csharp {
+            if !file_summaries.is_empty() {
+                csharp_summaries.insert(prepared.canonical_path.clone(), file_summaries);
+            }
+            prepared_files.insert(path, prepared);
+        }
+        has_csharp_cross_file = !csharp_summaries.is_empty();
+        cross_file_summaries.extend(csharp_summaries);
+    }
+
     let has_cross_file = !cross_file_summaries.is_empty();
 
     let canonical_path_lookup: HashMap<PathBuf, PathBuf> = {
@@ -1315,6 +1373,27 @@ fn scan_files(
         let mut index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
         for (path, lang) in &files {
             if matches!(lang, Language::Php) && !is_noise_path(path) {
+                if let Some(dir) = path.parent() {
+                    let canonical = prepared_files
+                        .get(path)
+                        .map(|prepared| prepared.canonical_path.clone())
+                        .unwrap_or_else(|| resolve_canonical_path(&canonical_path_lookup, path));
+                    index.entry(dir.to_path_buf()).or_default().push(canonical);
+                }
+            }
+        }
+        index
+    } else {
+        HashMap::new()
+    };
+
+    // Build a directory→files index for C# same-namespace resolution.
+    // All C# files in the same directory are treated as the same namespace
+    // (a proxy for the `namespace` declaration), mirroring the Java/Go indexes.
+    let csharp_dir_index: HashMap<PathBuf, Vec<PathBuf>> = if has_csharp_cross_file {
+        let mut index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+        for (path, lang) in &files {
+            if matches!(lang, Language::CSharp) && !is_noise_path(path) {
                 if let Some(dir) = path.parent() {
                     let canonical = prepared_files
                         .get(path)
@@ -1588,6 +1667,27 @@ fn scan_files(
                 None
             };
 
+            // Build C# same-namespace paths for cross-file resolution, the
+            // same directory-as-namespace heuristic used for Java/Go above.
+            let csharp_same_package_paths = if has_csharp_cross_file
+                && matches!(language, Language::CSharp)
+            {
+                path.parent().and_then(|dir| {
+                    let canonical_self = prepared
+                        .map(|prepared| prepared.canonical_path.clone())
+                        .unwrap_or_else(|| resolve_canonical_path(&canonical_path_lookup, path));
+                    csharp_dir_index.get(dir).map(|siblings| {
+                        siblings
+                            .iter()
+                            .filter(|p| **p != canonical_self)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                })
+            } else {
+                None
+            };
+
             let ctx = FileContext {
                 python_aliases,
                 javascript_aliases,
@@ -1603,6 +1703,7 @@ fn scan_files(
                 java_same_package_paths,
                 ruby_same_package_paths,
                 php_same_package_paths,
+                csharp_same_package_paths,
                 secret_thresholds,
             };
 

@@ -336,6 +336,9 @@ pub struct FileContext<'a> {
     /// in the same directory are treated as the resolution scope (the same
     /// over-approximation used for Go and Java).
     pub php_same_package_paths: Option<Vec<std::path::PathBuf>>,
+    /// C# same-namespace file paths (same-directory proxy). Used to resolve
+    /// cross-file helper-method calls by name. Excludes the current file.
+    pub csharp_same_package_paths: Option<Vec<std::path::PathBuf>>,
     /// Per-scan hardcoded-secret thresholds captured from the registry.
     pub secret_thresholds: common::SecretScanThresholds,
 }
