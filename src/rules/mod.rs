@@ -327,6 +327,12 @@ pub struct FileContext<'a> {
     /// Java same-package file paths (same-directory proxy). Used to resolve
     /// cross-file helper-method calls by name. Excludes the current file.
     pub java_same_package_paths: Option<Vec<std::path::PathBuf>>,
+    /// PHP same-package file paths (same-directory proxy). Used to resolve
+    /// cross-file helper-function/method calls by name. Excludes the current
+    /// file. PHP has no compiler-enforced package boundary, so sibling files
+    /// in the same directory are treated as the resolution scope (the same
+    /// over-approximation used for Go and Java).
+    pub php_same_package_paths: Option<Vec<std::path::PathBuf>>,
     /// Per-scan hardcoded-secret thresholds captured from the registry.
     pub secret_thresholds: common::SecretScanThresholds,
 }

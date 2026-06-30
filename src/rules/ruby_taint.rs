@@ -92,7 +92,10 @@ pub fn ruby_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
         ("rb/taint-command-injection", command_injection_spec()),
         ("rb/taint-sql-injection", sql_injection_spec()),
         ("rb/taint-xss", xss_spec()),
-        ("rb/taint-unsafe-deserialization", unsafe_deserialization_spec()),
+        (
+            "rb/taint-unsafe-deserialization",
+            unsafe_deserialization_spec(),
+        ),
         ("rb/taint-open-redirect", open_redirect_spec()),
     ]
 }
