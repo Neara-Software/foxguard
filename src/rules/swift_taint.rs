@@ -96,6 +96,143 @@ pub fn analyze_tree(
     findings
 }
 
+// ─── Built-in specs ──────────────────────────────────────────────────────────
+//
+// # What the Swift engine can actually prove
+//
+// `analyze_tree` recognises exactly ONE source shape: a string built by
+// interpolation (`"...\(x)..."`) or by concatenation with a non-literal
+// operand (`"lit" + x`). It carries that shape as the
+// [`STRING_CONSTRUCTION_SENTINEL`] `ParamName` source. The engine does NOT
+// model framework request objects, function parameters, or any other taint
+// source — there is no `match_source` for `Call`/`Attribute`/identifier
+// sources in `expression_taint`. Every shipped Swift taint rule therefore
+// shares the same single source and differs only in its sink set: "a
+// dynamically-assembled string flows into a dangerous call".
+//
+// Sinks are matched by `match_sink` against `call_expression` callees only,
+// via [`NodeMatcher::Call`] (callee name equals `canonical`) or
+// [`NodeMatcher::MethodName`] (final `.method` segment equals `method`).
+// Member-assignment sinks (`process.arguments = …`) are NOT call nodes and
+// are intentionally absent — the engine would not fire on them.
+//
+// Sanitizers are inert for Swift: `expression_taint` never consults
+// `spec.sanitizers`, so [`swift_taint_sanitizers`] returns an empty set
+// rather than advertising sanitization the engine does not perform.
+
+/// All Swift taint rule IDs paired with their specs.
+///
+/// Mirrors `kotlin_taint_rule_specs()` / `c_taint_rule_specs()`. Consumed by
+/// [`crate::rules::builtin_taint_specs_for_language`] so the rules show up as
+/// `RegistryTaintSpec` entries the same way the other languages do.
+pub fn swift_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
+    vec![
+        ("swift/taint-sql-injection", sql_injection_spec()),
+        ("swift/taint-command-injection", command_injection_spec()),
+        ("swift/taint-js-injection", js_injection_spec()),
+        ("swift/taint-nsexpression-injection", nsexpression_spec()),
+    ]
+}
+
+/// The single Swift taint source: a dynamically-constructed string
+/// (interpolation or concatenation with a non-literal operand), encoded with
+/// the [`STRING_CONSTRUCTION_SENTINEL`] the engine interprets specially.
+pub fn swift_taint_sources() -> Vec<NodeMatcher> {
+    vec![NodeMatcher::ParamName {
+        names: vec![STRING_CONSTRUCTION_SENTINEL.into()],
+        description: "dynamically constructed string".into(),
+    }]
+}
+
+/// The union of every Swift taint sink across all rules. Provided as a
+/// companion accessor to [`swift_taint_sources`] / [`swift_taint_sanitizers`];
+/// individual rules carry their own focused sink subset via the specs above.
+pub fn swift_taint_sinks() -> Vec<NodeMatcher> {
+    let mut sinks = sql_injection_spec().sinks;
+    sinks.extend(command_injection_spec().sinks);
+    sinks.extend(js_injection_spec().sinks);
+    sinks.extend(nsexpression_spec().sinks);
+    sinks
+}
+
+/// Sanitizers for Swift taint rules.
+///
+/// The Swift engine is source-shape based and never consults
+/// `spec.sanitizers` in `expression_taint`, so there is nothing to declare.
+/// Returns an empty set deliberately (no false advertising of sanitization).
+pub fn swift_taint_sanitizers() -> Vec<NodeMatcher> {
+    Vec::new()
+}
+
+fn sql_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: swift_taint_sources(),
+        sinks: vec![
+            NodeMatcher::Call {
+                canonical: "sqlite3_exec".into(),
+                description: "sqlite3_exec() with tainted query (SQL injection)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "sqlite3_prepare_v2".into(),
+                description: "sqlite3_prepare_v2() with tainted query (SQL injection)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "sqlite3_prepare".into(),
+                description: "sqlite3_prepare() with tainted query (SQL injection)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "sqlite3_prepare_v3".into(),
+                description: "sqlite3_prepare_v3() with tainted query (SQL injection)".into(),
+            },
+        ],
+        sanitizers: swift_taint_sanitizers(),
+    }
+}
+
+fn command_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: swift_taint_sources(),
+        sinks: vec![
+            NodeMatcher::Call {
+                canonical: "system".into(),
+                description: "system() with tainted command (command injection)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "popen".into(),
+                description: "popen() with tainted command (command injection)".into(),
+            },
+            NodeMatcher::MethodName {
+                method: "launchedProcess".into(),
+                description: "Process.launchedProcess() with tainted argument (command injection)"
+                    .into(),
+            },
+        ],
+        sanitizers: swift_taint_sanitizers(),
+    }
+}
+
+fn js_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: swift_taint_sources(),
+        sinks: vec![NodeMatcher::MethodName {
+            method: "evaluateJavaScript".into(),
+            description: "WKWebView.evaluateJavaScript() with tainted script (JS injection)".into(),
+        }],
+        sanitizers: swift_taint_sanitizers(),
+    }
+}
+
+fn nsexpression_spec() -> TaintSpec {
+    TaintSpec {
+        sources: swift_taint_sources(),
+        sinks: vec![NodeMatcher::Call {
+            canonical: "NSExpression".into(),
+            description: "NSExpression(format:) with tainted format (expression injection)".into(),
+        }],
+        sanitizers: swift_taint_sanitizers(),
+    }
+}
+
 // ─── Per-scope analysis ──────────────────────────────────────────────────────
 
 fn analyze_scope(scope: Node<'_>, source: &str, spec: &TaintSpec, out: &mut Vec<TaintFinding>) {

@@ -7,7 +7,7 @@ use crate::rules::common::{
     hardcoded_secret_re, is_secret_value_long_enough, make_finding, make_finding_from_offsets,
     walk_tree,
 };
-use crate::{Language, Severity};
+use crate::{Finding, Language, Severity};
 
 // ─── Static regex helpers (compiled once) ────────────────────────────────────
 
@@ -773,5 +773,278 @@ impl_rule! {
         });
         findings
 
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Swift taint rules
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The `swift/taint-*` rules below consume the shared taint engine in
+// `crate::rules::swift_taint` rather than a bespoke harness. Each rule's
+// `check()` looks up the rule's declarative `TaintSpec` from
+// `swift_taint::swift_taint_rule_specs()`, hands it to
+// `swift_taint::analyze_tree`, and maps returned `TaintFinding`s onto the
+// project's `Finding` type — the same shape the Kotlin/C/Go/JS/Python taint
+// rules use. Per-rule message formatters and metadata live here; the engine
+// and the shared sources/sinks live in `swift_taint.rs`.
+//
+// The Swift engine recognises a single source shape — a dynamically
+// constructed string (interpolation or concatenation with a non-literal
+// operand) — flowing into a dangerous call. See `swift_taint.rs` for the
+// honest scope notes.
+//
+// The scanner skips the rule's `check()` when the same rule id is registered
+// as a `RegistryTaintSpec` via `builtin_taint_specs_for_language`, and runs
+// the batched dispatcher `run_swift_taint_batched` instead. The `check()`
+// path is kept working so unit tests that construct a Rule struct directly
+// continue to function.
+
+use crate::rules::common::get_source_line;
+use crate::rules::swift_taint;
+
+/// Per-rule metadata for Swift taint findings: how to format the message and
+/// which fix hint to attach. Mirrors `KtTaintRuleMeta`.
+struct SwiftTaintRuleMeta<'a> {
+    rule_id: &'a str,
+    severity: Severity,
+    cwe: Option<&'a str>,
+    fix_suggestion: Option<&'a str>,
+    format_description: fn(&str, &str) -> String,
+}
+
+fn swift_taint_sql_injection_desc(src: &str, sink: &str) -> String {
+    format!(
+        "{} flows to {} — use parameterized queries (sqlite3_bind_*) to prevent SQL injection",
+        src, sink
+    )
+}
+
+fn swift_taint_command_injection_desc(src: &str, sink: &str) -> String {
+    format!(
+        "{} flows to {} — avoid passing untrusted input to OS commands",
+        src, sink
+    )
+}
+
+fn swift_taint_js_injection_desc(src: &str, sink: &str) -> String {
+    format!(
+        "{} flows to {} — sanitize or JSON-encode untrusted input before evaluating it in a web view",
+        src, sink
+    )
+}
+
+fn swift_taint_nsexpression_desc(src: &str, sink: &str) -> String {
+    format!(
+        "{} flows to {} — never build an NSExpression format string from untrusted input",
+        src, sink
+    )
+}
+
+fn swift_taint_meta(rule_id: &str) -> Option<SwiftTaintRuleMeta<'static>> {
+    match rule_id {
+        "swift/taint-sql-injection" => Some(SwiftTaintRuleMeta {
+            rule_id: "swift/taint-sql-injection",
+            severity: Severity::Critical,
+            cwe: Some("CWE-89"),
+            fix_suggestion: None,
+            format_description: swift_taint_sql_injection_desc,
+        }),
+        "swift/taint-command-injection" => Some(SwiftTaintRuleMeta {
+            rule_id: "swift/taint-command-injection",
+            severity: Severity::Critical,
+            cwe: Some("CWE-78"),
+            fix_suggestion: None,
+            format_description: swift_taint_command_injection_desc,
+        }),
+        "swift/taint-js-injection" => Some(SwiftTaintRuleMeta {
+            rule_id: "swift/taint-js-injection",
+            severity: Severity::High,
+            cwe: Some("CWE-79"),
+            fix_suggestion: None,
+            format_description: swift_taint_js_injection_desc,
+        }),
+        "swift/taint-nsexpression-injection" => Some(SwiftTaintRuleMeta {
+            rule_id: "swift/taint-nsexpression-injection",
+            severity: Severity::High,
+            cwe: Some("CWE-95"),
+            fix_suggestion: None,
+            format_description: swift_taint_nsexpression_desc,
+        }),
+        _ => None,
+    }
+}
+
+/// Map a single `TaintFinding` from the Swift engine onto a `Finding`, using
+/// the rule's metadata. Mirrors `map_kt_taint_finding`.
+fn map_swift_taint_finding(
+    meta: &SwiftTaintRuleMeta<'_>,
+    source: &str,
+    finding: swift_taint::TaintFinding,
+) -> Finding {
+    Finding {
+        rule_id: meta.rule_id.to_string(),
+        severity: meta.severity,
+        cwe: meta.cwe.map(|s| s.to_string()),
+        description: (meta.format_description)(
+            &finding.source_description,
+            &finding.sink_description,
+        ),
+        file: String::new(),
+        line: finding.sink_line,
+        column: finding.sink_column,
+        end_line: finding.sink_end_line,
+        end_column: finding.sink_end_column,
+        snippet: get_source_line(source, finding.sink_start_byte),
+        source_line: if finding.source_line == 0 {
+            None
+        } else {
+            Some(finding.source_line)
+        },
+        source_description: Some(finding.source_description),
+        sink_line: Some(finding.sink_line),
+        sink_description: Some(finding.sink_description),
+        fix_suggestion: meta.fix_suggestion.map(|s| s.to_string()),
+        sink_start_byte: None,
+        sink_end_byte: None,
+        confidence: crate::default_confidence(),
+        taint_hops: None,
+        tags: vec![],
+        crypto_algorithm: None,
+        cnsa2_deadline: None,
+        dep_name: None,
+        dep_version: None,
+        dep_ecosystem: None,
+        dep_purl: None,
+        dep_vulnerability_id: None,
+        dep_fixed_version: None,
+        dep_source: None,
+        dep_vulnerability_severity: None,
+        dep_path: vec![],
+    }
+}
+
+/// Run every enabled Swift taint rule over `tree` in a single dispatch loop
+/// and return per-rule `Finding`s. Mirrors `run_kt_taint_batched`.
+pub fn run_swift_taint_batched(
+    source: &str,
+    tree: &tree_sitter::Tree,
+    enabled_rule_ids: &std::collections::HashSet<&str>,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for (rule_id, spec) in swift_taint::swift_taint_rule_specs() {
+        if !enabled_rule_ids.contains(rule_id) {
+            continue;
+        }
+        let Some(meta) = swift_taint_meta(rule_id) else {
+            continue;
+        };
+        let raw = swift_taint::analyze_tree(tree.root_node(), source, &spec, None);
+        for finding in raw {
+            findings.push(map_swift_taint_finding(&meta, source, finding));
+        }
+    }
+    findings
+}
+
+/// Run a single Swift taint rule over a tree. Used by the rule structs'
+/// `check()` path for direct unit tests. The scanner uses
+/// [`run_swift_taint_batched`] to avoid double-dispatch.
+fn run_swift_taint_single(
+    rule_id: &str,
+    source: &str,
+    tree: &tree_sitter::Tree,
+    spec: &swift_taint::TaintSpec,
+) -> Vec<Finding> {
+    let Some(meta) = swift_taint_meta(rule_id) else {
+        return Vec::new();
+    };
+    let raw = swift_taint::analyze_tree(tree.root_node(), source, spec, None);
+    raw.into_iter()
+        .map(|t| map_swift_taint_finding(&meta, source, t))
+        .collect()
+}
+
+// ─── Swift taint rule: swift/taint-sql-injection ────────────────────────────
+
+pub struct TaintSqlInjection;
+
+impl_rule! {
+    TaintSqlInjection,
+    id = "swift/taint-sql-injection",
+    severity = Severity::Critical,
+    cwe = Some("CWE-89"),
+    description = "Dynamically constructed string reaches a SQLite query sink",
+    language = Language::Swift,
+    fn check(_self, source, tree) {
+        let spec = swift_taint::swift_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_swift_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Swift taint rule: swift/taint-command-injection ────────────────────────
+
+pub struct TaintCommandInjection;
+
+impl_rule! {
+    TaintCommandInjection,
+    id = "swift/taint-command-injection",
+    severity = Severity::Critical,
+    cwe = Some("CWE-78"),
+    description = "Dynamically constructed string reaches an OS command sink",
+    language = Language::Swift,
+    fn check(_self, source, tree) {
+        let spec = swift_taint::swift_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_swift_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Swift taint rule: swift/taint-js-injection ─────────────────────────────
+
+pub struct TaintJsInjection;
+
+impl_rule! {
+    TaintJsInjection,
+    id = "swift/taint-js-injection",
+    severity = Severity::High,
+    cwe = Some("CWE-79"),
+    description = "Dynamically constructed string reaches WKWebView.evaluateJavaScript",
+    language = Language::Swift,
+    fn check(_self, source, tree) {
+        let spec = swift_taint::swift_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_swift_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Swift taint rule: swift/taint-nsexpression-injection ───────────────────
+
+pub struct TaintNsexpressionInjection;
+
+impl_rule! {
+    TaintNsexpressionInjection,
+    id = "swift/taint-nsexpression-injection",
+    severity = Severity::High,
+    cwe = Some("CWE-95"),
+    description = "Dynamically constructed string reaches NSExpression(format:)",
+    language = Language::Swift,
+    fn check(_self, source, tree) {
+        let spec = swift_taint::swift_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_swift_taint_single(_self.id(), source, tree, &spec)
     }
 }

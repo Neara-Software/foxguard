@@ -217,6 +217,10 @@ const swiftRules: Rule[] = [
   { id: 'swift/no-ssrf', cwe: 'CWE-918', desc: 'Potential SSRF via URLSession or URL with dynamic input', severity: 'high' },
   { id: 'swift/no-tls-disabled', cwe: 'CWE-295', desc: 'TLS certificate validation disabled or weakened', severity: 'high' },
   { id: 'swift/no-weak-crypto', cwe: 'CWE-327', desc: 'Use of weak cryptographic hash (MD5/SHA1)', severity: 'medium' },
+  { id: 'swift/taint-command-injection', cwe: 'CWE-78', desc: 'Dynamically constructed string reaches an OS command sink', severity: 'critical' },
+  { id: 'swift/taint-js-injection', cwe: 'CWE-79', desc: 'Dynamically constructed string reaches WKWebView.evaluateJavaScript', severity: 'high' },
+  { id: 'swift/taint-nsexpression-injection', cwe: 'CWE-95', desc: 'Dynamically constructed string reaches NSExpression(format:)', severity: 'high' },
+  { id: 'swift/taint-sql-injection', cwe: 'CWE-89', desc: 'Dynamically constructed string reaches a SQLite query sink', severity: 'critical' },
 ];
 
 const kotlinRules: Rule[] = [
