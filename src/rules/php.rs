@@ -822,27 +822,67 @@ fn map_php_taint_finding(
 
 /// Run every enabled PHP taint rule over `tree` in a single dispatch.
 ///
-/// Mirrors `run_c_taint_batched` in `c.rs`. PHP's engine is intraprocedural
-/// and has no cross-file analysis, so each rule's `TaintSpec` is handed to
-/// `php_taint::analyze_tree` in turn.
+/// Mirrors `run_java_taint_batched` in `java.rs`. The intra-file pass always
+/// runs (each rule's `TaintSpec` is handed to `php_taint::analyze_tree` in
+/// turn). A second cross-file pass runs only when pass-1 summaries and
+/// same-package sibling paths are both available (i.e. a multi-file PHP scan),
+/// resolving helper calls to sibling files by name (same-directory proxy).
 pub fn run_php_taint_batched(
     source: &str,
     tree: &tree_sitter::Tree,
+    ctx: &crate::rules::FileContext<'_>,
     enabled_rule_ids: &std::collections::HashSet<&str>,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
-    for (rule_id, spec) in php_taint::php_taint_rule_specs() {
+    let rule_specs = php_taint::php_taint_rule_specs();
+    for (rule_id, spec) in &rule_specs {
         if !enabled_rule_ids.contains(rule_id) {
             continue;
         }
         let Some(meta) = php_taint_meta(rule_id) else {
             continue;
         };
-        let raw = php_taint::analyze_tree(tree.root_node(), source, &spec, None);
+        let raw = php_taint::analyze_tree(tree.root_node(), source, spec, None);
         for finding in raw {
             findings.push(map_php_taint_finding(&meta, source, finding));
         }
     }
+
+    // Cross-file resolution: only when pass-1 summaries and same-package
+    // sibling paths are both available (i.e. a multi-file PHP scan).
+    if let (Some(summaries), Some(paths)) = (
+        ctx.cross_file_summaries,
+        ctx.php_same_package_paths.as_ref(),
+    ) {
+        let allowed: std::collections::HashSet<String> =
+            enabled_rule_ids.iter().map(|id| id.to_string()).collect();
+        let enabled_specs: Vec<(&str, php_taint::TaintSpec)> = rule_specs
+            .iter()
+            .filter(|(id, _)| enabled_rule_ids.contains(id))
+            .map(|(id, spec)| (*id, spec.clone()))
+            .collect();
+        let cross = php_taint::CrossFileInfo {
+            same_package_paths: paths,
+            summaries,
+            allowed_rule_ids: &allowed,
+        };
+        let raw = php_taint::extract_cross_file_findings(
+            tree.root_node(),
+            source,
+            &enabled_specs,
+            &cross,
+        );
+        for finding in raw {
+            let Some(rule_id) = finding.rule_id_hint.as_deref() else {
+                continue;
+            };
+            let Some(meta) = php_taint_meta(rule_id) else {
+                continue;
+            };
+            findings.push(map_php_taint_finding(&meta, source, finding));
+        }
+    }
+
     findings
 }
 

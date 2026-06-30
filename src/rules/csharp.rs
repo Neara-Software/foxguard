@@ -4,8 +4,8 @@ use regex::Regex;
 
 use crate::impl_rule;
 use crate::rules::common::{
-    confidence_for_hops, csharp_hardcoded_secret_re, get_source_line,
-    is_secret_value_long_enough, make_finding, walk_tree,
+    confidence_for_hops, csharp_hardcoded_secret_re, get_source_line, is_secret_value_long_enough,
+    make_finding, walk_tree,
 };
 use crate::rules::csharp_taint;
 use crate::{Finding, Language, Severity};
@@ -1041,9 +1041,7 @@ fn csharp_taint_xxe_desc(src: &str, sink: &str) -> String {
 }
 
 fn csharp_taint_unsafe_load_desc(src: &str, sink: &str) -> String {
-    format!(
-        "{src} reaches {sink} — untrusted input can load arbitrary code or types (unsafe load)"
-    )
+    format!("{src} reaches {sink} — untrusted input can load arbitrary code or types (unsafe load)")
 }
 
 fn csharp_taint_meta(rule_id: &str) -> Option<CSharpTaintRuleMeta<'static>> {

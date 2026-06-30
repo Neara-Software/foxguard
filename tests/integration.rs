@@ -2263,6 +2263,77 @@ mod cross_file {
         );
     }
 
+    /// PHP cross-file taint: a `$_GET['cmd']` source in `handler.php` flows
+    /// into `run_cmd($cmd)`, a helper defined in a sibling file whose
+    /// parameter reaches a `system()` command-execution sink. The two-pass
+    /// scanner must connect the source to the cross-file sink and emit exactly
+    /// one `php/taint-command-injection` finding, reported in the caller file.
+    #[test]
+    fn test_php_cross_file_taint_directory_scan() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/realistic/php_chain", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let cmd_taint: Vec<&serde_json::Value> = findings
+            .iter()
+            .filter(|f| f["rule_id"].as_str() == Some("php/taint-command-injection"))
+            .collect();
+
+        assert_eq!(
+            cmd_taint.len(),
+            1,
+            "php/taint-command-injection should fire exactly once cross-file on php_chain; got: {findings:?}"
+        );
+
+        // The single finding is reported in the *caller* file (handler.php),
+        // at the cross-file helper call, and labelled as a cross-file flow.
+        let finding = cmd_taint[0];
+        assert!(
+            finding["file"]
+                .as_str()
+                .is_some_and(|f| f.ends_with("handler.php")),
+            "cross-file finding should be reported in handler.php; got: {finding:?}"
+        );
+        assert!(
+            finding["sink_description"]
+                .as_str()
+                .is_some_and(|d| d.contains("via cross-file call to run_cmd")),
+            "finding should be attributed to the cross-file helper call; got: {finding:?}"
+        );
+    }
+
+    /// Negative control for the PHP cross-file pass: scanning only the source
+    /// file (`handler.php`) — without the sibling helper that holds the sink —
+    /// must not produce a `php/taint-command-injection` finding. Single-file
+    /// scans never run pass 1, so the helper body is unseen and `run_cmd` is
+    /// not itself a sink.
+    #[test]
+    fn test_php_cross_file_taint_single_file_finds_nothing() {
+        let output = foxguard_cmd_isolated()
+            .args([
+                "tests/fixtures/realistic/php_chain/handler.php",
+                "-f",
+                "json",
+            ])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let n = findings
+            .iter()
+            .filter(|f| f["rule_id"].as_str() == Some("php/taint-command-injection"))
+            .count();
+
+        assert_eq!(
+            n, 0,
+            "php/taint-command-injection must not fire when handler.php is scanned alone; got: {findings:?}"
+        );
+    }
+
     /// Semgrep-compatible `mode: taint` YAML rules should load via `--rules`
     /// and fire on the same flows as the native `py/taint-pickle-deserialization`
     /// rule. See issue #17.

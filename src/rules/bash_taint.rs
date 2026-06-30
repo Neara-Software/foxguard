@@ -641,4 +641,3 @@ eval "$safe"
         assert_eq!(f.len(), 0, "literal eval must not fire, got {:?}", f);
     }
 }
-

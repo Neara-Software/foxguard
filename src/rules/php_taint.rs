@@ -42,16 +42,48 @@
 //! receiver, etc.) — exactly as the Ruby engine does.
 
 use crate::rules::common::AliasTable;
+use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary};
 use crate::rules::taint_engine::{
-    analyze_function_generic, attribution_hint_for_sink, match_call_sink, node_text,
-    taint_finding_for_node, AnalysisContext, TaintLanguageAdapter, TaintState,
+    analyze_function_generic, attribution_hint_for_sink, cross_file_taint_finding,
+    extract_cross_file_summary_for_function, match_call_sink, node_text, taint_finding_for_node,
+    AnalysisContext, ReturnSummary, TaintLanguageAdapter, TaintState,
 };
 pub use crate::rules::taint_engine::{NodeMatcher, TaintFinding, TaintSpec};
+use std::collections::HashSet;
+use std::path::PathBuf;
 use tree_sitter::Node;
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-type PhpCtx<'a> = AnalysisContext<'a, ()>;
+/// Cross-file resolution info for the PHP engine.
+///
+/// `same_package_paths` are the canonical paths of sibling PHP files in the
+/// same directory (the same-package proxy, mirroring the Go and Java engines);
+/// `summaries` is the pass-1 map keyed by canonical path; `allowed_rule_ids`
+/// gates which rules may emit cross-file findings in the current run.
+///
+/// # Scope and limitations (honest over-approximation)
+///
+/// Resolution is **name-based within the same directory**: a call to
+/// `run_cmd($x)` resolves to *any* function or method named `run_cmd` defined
+/// in a sibling file, regardless of namespace, declaring class, or how the
+/// file would actually be loaded at runtime. Argument arity is only checked
+/// loosely — a recorded `ParamSinkFlow` fires when the call supplies an
+/// argument at that parameter index. This intentionally over-approximates,
+/// the same way the Go/Java/Ruby cross-file passes do.
+///
+/// **Not modeled:** PHP namespaces (`\App\Helpers\run_cmd`), Composer
+/// autoloading / `require`/`include` across directories, instance dispatch by
+/// declared class type, method overriding, and multi-hop chains (a helper that
+/// itself calls another cross-file helper). These need a PHP symbol/namespace
+/// table the engine does not build.
+pub struct CrossFileInfo<'a> {
+    pub same_package_paths: &'a [PathBuf],
+    pub summaries: &'a CrossFileSummaryMap,
+    pub allowed_rule_ids: &'a HashSet<String>,
+}
+
+type PhpCtx<'a> = AnalysisContext<'a, CrossFileInfo<'a>>;
 
 /// Run the PHP taint engine over every function/method definition inside `root`
 /// and return one [`TaintFinding`] per source→sink flow discovered.
@@ -61,7 +93,7 @@ pub fn analyze_tree(
     spec: &TaintSpec,
     _aliases: Option<&AliasTable>,
 ) -> Vec<TaintFinding> {
-    let empty_summary = crate::rules::taint_engine::ReturnSummary::new();
+    let empty_summary = ReturnSummary::new();
     let ctx = AnalysisContext {
         source,
         spec,
@@ -72,9 +104,195 @@ pub fn analyze_tree(
     };
     let mut findings = Vec::new();
     collect_function_defs(root, &mut |func_node| {
-        analyze_function_generic::<PhpTaintAdapter, ()>(func_node, &ctx, &mut findings);
+        analyze_function_generic::<PhpTaintAdapter, CrossFileInfo<'_>>(
+            func_node,
+            &ctx,
+            &mut findings,
+        );
     });
     findings
+}
+
+// ─── Cross-file (interprocedural across files) API ─────────────────────────
+
+/// Extract cross-file taint summaries for every function/method declaration
+/// in `root`.
+///
+/// Pass 1 of the two-pass scanner. For each function/method, every parameter
+/// is treated as a synthetic taint source; a parameter that reaches a sink
+/// records a [`crate::rules::cross_file::ParamSinkFlow`], and a parameter that
+/// flows to a `return` records a `params_to_return` index. Summaries are keyed
+/// by the bare function/method name (last-write-wins on name collisions,
+/// mirroring Go/Java).
+pub fn extract_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+) -> Vec<FunctionTaintSummary> {
+    let mut summaries = Vec::new();
+    collect_function_defs(root, &mut |func_node| {
+        let Some(name_node) = func_node.child_by_field_name("name") else {
+            return;
+        };
+        let func_name = node_text(name_node, source).to_string();
+        let param_names = collect_param_names(func_node, source);
+
+        if let Some(summary) =
+            extract_cross_file_summary_for_function::<PhpTaintAdapter, CrossFileInfo<'_>>(
+                func_node,
+                &func_name,
+                &param_names,
+                source,
+                aliases,
+                rule_specs,
+            )
+        {
+            summaries.push(summary);
+        }
+    });
+    summaries
+}
+
+/// Collect the parameter names (the `$var` text, `$` included) of a
+/// function/method definition, in order.
+fn collect_param_names(func_node: Node<'_>, source: &str) -> Vec<String> {
+    let Some(params) = func_node.child_by_field_name("parameters") else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    let mut cursor = params.walk();
+    for child in params.named_children(&mut cursor) {
+        let var_node = if child.kind() == "variable_name" {
+            Some(child)
+        } else {
+            let mut found = None;
+            let mut inner = child.walk();
+            for n in child.named_children(&mut inner) {
+                if n.kind() == "variable_name" {
+                    found = Some(n);
+                    break;
+                }
+            }
+            found
+        };
+        if let Some(v) = var_node {
+            names.push(node_text(v, source).to_string());
+        }
+    }
+    names
+}
+
+/// Pass 2 cross-file resolution: re-run the intra-file taint walk over every
+/// function/method with the sibling summaries available, emitting a finding
+/// when a tainted argument lands on a parameter that the callee's summary says
+/// reaches a sink.
+///
+/// The walk uses a *source-only* spec (real sources + sanitizers, **no
+/// sinks**) so that intra-file sink findings — already produced by the
+/// per-rule [`analyze_tree`] pass — are not duplicated here; only cross-file
+/// flows emerge. Findings carry their attributed `rule_id_hint`.
+pub fn extract_cross_file_findings(
+    root: Node<'_>,
+    source: &str,
+    rule_specs: &[(&str, TaintSpec)],
+    cross_file: &CrossFileInfo<'_>,
+) -> Vec<TaintFinding> {
+    // The caller-side taint state is driven by the real sources (shared
+    // across the built-in PHP rules); union them so an inline source argument
+    // like `run_cmd($_GET['x'])` is recognized. Sanitizers are unioned too so
+    // a sanitized argument does not produce a cross-file finding.
+    let mut source_spec = TaintSpec::default();
+    for (_, spec) in rule_specs {
+        source_spec.sources.extend(spec.sources.iter().cloned());
+        source_spec
+            .sanitizers
+            .extend(spec.sanitizers.iter().cloned());
+    }
+
+    let empty_summary = ReturnSummary::new();
+    let ctx = AnalysisContext {
+        source,
+        spec: &source_spec,
+        aliases: None,
+        summaries: &empty_summary,
+        cross_file: Some(cross_file),
+        sink_to_rules: None,
+    };
+    let mut findings = Vec::new();
+    collect_function_defs(root, &mut |func_node| {
+        analyze_function_generic::<PhpTaintAdapter, CrossFileInfo<'_>>(
+            func_node,
+            &ctx,
+            &mut findings,
+        );
+    });
+    findings
+}
+
+/// Resolve a call's callee name to a sibling-file summary and, for each
+/// tainted argument landing on a parameter with a recorded sink flow, push a
+/// cross-file finding. Shared by function, member, and scoped call handlers.
+fn handle_cross_file_call(
+    node: Node<'_>,
+    callee_name: &str,
+    ctx: &PhpCtx<'_>,
+    state: &TaintState,
+    findings: &mut Vec<TaintFinding>,
+    cross_file: &CrossFileInfo<'_>,
+) {
+    if callee_name.is_empty() {
+        return;
+    }
+
+    // Search all same-package (same-directory) files for a function/method
+    // with this name. Name-based, first-match-wins — see CrossFileInfo docs.
+    let mut resolved: Option<&FunctionTaintSummary> = None;
+    for pkg_path in cross_file.same_package_paths {
+        if let Some(file_summaries) = cross_file.summaries.get(pkg_path) {
+            if let Some(summary) = file_summaries.iter().find(|s| s.name == callee_name) {
+                resolved = Some(summary);
+                break;
+            }
+        }
+    }
+    let Some(summary) = resolved else {
+        return;
+    };
+
+    let Some(args) = node.child_by_field_name("arguments") else {
+        return;
+    };
+    let mut cursor = args.walk();
+    let arg_nodes: Vec<Node<'_>> = args.named_children(&mut cursor).collect();
+
+    for flow in &summary.params_to_sink {
+        if !cross_file.allowed_rule_ids.contains(&flow.sink_rule_id) {
+            continue;
+        }
+        if flow.param_index >= arg_nodes.len() {
+            continue;
+        }
+        let arg = arg_nodes[flow.param_index];
+        // Each `argument` node wraps the actual expression.
+        let expr = if arg.kind() == "argument" {
+            arg.named_child(0).unwrap_or(arg)
+        } else {
+            arg
+        };
+        if let Some((source_desc, src_line)) = expression_taint(expr, ctx, state) {
+            findings.push(cross_file_taint_finding(
+                node,
+                source_desc,
+                src_line,
+                &flow.sink_description,
+                callee_name,
+                &flow.sink_rule_id,
+            ));
+            // One finding per cross-file call is enough.
+            return;
+        }
+    }
 }
 
 /// Canonical set of untrusted-input sources for PHP.
@@ -439,9 +657,9 @@ fn unsafe_deserialization_spec() -> TaintSpec {
 
 // ─── Language adapter ─────────────────────────────────────────────────────
 
-struct PhpTaintAdapter;
+pub(super) struct PhpTaintAdapter;
 
-impl TaintLanguageAdapter<()> for PhpTaintAdapter {
+impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for PhpTaintAdapter {
     fn is_nested_scope(kind: &str) -> bool {
         // Nested function/method defs create new scopes.
         matches!(
@@ -474,6 +692,12 @@ impl TaintLanguageAdapter<()> for PhpTaintAdapter {
         }
         if node.kind() == "member_call_expression" {
             handle_member_call(node, ctx, state, findings);
+        }
+        // `Class::method(args)` — a static/scoped method call. Cross-file
+        // resolution only (intra-file scoped sinks are not modeled here, so
+        // intra behavior is unchanged when `cross_file` is `None`).
+        if node.kind() == "scoped_call_expression" {
+            handle_scoped_call(node, ctx, state, findings);
         }
         // echo is a statement in PHP grammar, not a function call node
         if node.kind() == "echo_statement" {
@@ -625,6 +849,30 @@ fn handle_function_call(
     if let Some(sink) = match_call_sink(ctx.spec, callee, ctx.sink_to_rules) {
         check_args_for_sink(node, ctx, state, findings, sink);
     }
+
+    // Cross-file: a bare call `run_cmd($x)` may resolve to a helper defined in
+    // a sibling file of the same directory (same-package proxy).
+    if let Some(cross_file) = ctx.cross_file {
+        handle_cross_file_call(node, callee, ctx, state, findings, cross_file);
+    }
+}
+
+/// Handle a `scoped_call_expression`: `Class::method(args)`. Cross-file
+/// resolution by method name only.
+fn handle_scoped_call(
+    node: Node<'_>,
+    ctx: &PhpCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let Some(cross_file) = ctx.cross_file else {
+        return;
+    };
+    let method_name = node
+        .child_by_field_name("name")
+        .map(|n| node_text(n, ctx.source))
+        .unwrap_or("");
+    handle_cross_file_call(node, method_name, ctx, state, findings, cross_file);
 }
 
 /// Handle a `member_call_expression`: `$obj->method(args)`.
@@ -674,6 +922,13 @@ fn handle_member_call(
                 check_args_for_sink(node, ctx, state, findings, sink);
             }
         }
+    }
+
+    // Cross-file: `$obj->method($x)` may resolve to a helper method of the
+    // same name defined in a sibling file (instance dispatch by declared type
+    // is not modeled — see CrossFileInfo docs).
+    if let Some(cross_file) = ctx.cross_file {
+        handle_cross_file_call(node, method_name, ctx, state, findings, cross_file);
     }
 }
 
@@ -1349,5 +1604,117 @@ mod tests {
         let src = "<?php\nfunction handle() {\n  $raw = $_GET['cmd'];\n  $safe = escapeshellarg($raw);\n  system($raw);\n}\n";
         let f = run(src, &spec_get_to_system_with_sanitizer());
         assert_eq!(f.len(), 1, "sanitizing to $safe must not clear $raw taint");
+    }
+
+    // ── Cross-file: summary extraction ────────────────────────────────────
+    fn summaries(src: &str) -> Vec<FunctionTaintSummary> {
+        let tree = parse_file(src, Language::Php).expect("parse");
+        let specs = php_taint_rule_specs();
+        extract_cross_file_summaries(tree.root_node(), src, None, &specs)
+    }
+
+    #[test]
+    fn cross_file_summary_records_param_to_sink() {
+        let src = "<?php\nfunction run_cmd($arg) {\n  system($arg);\n}\n";
+        let found = summaries(src);
+        let helper = found
+            .iter()
+            .find(|s| s.name == "run_cmd")
+            .expect("run_cmd should be summarized");
+        let flow = helper
+            .params_to_sink
+            .iter()
+            .find(|f| f.param_index == 0)
+            .expect("param 0 should reach a sink");
+        assert_eq!(flow.sink_rule_id, "php/taint-command-injection");
+    }
+
+    #[test]
+    fn cross_file_summary_skips_functions_with_no_flow() {
+        // `log_it` neither sinks nor returns its parameter, so it must not be
+        // summarized at all.
+        let src = "<?php\nfunction log_it($message) {\n  echo \"constant\";\n}\n";
+        let found = summaries(src);
+        assert!(
+            found.iter().all(|s| s.name != "log_it"),
+            "function with no param flow should not be summarized: {found:?}"
+        );
+    }
+
+    // ── Cross-file: findings resolution ───────────────────────────────────
+    #[test]
+    fn cross_file_findings_resolve_helper_in_sibling_summary() {
+        use std::collections::HashSet;
+        use std::path::PathBuf;
+
+        // Caller passes a tainted argument into a same-package helper.
+        let caller = "<?php\nfunction handle() {\n  $cmd = $_GET['cmd'];\n  run_cmd($cmd);\n}\n";
+        let helper = "<?php\nfunction run_cmd($arg) {\n  system($arg);\n}\n";
+
+        let helper_tree = parse_file(helper, Language::Php).expect("parse helper");
+        let specs = php_taint_rule_specs();
+        let helper_summaries =
+            extract_cross_file_summaries(helper_tree.root_node(), helper, None, &specs);
+
+        let helper_path = PathBuf::from("/pkg/helper.php");
+        let mut summary_map = CrossFileSummaryMap::new();
+        summary_map.insert(helper_path.clone(), helper_summaries);
+
+        let same_package = vec![helper_path];
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let cross = CrossFileInfo {
+            same_package_paths: &same_package,
+            summaries: &summary_map,
+            allowed_rule_ids: &allowed,
+        };
+
+        let caller_tree = parse_file(caller, Language::Php).expect("parse caller");
+        let findings = extract_cross_file_findings(caller_tree.root_node(), caller, &specs, &cross);
+        assert_eq!(
+            findings.len(),
+            1,
+            "tainted arg into run_cmd must produce one cross-file finding: {findings:?}"
+        );
+        assert_eq!(
+            findings[0].rule_id_hint.as_deref(),
+            Some("php/taint-command-injection")
+        );
+        assert!(findings[0]
+            .sink_description
+            .contains("via cross-file call to run_cmd"));
+    }
+
+    #[test]
+    fn cross_file_findings_clean_arg_does_not_fire() {
+        use std::collections::HashSet;
+        use std::path::PathBuf;
+
+        // A literal argument (no taint) must not produce a cross-file finding.
+        let caller = "<?php\nfunction handle() {\n  run_cmd('ls -la');\n}\n";
+        let helper = "<?php\nfunction run_cmd($arg) {\n  system($arg);\n}\n";
+
+        let helper_tree = parse_file(helper, Language::Php).expect("parse helper");
+        let specs = php_taint_rule_specs();
+        let helper_summaries =
+            extract_cross_file_summaries(helper_tree.root_node(), helper, None, &specs);
+
+        let helper_path = PathBuf::from("/pkg/helper.php");
+        let mut summary_map = CrossFileSummaryMap::new();
+        summary_map.insert(helper_path.clone(), helper_summaries);
+
+        let same_package = vec![helper_path];
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let cross = CrossFileInfo {
+            same_package_paths: &same_package,
+            summaries: &summary_map,
+            allowed_rule_ids: &allowed,
+        };
+
+        let caller_tree = parse_file(caller, Language::Php).expect("parse caller");
+        let findings = extract_cross_file_findings(caller_tree.root_node(), caller, &specs, &cross);
+        assert!(
+            findings.is_empty(),
+            "clean literal argument must not fire cross-file: {findings:?}"
+        );
     }
 }

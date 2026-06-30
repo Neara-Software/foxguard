@@ -1836,9 +1836,11 @@ impl Rule for SemgrepTaintRule {
         if !self.negatives.sink.is_empty() {
             let root = tree.root_node();
             raw.retain(|t| {
-                !self.negatives.sink.iter().any(|neg| {
-                    neg.overlaps_range(root, source, t.sink_start_byte, t.sink_end_byte)
-                })
+                !self
+                    .negatives
+                    .sink
+                    .iter()
+                    .any(|neg| neg.overlaps_range(root, source, t.sink_start_byte, t.sink_end_byte))
             });
         }
         raw.into_iter()
