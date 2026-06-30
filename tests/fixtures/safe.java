@@ -1,7 +1,8 @@
 // tests/fixtures/safe.java
 //
 // Benign Java patterns that must produce ZERO findings. These guard against
-// false positives in the Java rules (deserialization / CORS / SSRF / CSRF).
+// false positives in the Java rules (deserialization / CORS / SSRF / CSRF / SQL).
+import java.util.concurrent.ExecutorService;
 import javax.crypto.Cipher;
 import org.springframework.web.bind.annotation.CrossOrigin;
 
@@ -32,4 +33,18 @@ public class Safe {
     }
 
     private void myCsrfHelper(Object ignored) {}
+
+    // Safe: ExecutorService.execute(Runnable) is NOT a JDBC sink. The lambda body
+    // contains ordinary string-literal concatenation (e.g. a log message), which
+    // must NOT be mistaken for a SQL query assembled with `+`. Guards the FP where
+    // `execute` matched the SQL-method name and the old recursive concat check
+    // descended into the lambda body.
+    public void executorIsNotAJdbcSink(ExecutorService executor, String user) {
+        executor.execute(() -> {
+            String message = "proxying request for user: " + user;
+            auditLog(message);
+        });
+    }
+
+    private void auditLog(String ignored) {}
 }

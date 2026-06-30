@@ -40,6 +40,7 @@ enum LockfileKind {
     Pipfile,
     Pnpm,
     PackageLock,
+    Yarn,
 }
 
 #[derive(Debug, Clone)]
@@ -363,6 +364,7 @@ fn lockfile_kind(path: &Path) -> Option<LockfileKind> {
         "Pipfile.lock" => Some(LockfileKind::Pipfile),
         "pnpm-lock.yaml" => Some(LockfileKind::Pnpm),
         "package-lock.json" => Some(LockfileKind::PackageLock),
+        "yarn.lock" => Some(LockfileKind::Yarn),
         _ => None,
     }
 }
@@ -375,6 +377,7 @@ fn parse_lockfile_packages(source: &str, path: &Path) -> Vec<PackageRef> {
         Some(LockfileKind::Pipfile) => parse_pipfile_lock(source, path),
         Some(LockfileKind::Pnpm) => parse_pnpm_lock(source, path),
         Some(LockfileKind::PackageLock) => parse_package_lock(source, path),
+        Some(LockfileKind::Yarn) => parse_yarn_lock(source, path),
         None => Vec::new(),
     }
 }
@@ -569,6 +572,111 @@ fn collect_package_lock_v1_deps(
             collect_package_lock_v1_deps(source, path, nested, seen, packages);
         }
     }
+}
+
+// yarn.lock — classic (v1) and Berry (v2+) both resolve to npm packages.
+fn parse_yarn_lock(source: &str, path: &Path) -> Vec<PackageRef> {
+    // Berry lockfiles carry a `__metadata:` block and YAML `resolution:` entries; classic
+    // lockfiles use the bespoke `descriptor:` / `version "x"` format. Detect and dispatch.
+    if source
+        .lines()
+        .any(|line| line.trim_start().starts_with("__metadata:"))
+    {
+        parse_yarn_berry_lock(source, path)
+    } else {
+        parse_yarn_classic_lock(source, path)
+    }
+}
+
+fn parse_yarn_classic_lock(source: &str, path: &Path) -> Vec<PackageRef> {
+    let mut packages = Vec::new();
+    let mut seen = HashSet::new();
+    let mut byte_offset = 0usize;
+    // Name + header span of the block being read, until its `version "x"` line is seen.
+    // Every descriptor in a block resolves to the same package and a single version.
+    let mut current: Option<(String, usize, usize)> = None;
+
+    for line in source.lines() {
+        let line_start = byte_offset;
+        let line_end = line_start + line.len();
+        byte_offset = advance_line_offset(source, line_end);
+
+        let indented = line.starts_with(' ') || line.starts_with('\t');
+        let trimmed = line.trim();
+
+        if !indented && !trimmed.is_empty() && !trimmed.starts_with('#') && trimmed.ends_with(':') {
+            current = yarn_descriptor_name(trimmed.trim_end_matches(':'))
+                .map(|name| (name, line_start, line_end));
+        } else if let Some(version) = yarn_classic_version(line) {
+            if let Some((name, start, end)) = current.take() {
+                if seen.insert((name.clone(), version.clone())) {
+                    packages.push(package_ref("npm", &name, &version, source, path, start, end));
+                }
+            }
+        }
+    }
+
+    packages
+}
+
+fn parse_yarn_berry_lock(source: &str, path: &Path) -> Vec<PackageRef> {
+    let mut packages = Vec::new();
+    let mut seen = HashSet::new();
+    let mut byte_offset = 0usize;
+
+    for line in source.lines() {
+        let line_start = byte_offset;
+        let line_end = line_start + line.len();
+        byte_offset = advance_line_offset(source, line_end);
+
+        let Some(rest) = line.trim().strip_prefix("resolution:") else {
+            continue;
+        };
+        // Only npm-registry resolutions are third-party deps; `@workspace:`/`@patch:`
+        // locators (and the `__metadata` block, which has none) are skipped.
+        let Some((name, version)) = yarn_berry_resolution(rest.trim().trim_matches('"')) else {
+            continue;
+        };
+        if seen.insert((name.clone(), version.clone())) {
+            packages.push(package_ref(
+                "npm", &name, &version, source, path, line_start, line_end,
+            ));
+        }
+    }
+
+    packages
+}
+
+// First descriptor's package name, stripped of its trailing `@range` (Berry: `@npm:range`).
+// A scoped package keeps its leading '@' because the split is on the last '@'.
+fn yarn_descriptor_name(descriptors: &str) -> Option<String> {
+    let first = descriptors.split(',').next()?.trim().trim_matches('"');
+    let (name, _range) = first.rsplit_once('@')?;
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+// Version from a classic `version "x"` line.
+fn yarn_classic_version(line: &str) -> Option<String> {
+    let version = line.trim().strip_prefix("version ")?.trim().trim_matches('"');
+    if version.is_empty() {
+        return None;
+    }
+    Some(version.to_string())
+}
+
+// Name + exact version from a Berry `resolution` value, e.g.
+// `@babel/code-frame@npm:7.12.11` → ("@babel/code-frame", "7.12.11"). npm protocol only.
+fn yarn_berry_resolution(resolution: &str) -> Option<(String, String)> {
+    let (name, locator) = resolution.rsplit_once('@')?;
+    let version = locator.strip_prefix("npm:")?;
+    let version = version.split("::").next().unwrap_or(version);
+    if name.is_empty() || version.is_empty() {
+        return None;
+    }
+    Some((name.to_string(), version.to_string()))
 }
 
 fn package_ref(
@@ -1384,6 +1492,65 @@ mod tests {
             .name,
             "elliptic"
         );
+        assert_eq!(
+            parse_yarn_lock("elliptic@^6.5.0:\n  version \"6.5.4\"\n", Path::new("yarn.lock"))[0]
+                .purl,
+            "pkg:npm/elliptic@6.5.4"
+        );
+    }
+
+    #[test]
+    fn parses_yarn_classic_and_berry_lockfiles() {
+        // Classic v1: one package per block; scoped names keep their leading '@', and the
+        // grouped descriptors / nested `dependencies` lines must not spawn extra packages.
+        let classic = parse_yarn_lock(
+            r#"# yarn lockfile v1
+
+"@babel/code-frame@^7.0.0", "@babel/code-frame@^7.10.4":
+  version "7.12.11"
+  resolved "https://example.test/code-frame.tgz"
+  dependencies:
+    "@babel/highlight" "^7.10.4"
+
+acorn@^7.0.0:
+  version "7.4.1"
+"#,
+            Path::new("yarn.lock"),
+        );
+        assert_eq!(classic.len(), 2);
+        assert_eq!(
+            classic
+                .iter()
+                .find(|p| p.name == "@babel/code-frame")
+                .unwrap()
+                .version,
+            "7.12.11"
+        );
+        assert_eq!(
+            classic.iter().find(|p| p.name == "acorn").unwrap().purl,
+            "pkg:npm/acorn@7.4.1"
+        );
+
+        // Berry: resolution-driven; the `__metadata` block and `@workspace:` locator
+        // (not npm-registry deps) are skipped, leaving only the real npm package.
+        let berry = parse_yarn_lock(
+            r#"__metadata:
+  version: 8
+
+"@cspotcode/source-map-support@npm:^0.8.0":
+  version: 0.8.1
+  resolution: "@cspotcode/source-map-support@npm:0.8.1"
+
+"root@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "root@workspace:."
+"#,
+            Path::new("yarn.lock"),
+        );
+        assert_eq!(berry.len(), 1);
+        assert_eq!(berry[0].name, "@cspotcode/source-map-support");
+        assert_eq!(berry[0].version, "0.8.1");
+        assert_eq!(berry[0].purl, "pkg:npm/%40cspotcode/source-map-support@0.8.1");
     }
 
     #[test]

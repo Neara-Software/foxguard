@@ -52,32 +52,44 @@ fn java_cors_wildcard_re() -> &'static Regex {
     })
 }
 
-/// Check whether any descendant of `node` is a `binary_expression` with a `+`
-/// operator that involves a `string_literal`.
-fn has_string_concat(node: tree_sitter::Node, src: &str) -> bool {
-    if node.kind() == "binary_expression" {
-        if let Some(op) = node.child_by_field_name("operator") {
-            if &src[op.byte_range()] == "+" {
-                // Check if either side is or contains a string_literal
-                let left_has_str = node
+/// Whether `arg` is itself a string-concatenation expression involving a
+/// `string_literal` — i.e. a SQL query assembled with `+`.
+///
+/// Only descends through *string-transparent* nodes (`binary_expression`,
+/// `parenthesized_expression`, `ternary_expression`); it deliberately does NOT
+/// recurse into lambda bodies, anonymous classes, object creations or nested
+/// call arguments, none of which is the query string itself. This is what stops
+/// the `Runnable` lambda handed to `ExecutorService.execute(...)` — whose body
+/// may contain unrelated string concatenation (e.g. a log message) — from being
+/// mistaken for a concatenated query.
+fn is_concatenated_string_arg(arg: tree_sitter::Node, src: &str) -> bool {
+    match arg.kind() {
+        "binary_expression" => {
+            let is_plus = arg
+                .child_by_field_name("operator")
+                .is_some_and(|op| &src[op.byte_range()] == "+");
+            // `contains_kind` searches each operand's subtree, so a literal in a
+            // nested `+` (e.g. `a + b + "c"`) is still caught.
+            is_plus
+                && (arg
                     .child_by_field_name("left")
-                    .is_some_and(|n| contains_kind(n, "string_literal"));
-                let right_has_str = node
-                    .child_by_field_name("right")
-                    .is_some_and(|n| contains_kind(n, "string_literal"));
-                if left_has_str || right_has_str {
-                    return true;
-                }
-            }
+                    .is_some_and(|n| contains_kind(n, "string_literal"))
+                    || arg
+                        .child_by_field_name("right")
+                        .is_some_and(|n| contains_kind(n, "string_literal")))
         }
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if has_string_concat(child, src) {
-            return true;
+        "parenthesized_expression" => arg
+            .named_child(0)
+            .is_some_and(|n| is_concatenated_string_arg(n, src)),
+        "ternary_expression" => {
+            arg.child_by_field_name("consequence")
+                .is_some_and(|n| is_concatenated_string_arg(n, src))
+                || arg
+                    .child_by_field_name("alternative")
+                    .is_some_and(|n| is_concatenated_string_arg(n, src))
         }
+        _ => false,
     }
-    false
 }
 
 /// Collect a map of local-variable / parameter / field names to their declared
@@ -332,7 +344,14 @@ impl_rule! {
                     let name_text = &src[name.byte_range()];
                     if sql_methods.is_match(name_text) {
                         if let Some(args) = node.child_by_field_name("arguments") {
-                            if has_string_concat(args, src) {
+                            // The query is always the first argument for these
+                            // methods; checking it directly (not the whole arg
+                            // subtree) avoids matching concatenation inside a
+                            // Runnable lambda or other non-query argument.
+                            if args
+                                .named_child(0)
+                                .is_some_and(|first| is_concatenated_string_arg(first, src))
+                            {
                                 findings.push(make_finding(
                                     _self.id(),
                                     _self.severity(),

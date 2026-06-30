@@ -1422,6 +1422,25 @@ pub(super) fn node_text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
 /// on it — only `seed_params` interprets it (via [`param_names_are_wildcard`]).
 pub const ANY_PARAM_WILDCARD: &str = "$<any-param>";
 
+/// Sentinel prefix used by the bridge to compile a TYPED parameter taint source
+/// (`DbKey<$T> $ID` → `ParamName { names: ["type:DbKey"] }`). Unlike
+/// [`ANY_PARAM_WILDCARD`] (which seeds every parameter), a `type:`-prefixed name
+/// seeds only parameters whose declared type's simple base name equals the
+/// suffix. Interpreted only at parameter-seeding time, like the wildcard.
+pub const TYPE_PARAM_PREFIX: &str = "type:";
+
+/// Reduce a declared type to its simple base name for typed-parameter matching:
+/// strip generic arguments (`<…>`) and array brackets (`[…]`), then take the
+/// last dotted segment. `DbKey<Foo>` → `DbKey`, `java.util.List<X>` → `List`,
+/// `Foo[]` → `Foo`. Shared by the bridge (compiling the `type:` sentinel) and
+/// the engines (matching a formal parameter's type) so the two always agree.
+pub fn type_base_name(ty: &str) -> &str {
+    let ty = ty.trim();
+    let end = ty.find(['<', '[']).unwrap_or(ty.len());
+    let base = ty[..end].trim_end();
+    base.rsplit('.').next().unwrap_or(base).trim()
+}
+
 /// True when a `ParamName` matcher's name list designates the
 /// "any function parameter" wildcard — i.e. it contains the
 /// [`ANY_PARAM_WILDCARD`] sentinel.

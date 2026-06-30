@@ -413,6 +413,11 @@ struct GenericSpec {
     sources: Vec<GenericMatcher>,
     sinks: Vec<GenericMatcher>,
     sanitizers: Vec<GenericMatcher>,
+    /// Sanitizers flagged `by-side-effect: true` (Java only). These also appear
+    /// in `sanitizers` (so result-sanitization still applies); the Java engine
+    /// additionally clears the taint of their identifier arguments. Empty for
+    /// every other language.
+    side_effect_sanitizers: Vec<GenericMatcher>,
 }
 
 /// Compiled `pattern-not` constraints extracted from a taint rule's
@@ -3517,6 +3522,12 @@ impl Rule for SemgrepTaintRule {
             }
             Language::Java => {
                 let spec = to_java_spec(&self.spec);
+                let side_effects: Vec<java_taint::NodeMatcher> = self
+                    .spec
+                    .side_effect_sanitizers
+                    .iter()
+                    .map(to_java_matcher)
+                    .collect();
                 java_taint::analyze_tree_labeled(
                     tree.root_node(),
                     source,
@@ -3524,6 +3535,7 @@ impl Rule for SemgrepTaintRule {
                     None,
                     &self.propagators,
                     self.label_policy.as_ref(),
+                    &side_effects,
                 )
                 .into_iter()
                 .map(TaintFindingView::from_java)
@@ -4264,6 +4276,11 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
         );
     }
 
+    // `by-side-effect` sanitizers (Java only) — compiled separately so the Java
+    // engine can clear the taint of their arguments, not just their result.
+    let side_effect_sanitizers =
+        compile_side_effect_sanitizers(yaml.get("pattern-sanitizers"), &id, lang);
+
     TaintRuleParse::Compiled(SemgrepTaintRule {
         id: format!("semgrep/{}", id),
         message,
@@ -4274,6 +4291,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
             sources,
             sinks,
             sanitizers,
+            side_effect_sanitizers,
         },
         negatives: TaintNegatives {
             sink: sink_negatives,
@@ -4592,6 +4610,52 @@ fn compile_matcher_list(
     Ok((out, negatives, insides))
 }
 
+/// Compile ONLY the sanitizer entries flagged `by-side-effect: true` into their
+/// matchers. The Java engine treats these specially — when such a call is seen,
+/// its identifier arguments are sanitized for the rest of the flow (the call
+/// vouches for them by side effect), not just the call's result. These matchers
+/// are ALSO present in the regular `sanitizers` list, so result-sanitization
+/// still applies. Returns an empty list for non-Java rules (only the Java
+/// engine consumes it).
+fn compile_side_effect_sanitizers(
+    node: Option<&YamlValue>,
+    rule_id: &str,
+    lang: Language,
+) -> Vec<GenericMatcher> {
+    let mut out = Vec::new();
+    if lang != Language::Java {
+        return out;
+    }
+    let Some(entries) = node.and_then(YamlValue::as_sequence) else {
+        return out;
+    };
+    for entry in entries {
+        let is_side_effect = entry
+            .as_mapping()
+            .and_then(|m| m.get(YamlValue::from("by-side-effect")))
+            .and_then(YamlValue::as_bool)
+            .unwrap_or(false);
+        if is_side_effect {
+            // Side-effect sanitizers reuse the plain sanitizer compilation
+            // path; labels and `pattern-not`/`pattern-inside` lifting do not
+            // apply to this Java-only subset, so the collectors are dropped.
+            let mut negatives = Vec::new();
+            let mut insides = Vec::new();
+            compile_entry(
+                entry,
+                MatcherRole::Sanitizer,
+                rule_id,
+                lang,
+                false,
+                &mut out,
+                &mut negatives,
+                &mut insides,
+            );
+        }
+    }
+    out
+}
+
 /// Compile a single entry from a source/sink/sanitizer list, flattening
 /// nested `pattern-either:` blocks, and extracting expressible matchers from
 /// `patterns:` AND-blocks. Invalid entries emit a warning and are skipped
@@ -4773,7 +4837,7 @@ fn compile_entry(
                 }
             }
             if let MatcherRole::Source = role {
-                if try_compile_param_source_block(v, out) {
+                if try_compile_param_source_block(v, lang, out) {
                     return;
                 }
             }
@@ -5298,7 +5362,7 @@ fn compile_patterns_block(
 ///
 /// Returns `false` (and pushes nothing) for any other block shape, leaving the
 /// caller to fall through to the normal graceful-degradation extraction.
-fn try_compile_param_source_block(v: &YamlValue, out: &mut Vec<GenericMatcher>) -> bool {
+fn try_compile_param_source_block(v: &YamlValue, lang: Language, out: &mut Vec<GenericMatcher>) -> bool {
     let Some(items) = v.as_sequence() else {
         return false;
     };
@@ -5314,19 +5378,48 @@ fn try_compile_param_source_block(v: &YamlValue, out: &mut Vec<GenericMatcher>) 
         return false;
     }
 
-    // The seed metavariable must appear as a parameter of at least one
-    // function-signature context in the block.
-    let matched = seeds.iter().any(|seed| {
-        signature_texts
-            .iter()
-            .any(|sig| signature_has_param(sig, seed))
-    });
-    if !matched {
-        return false;
+    // Each seed that is genuinely a parameter of a signature in this block seeds
+    // its DECLARED TYPE where it has one — `DbKey<$T> $ID` seeds only `DbKey<…>`
+    // parameters rather than every parameter. A seed with no declared type (a
+    // bare `$ARG` / `$EVENT`, the any-parameter shape) falls back to the
+    // any-parameter wildcard, preserving the original semantics. A mix degrades
+    // to the wildcard (broader, never under-reports).
+    let mut type_names: Vec<String> = Vec::new();
+    let mut untyped_param = false;
+    for seed in &seeds {
+        for sig in &signature_texts {
+            if !signature_has_param(sig, seed) {
+                continue;
+            }
+            // Typed-parameter seeding is Java-only: only the Java engine
+            // interprets the `type:` sentinel, so other languages keep the
+            // any-parameter wildcard (their prior behavior).
+            let typed = (lang == Language::Java)
+                .then(|| signature_param_type(sig, seed))
+                .flatten();
+            match typed {
+                Some(ty) => {
+                    let sentinel = format!("{}{ty}", crate::rules::taint_engine::TYPE_PARAM_PREFIX);
+                    if !type_names.contains(&sentinel) {
+                        type_names.push(sentinel);
+                    }
+                }
+                None => untyped_param = true,
+            }
+        }
     }
 
+    if type_names.is_empty() && !untyped_param {
+        return false; // the seed is not a parameter of any signature
+    }
+
+    let names = if untyped_param || type_names.is_empty() {
+        vec![crate::rules::taint_engine::ANY_PARAM_WILDCARD.to_string()]
+    } else {
+        type_names
+    };
     out.push(GenericMatcher::ParamName {
-        names: vec![crate::rules::taint_engine::ANY_PARAM_WILDCARD.to_string()],
+        names,
         description: "untrusted function parameter".to_string(),
     });
     true
@@ -5705,6 +5798,57 @@ fn signature_has_param(sig: &str, seed: &str) -> bool {
     params
         .split(|c: char| !is_ident_char(c) && c != '$')
         .any(|tok| tok == seed)
+}
+
+/// Split a parameter list on top-level commas, ignoring commas nested inside
+/// `<>`, `()`, or `[]` so a generic type (`Map<K, V>`) stays a single parameter.
+/// Split a parameter list at commas not nested inside generics (`<>`),
+/// parens, or brackets — `Map<K, V> $M, String $S` yields two params.
+fn split_signature_params(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
+/// The declared type of the parameter named `seed` in `sig`'s first parameter
+/// list, reduced to its simple base name (see [`type_base_name`]). Returns
+/// `None` when the parameter is untyped (a bare `$ARG`, the any-parameter shape)
+/// or not found — the caller then falls back to the any-parameter wildcard.
+///
+/// `$RET $M(..., AuthContext $AC, ..., DbKey<$T> $ID, ...)` with seed `$ID`
+/// yields `DbKey`; a `function(..., $ARG, ...)` shape with seed `$ARG` yields
+/// `None`.
+fn signature_param_type<'a>(sig: &'a str, seed: &str) -> Option<&'a str> {
+    let open = sig.find('(')?;
+    let close = matching_paren(sig, open)?;
+    for param in split_signature_params(&sig[open + 1..close]) {
+        let param = param.trim();
+        // The last whitespace-separated token is the parameter name.
+        let Some(ws) = param.rfind(char::is_whitespace) else {
+            continue; // single token (`$ARG`, `...`) — no declared type
+        };
+        if param[ws + 1..].trim() != seed {
+            continue;
+        }
+        let base = crate::rules::taint_engine::type_base_name(param[..ws].trim());
+        // A metavariable "type" (`$TYPE $EVENT`, the AWS-Lambda shape) is not a
+        // concrete type — fall back to the any-parameter wildcard.
+        return (!base.is_empty() && !is_metavariable(base)).then_some(base);
+    }
+    None
 }
 
 /// Try to recognise the "focus-on-call-argument" SINK shape in a `patterns:`
@@ -6768,35 +6912,66 @@ fn is_call_context_pattern(pat: &str) -> bool {
         && !callee.contains('[')
 }
 
+/// For a call pattern ending in `)`, the byte index of the `(` that opens the
+/// TRAILING call — the one whose `)` is the last byte. For a chained call like
+/// `$TBL.id().eq($SINK)` this is the `.eq(` paren (not the inner `.id()`), so
+/// the callee/args of the OUTER call can be read. `None` if `s` does not end
+/// with a balanced call.
+fn trailing_call_open(s: &str) -> Option<usize> {
+    let s = s.trim();
+    if !s.ends_with(')') {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    for i in (0..bytes.len()).rev() {
+        match bytes[i] {
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The final method name of a (possibly chained) callee: the identifier after
+/// the last top-level `.` (ignoring `.` nested inside `()`/`[]`). `$TBL.id().eq`
+/// → `eq`; `$RES.$METH` → `$METH`; `redirect_to` → `redirect_to`.
+fn final_method_name(callee: &str) -> &str {
+    let mut depth = 0i32;
+    let mut last_dot = None;
+    for (i, c) in callee.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '.' if depth == 0 => last_dot = Some(i),
+            _ => {}
+        }
+    }
+    match last_dot {
+        Some(i) => callee[i + 1..].trim(),
+        None => callee.trim(),
+    }
+}
+
 /// True when the call pattern `call` lists `seed` (a metavariable like `$ARG`)
 /// inside its argument list, OR has a wildcard/metavariable argument list
 /// (`(...)`, `($X)`) — i.e. the focused metavariable is one of the call's
 /// arguments. Bounds the sink to a focus that is genuinely a call argument.
 fn call_has_arg(call: &str, seed: &str) -> bool {
     let c = call.trim().trim_end_matches(';').trim();
-    let Some(open) = c.find('(') else {
+    // Read the TRAILING call's argument list, so a chained `$TBL.id().eq($SINK)`
+    // is checked against `.eq(...)` (where the focus is), not the inner `.id()`.
+    let Some(open) = trailing_call_open(c) else {
         return false;
     };
-    let bytes = c.as_bytes();
-    let mut depth = 0i32;
-    let mut close = None;
-    for (i, &b) in bytes.iter().enumerate().skip(open) {
-        match b {
-            b'(' => depth += 1,
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    close = Some(i);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let Some(close) = close else {
-        return false;
-    };
-    let args = c[open + 1..close].trim();
+    // `c` ends with the trailing call's `)`, so its args span `(open, len-1)`.
+    let args = c[open + 1..c.len() - 1].trim();
     // Literal argument match (token boundary so `$ARG` != `$ARGUMENT`).
     let literal = args
         .split(|ch: char| !is_ident_char(ch) && ch != '$')
@@ -6819,10 +6994,24 @@ fn compile_focus_call_callee(
     out: &mut Vec<GenericMatcher>,
 ) {
     let c = call.trim().trim_end_matches(';').trim();
-    let Some(open) = c.find('(') else {
+    let Some(open) = trailing_call_open(c) else {
         return;
     };
     let callee = c[..open].trim();
+
+    // Chained-call callee whose receiver itself contains a call — e.g.
+    // `$TBL.id().eq` (the tenant by-id-query sink). The receiver chain cannot be
+    // expressed, so key off the FINAL method name and match any receiver.
+    if callee.contains('(') {
+        let method = final_method_name(callee);
+        if is_identifier(method) {
+            out.push(GenericMatcher::MethodName {
+                method: method.to_string(),
+                description: describe(method, role),
+            });
+        }
+        return;
+    }
 
     // Case 1: `$RECV.$METH(...)` — metavariable receiver + metavariable method.
     // Pin `$METH` via its regex → one `MethodName` per alternative.
@@ -8348,6 +8537,69 @@ fn parse_apex_chained_call_source(pat: &str) -> Option<String> {
     Some(format!("{root}.{method}"))
 }
 
+/// Byte index of the `)` that closes the `(` at byte index `open` in `s`, or
+/// `None` if unbalanced. `s.as_bytes()[open]` must be `(`.
+fn matching_paren(s: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, b) in s.bytes().enumerate().skip(open) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Recognise Semgrep's typed-metavariable receiver syntax used as a call
+/// receiver: `(Type $MV).method(...)` — e.g. `(Req $R).getQueryParam(...)`,
+/// `(TemplatedUrl $T).getBase()`, `(okhttp3.Request.Builder $B).url(...)`.
+/// Returns the final method name.
+///
+/// foxguard has no type resolution, so the receiver type is dropped and the
+/// call is matched by method name on any receiver (a [`GenericMatcher::MethodName`]).
+/// Without this, [`compile_pattern`]'s Call form keys off the cast's *leading*
+/// `(` and mistakes the pattern for an empty-callee call, rejecting it.
+///
+/// Shape discipline: a leading balanced `(...)` whose interior is
+/// `<type tokens> $METAVAR` (≥1 type token then exactly one trailing
+/// metavariable), immediately followed by `.method(...)` where the method is a
+/// single identifier and its argument list closes at the very end (one trailing
+/// call — a chain like `(T $X).a().b(...)` is refused).
+fn parse_cast_prefixed_method(pat: &str) -> Option<&str> {
+    let p = pat.trim();
+    if !p.starts_with('(') {
+        return None;
+    }
+    let close = matching_paren(p, 0)?;
+    let cast = p[1..close].trim();
+    // The interior must end with a metavariable, preceded by ≥1 type token. We
+    // split on the LAST whitespace so a generic type (`Map<String, Foo> $M`)
+    // keeps its comma/space inside the type part.
+    let split = cast.rfind(char::is_whitespace)?;
+    let metavar = cast[split + 1..].trim();
+    let type_part = cast[..split].trim();
+    if type_part.is_empty() || !is_metavariable(metavar) {
+        return None;
+    }
+    let rest = p[close + 1..].trim_start().strip_prefix('.')?.trim_start();
+    let open = rest.find('(')?;
+    let method = rest[..open].trim();
+    if method.is_empty() || !method.chars().all(is_ident_char) {
+        return None;
+    }
+    // Exactly one trailing call: its argument list must close at the pattern end.
+    if matching_paren(rest, open)? != rest.len() - 1 {
+        return None;
+    }
+    Some(method)
+}
+
 /// Compile a single Semgrep pattern string into a [`NodeMatcher`].
 ///
 /// Returns `None` if the pattern shape is not one of the supported forms
@@ -8959,6 +9211,49 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
                 description: describe(callee, role),
             });
         }
+    }
+
+    // ── Object-creation: `new Type(...)` ─────────────────────────────────
+    //
+    // `compile_pattern` has no constructor vocabulary, and `is_dotted_identifier`
+    // fails on the space in `new Type`, so a `new X(...)` sink would otherwise be
+    // rejected (`unsupported pattern shape`). Strip the `new ` keyword and compile
+    // to `Call { canonical: Type }`; the engine matches an
+    // `object_creation_expression` whose type equals `canonical` (see
+    // `matcher_matches_call`). Rules list both the FQN and the simple spelling
+    // (`new java.io.File` and `new File`), so both canonicals are produced and
+    // both match. A single-segment canonical (`File`) cannot match a method call
+    // (the method arm needs a dotted canonical), so there is no method cross-talk.
+    if let Some(rest) = pat.strip_prefix("new ") {
+        let rest = rest.trim_start();
+        if let Some(open) = rest.find('(') {
+            let ty = rest[..open].trim();
+            if rest.ends_with(')') && is_dotted_identifier(ty) {
+                return Some(GenericMatcher::Call {
+                    canonical: ty.to_string(),
+                    description: describe(ty, role),
+                });
+            }
+        }
+    }
+
+    // ── Cast-prefixed method call: `(Type $MV).method(...)` ──────────────
+    //
+    // Semgrep typed-metavariable receiver syntax: the leading `(Type $MV)` is a
+    // typed receiver, not a call. For Java and C# the typed-metavariable
+    // handler above compiles this shape (type-aware); for every other
+    // language the Call form below keys off the FIRST `(`, so without this
+    // the cast paren is mistaken for an empty callee and the pattern is
+    // rejected (`unsupported pattern shape`). foxguard has no type
+    // resolution, so we drop the receiver type and match the call by method name
+    // on any receiver via `MethodName`. Valid in every role — as a sink/sanitizer
+    // it is the usual any-receiver method match; as a SOURCE the call result is
+    // the taint origin (`(Req $R).getQueryParam(...)`).
+    if let Some(method) = parse_cast_prefixed_method(pat) {
+        return Some(GenericMatcher::MethodName {
+            method: method.to_string(),
+            description: describe(method, role),
+        });
     }
 
     // ── Call form: `root.method(...)` or `func($X)` ─────────────────────
@@ -10102,6 +10397,76 @@ mod tests {
         assert_eq!(parse_member_call_penultimate("request.$PROP.get"), None);
         // fully concrete → reject (Call handles it).
         assert_eq!(parse_member_call_penultimate("a.b.c"), None);
+    }
+
+    // ── Cast-prefixed method call shape (Tier A) ────────────────────────────
+
+    #[test]
+    fn parse_cast_prefixed_method_edge_cases() {
+        // Typed-metavariable receiver → final method name (the type is dropped).
+        assert_eq!(
+            parse_cast_prefixed_method("(Req $R).getQueryParam(...)"),
+            Some("getQueryParam")
+        );
+        assert_eq!(
+            parse_cast_prefixed_method("(TemplatedUrl $T).getBase()"),
+            Some("getBase")
+        );
+        // Dotted / generic cast types are fine — we split on the LAST whitespace.
+        assert_eq!(
+            parse_cast_prefixed_method("(okhttp3.Request.Builder $B).url(...)"),
+            Some("url")
+        );
+        assert_eq!(
+            parse_cast_prefixed_method("(Map<String, Foo> $M).get($K)"),
+            Some("get")
+        );
+        // No leading cast.
+        assert_eq!(parse_cast_prefixed_method("pickle.loads($X)"), None);
+        assert_eq!(parse_cast_prefixed_method("request.data"), None);
+        // Cast but no trailing call.
+        assert_eq!(parse_cast_prefixed_method("(Req $R)"), None);
+        // Interior is not `<type> $MV` — missing metavar, or missing type.
+        assert_eq!(parse_cast_prefixed_method("(Req).m(...)"), None);
+        assert_eq!(parse_cast_prefixed_method("($X).m(...)"), None);
+        // A chain after the cast is refused (single trailing call only).
+        assert_eq!(parse_cast_prefixed_method("(Req $R).a().b(...)"), None);
+    }
+
+    #[test]
+    fn compile_cast_prefixed_source_and_sink_to_methodname() {
+        // The cast paren previously broke the Call form (`unsupported pattern
+        // shape`); now BOTH roles compile to an any-receiver MethodName — the
+        // SOURCE role being the new capability this enables.
+        let as_source =
+            compile("(Req $R).getQueryParam(...)", MatcherRole::Source).expect("cast-prefix source");
+        let as_sink =
+            compile("(Req $R).getQueryParam(...)", MatcherRole::Sink).expect("cast-prefix sink");
+        for (label, m) in [("source", as_source), ("sink", as_sink)] {
+            match m {
+                GenericMatcher::MethodName { method, .. } => assert_eq!(method, "getQueryParam"),
+                other => panic!("expected MethodName for {label}, got {other:?}"),
+            }
+        }
+    }
+
+    // ── Object-creation sink shape (W2) ─────────────────────────────────────
+
+    #[test]
+    fn compile_object_creation_to_call() {
+        // `new Type(...)` previously skipped (the space broke `is_dotted_identifier`);
+        // now compiles to `Call { canonical: Type }`, matched as an object-creation
+        // sink. Both the FQN and the simple spelling are produced as listed.
+        for (pat, expected) in [
+            ("new File(...)", "File"),
+            ("new java.io.File(...)", "java.io.File"),
+            ("new java.net.URL($X)", "java.net.URL"),
+        ] {
+            match compile(pat, MatcherRole::Sink) {
+                Some(GenericMatcher::Call { canonical, .. }) => assert_eq!(canonical, expected),
+                other => panic!("{pat}: expected Call `{expected}`, got {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -14794,6 +15159,189 @@ function run(name, cmd) {
             1,
             "a function parameter reaching exec() must fire, got {:?}",
             findings
+        );
+    }
+
+    // ── Typed-parameter source shape (Tier B(i)) ───────────────────────────
+
+    #[test]
+    fn signature_param_type_edge_cases() {
+        let sig = "$RET $M(..., AuthContext $AC, ..., DbKey<$T> $ID, ...) { ... }";
+        // Typed params resolve to their simple base type.
+        assert_eq!(signature_param_type(sig, "$ID"), Some("DbKey"));
+        assert_eq!(signature_param_type(sig, "$AC"), Some("AuthContext"));
+        // A generic with an internal comma stays one parameter; the base name
+        // strips the generic arguments.
+        assert_eq!(
+            signature_param_type("$R $f(Map<String, Foo> $M) { ... }", "$M"),
+            Some("Map")
+        );
+        // A qualified type reduces to its simple name.
+        assert_eq!(
+            signature_param_type("$R $f(com.x.DbKey<Foo> $ID) { ... }", "$ID"),
+            Some("DbKey")
+        );
+        // A bare, untyped parameter has no type → caller falls back to wildcard.
+        assert_eq!(
+            signature_param_type("function f(..., $ARG, ...) { ... }", "$ARG"),
+            None
+        );
+        // Not a parameter of the signature.
+        assert_eq!(signature_param_type(sig, "$NOPE"), None);
+    }
+
+    #[test]
+    fn typed_param_block_compiles_to_type_sentinel() {
+        // `DbKey<$T> $ID` (+ a signature `pattern-inside`) now compiles to a
+        // TYPED param source (`type:DbKey`), not the type-blind any-parameter
+        // wildcard.
+        let rule = compiled(
+            r#"
+id: java-typed-param
+mode: taint
+languages: [java]
+severity: ERROR
+message: "DbKey id reaches a by-id query"
+pattern-sources:
+  - patterns:
+      - pattern-inside: "$RET $M(..., AuthContext $AC, ..., DbKey<$T> $ID, ...) { ... }"
+      - pattern: $ID
+pattern-sinks:
+  - pattern: $S.run(...)
+"#,
+        );
+        assert!(
+            matches!(
+                rule.spec.sources.as_slice(),
+                [GenericMatcher::ParamName { names, .. }] if names == &["type:DbKey".to_string()]
+            ),
+            "expected a `type:DbKey` ParamName source, got {:?}",
+            rule.spec.sources
+        );
+    }
+
+    // ── Chained-call focus sink shape (W4: tenant `$TBL.id().eq($SINK)`) ─────
+
+    #[test]
+    fn trailing_call_and_final_method_edge_cases() {
+        // `trailing_call_open` finds the OUTER call's `(`, not the inner `.id()`.
+        assert_eq!(
+            trailing_call_open("$TBL.id().eq($SINK)"),
+            Some("$TBL.id().eq".len())
+        );
+        assert_eq!(trailing_call_open("redirect_to($X)"), Some("redirect_to".len()));
+        assert_eq!(trailing_call_open("no parens"), None);
+        // `final_method_name` ignores `.` inside the receiver chain's calls.
+        assert_eq!(final_method_name("$TBL.id().eq"), "eq");
+        assert_eq!(final_method_name("a.b().c().d"), "d");
+        assert_eq!(final_method_name("$RES.$METH"), "$METH");
+        assert_eq!(final_method_name("redirect_to"), "redirect_to");
+    }
+
+    #[test]
+    fn tenant_chained_focus_sink_compiles_and_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: java-tenant-byid
+mode: taint
+languages: [java]
+severity: ERROR
+message: "by-id query without a tenant check"
+pattern-sources:
+  - patterns:
+      - pattern-inside: "$RET $M(..., AuthContext $AC, ..., DbKey<$T> $ID, ...) { ... }"
+      - pattern: $ID
+pattern-sinks:
+  - patterns:
+      - focus-metavariable: $SINK
+      - pattern-either:
+          - pattern: $TBL.id().eq($SINK)
+          - pattern: eq($TBL.id(), $SINK)
+"#,
+        );
+        // The chained-focus sink compiles to an any-receiver MethodName on `eq`
+        // (the trailing call), not `id` (the inner call) as it did before.
+        assert!(
+            rule.spec.sinks.iter().any(|m| matches!(
+                m,
+                GenericMatcher::MethodName { method, .. } if method == "eq"
+            )),
+            "expected a MethodName `eq` sink, got {:?}",
+            rule.spec.sinks
+        );
+
+        let src = r#"
+class Store {
+  Foo get(AuthContext ac, DbKey<Foo> id) {
+    return q.where(tbl.id().eq(id));
+  }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "DbKey id reaching tbl.id().eq(id) must fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn by_side_effect_sanitizer_clears_argument_taint() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: java-tenant-byid-sanitized
+mode: taint
+languages: [java]
+severity: ERROR
+message: "by-id query without a tenant check"
+pattern-sources:
+  - patterns:
+      - pattern-inside: "$RET $M(..., AuthContext $AC, ..., DbKey<$T> $ID, ...) { ... }"
+      - pattern: $ID
+pattern-sanitizers:
+  - by-side-effect: true
+    pattern: $ACS.checkHasReadAccessToEntity(..., $X)
+pattern-sinks:
+  - patterns:
+      - focus-metavariable: $SINK
+      - pattern-either:
+          - pattern: $TBL.id().eq($SINK)
+"#,
+        );
+        // The by-side-effect sanitizer is compiled into its dedicated list.
+        assert!(
+            rule.spec.side_effect_sanitizers.iter().any(|m| matches!(
+                m,
+                GenericMatcher::MethodName { method, .. } if method == "checkHasReadAccessToEntity"
+            )),
+            "expected a by-side-effect sanitizer matcher, got {:?}",
+            rule.spec.side_effect_sanitizers
+        );
+
+        // `unchecked` has no access check → fires; `checked` calls the
+        // by-side-effect sanitizer on `id` before the query → suppressed.
+        let src = r#"
+class Store {
+  Foo unchecked(AuthContext ac, DbKey<Foo> id) {
+    return q.where(tbl.id().eq(id));
+  }
+  Foo checked(AuthContext ac, DbKey<Foo> id) {
+    accessCheckService.checkHasReadAccessToEntity(ac, id);
+    return q.where(tbl.id().eq(id));
+  }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "only the unchecked method should fire, got {findings:?}"
         );
     }
 

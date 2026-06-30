@@ -87,7 +87,7 @@ pub fn analyze_tree_with_propagators(
     aliases: Option<&AliasTable>,
     propagators: &[Propagator],
 ) -> Vec<TaintFinding> {
-    analyze_tree_labeled(root, source, spec, aliases, propagators, None)
+    analyze_tree_labeled(root, source, spec, aliases, propagators, None, &[])
 }
 
 /// Like [`analyze_tree_with_propagators`] but also honors a taint-**labels**
@@ -104,6 +104,7 @@ pub fn analyze_tree_labeled(
     _aliases: Option<&AliasTable>,
     propagators: &[Propagator],
     policy: Option<&LabelPolicy>,
+    _side_effect_sanitizers: &[NodeMatcher],
 ) -> Vec<TaintFinding> {
     let mut findings = Vec::new();
     walk_tree(root, source, &mut |node, src| {
@@ -1226,6 +1227,16 @@ fn expression_taint_core(
         if let Some(info) = expression_taint(args, source, spec, policy, state) {
             return Some(bump_hops(info));
         }
+        // `call_arguments` only matches `method_invocation` /
+        // `object_creation_expression`. For those, the receiver (`object`,
+        // handled in the `method_invocation` branch above) and the argument
+        // list (handled just above) are the only taint-carrying children, so
+        // we are done. Returning here avoids re-descending into those same
+        // children through the generic loop below: that double descent makes
+        // the receiver subtree visited twice per call-chain level, which is
+        // exponential — T(n) = 2·T(n-1) — in nesting depth and hangs the
+        // scanner on deeply chained calls.
+        return None;
     }
 
     let mut cursor = node.walk();
