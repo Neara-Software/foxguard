@@ -18,6 +18,71 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+/// A normalized taint-runner signature. Every per-language batched taint
+/// dispatcher is adapted to this shape so the scanner can drive all of them
+/// from a single table (see [`TAINT_DISPATCH`]) instead of a hand-written
+/// `if !ids.is_empty() { run_<lang>_taint_batched(...) }` block per language.
+///
+/// Cross-file engines (Go/Python/JS/Java) consume `ctx` for Pass-1 summaries
+/// and import/package resolution; intra-file engines ignore it. Adapting the
+/// intra-file runners (which take no `ctx`) to this signature is a one-line
+/// wrapper below.
+type TaintRunner =
+    fn(&str, &tree_sitter::Tree, &FileContext<'_>, &HashSet<&str>) -> Vec<Finding>;
+
+// ── Adapters for intra-file runners (no `ctx` parameter) ──────────────────────
+// These exist only so every engine shares the `TaintRunner` signature. The
+// cross-file runners already match it and are referenced directly in the table.
+fn run_kt_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+    crate::rules::kotlin::run_kt_taint_batched(s, t, ids)
+}
+fn run_c_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+    crate::rules::c::run_c_taint_batched(s, t, ids)
+}
+fn run_csharp_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+    crate::rules::csharp::run_csharp_taint_batched(s, t, ids)
+}
+fn run_ruby_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+    crate::rules::ruby::run_ruby_taint_batched(s, t, ids)
+}
+fn run_php_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+    crate::rules::php::run_php_taint_batched(s, t, ids)
+}
+fn run_solidity_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+    crate::rules::solidity::run_solidity_taint_batched(s, t, ids)
+}
+fn run_bash_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+    crate::rules::bash::run_bash_taint_batched(s, t, ids)
+}
+fn run_swift_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+    crate::rules::swift::run_swift_taint_batched(s, t, ids)
+}
+
+/// All built-in taint engines, paired with their batched runner. Adding a
+/// taint-backed language is a single row here plus the usual `TaintEngine`
+/// variant and `builtin_taint_specs_for_language` arm — no new scanner block.
+///
+/// The scanner iterates this table per file: for each engine it collects the
+/// enabled rule ids whose `spec.engine` matches, and invokes the runner when
+/// that set is non-empty (so a file only pays for engines that have enabled
+/// rules for its language).
+const TAINT_DISPATCH: &[(TaintEngine, TaintRunner)] = &[
+    // Cross-file engines (consume FileContext Pass-1 summaries).
+    (TaintEngine::Go, crate::rules::go::run_go_taint_batched),
+    (TaintEngine::Java, crate::rules::java::run_java_taint_batched),
+    (TaintEngine::Python, crate::rules::python::run_py_taint_batched),
+    (TaintEngine::JavaScript, crate::rules::javascript::run_js_taint_batched),
+    // Intra-file engines (adapted to ignore FileContext).
+    (TaintEngine::Kotlin, run_kt_taint),
+    (TaintEngine::C, run_c_taint),
+    (TaintEngine::CSharp, run_csharp_taint),
+    (TaintEngine::Ruby, run_ruby_taint),
+    (TaintEngine::Php, run_php_taint),
+    (TaintEngine::Solidity, run_solidity_taint),
+    (TaintEngine::Bash, run_bash_taint),
+    (TaintEngine::Swift, run_swift_taint),
+];
+
 /// Result of a scan with metadata.
 pub struct ScanResult {
     pub findings: Vec<Finding>,
@@ -1341,278 +1406,25 @@ fn scan_files(
 
             let mut file_findings = Vec::new();
 
-            // Go taint rules share identical Pass 1 summaries across all
-            // rules in the same sanitizer-group. Instead of walking the
-            // AST once per rule, run them all through a single batched
-            // call that computes summaries once and emits per-rule
-            // findings in a single walk per sanitizer-group. See
-            // `crate::rules::go::run_go_taint_batched` for details.
-            let enabled_go_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::Go) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::Go))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_go_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::go::run_go_taint_batched(
-                    source,
-                    tree,
-                    &ctx,
-                    &enabled_go_taint_ids,
-                ));
-            }
-
-            // Java taint rules are intraprocedural today, like the Kotlin
-            // engine below. They still go through a shared dispatcher so
-            // the scanner does not run the Rule::check fallback path once
-            // per taint rule.
-            let enabled_java_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::Java) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::Java))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_java_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::java::run_java_taint_batched(
-                    source,
-                    tree,
-                    &ctx,
-                    &enabled_java_taint_ids,
-                ));
-            }
-
-            // Python taint rules share identical Pass 1 summaries across
-            // all rules in the same sanitizer-group. Same rationale as
-            // the Go block above — see `crate::rules::python::run_py_taint_batched`.
-            let enabled_py_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::Python) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::Python))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_py_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::python::run_py_taint_batched(
-                    source,
-                    tree,
-                    &ctx,
-                    &enabled_py_taint_ids,
-                ));
-            }
-
-            // JavaScript taint rules: same batched approach as Go/Python
-            // above — see `crate::rules::javascript::run_js_taint_batched`.
-            let enabled_js_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::JavaScript) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::JavaScript))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_js_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::javascript::run_js_taint_batched(
-                    source,
-                    tree,
-                    &ctx,
-                    &enabled_js_taint_ids,
-                ));
-            }
-
-            // Kotlin taint rules: dispatched the same way as the other
-            // language engines via `run_kt_taint_batched`. The Kotlin
-            // engine doesn't share Pass 1 summaries (it's intra-function
-            // only and has no cross-file work yet), but the dispatcher
-            // routes all enabled Kotlin taint rules through a single
-            // entry point for parity.
-            let enabled_kt_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::Kotlin) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::Kotlin))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_kt_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::kotlin::run_kt_taint_batched(
-                    source,
-                    tree,
-                    &enabled_kt_taint_ids,
-                ));
-            }
-
-            // C taint rules: same batched approach as Kotlin above.
-            // No cross-file analysis; each function is analyzed
-            // independently.
-            let enabled_c_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::C) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::C))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_c_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::c::run_c_taint_batched(
-                    source,
-                    tree,
-                    &enabled_c_taint_ids,
-                ));
-            }
-
-            // C# taint rules: same batched approach as Java/C above.
-            // Intraprocedural, no cross-file analysis; each method body is
-            // analyzed independently.
-            let enabled_csharp_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::CSharp) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::CSharp))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_csharp_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::csharp::run_csharp_taint_batched(
-                    source,
-                    tree,
-                    &enabled_csharp_taint_ids,
-                ));
-            }
-
-            // Ruby taint rules: same batched approach as C#/Java above.
-            // Intraprocedural, no cross-file analysis; each method body is
-            // analyzed independently.
-            let enabled_ruby_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::Ruby) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::Ruby))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_ruby_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::ruby::run_ruby_taint_batched(
-                    source,
-                    tree,
-                    &enabled_ruby_taint_ids,
-                ));
-            }
-
-            // PHP taint rules: same batched approach as C above.
-            // Intraprocedural, flow-insensitive, no cross-file analysis.
-            let enabled_php_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::Php) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::Php))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_php_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::php::run_php_taint_batched(
-                    source,
-                    tree,
-                    &enabled_php_taint_ids,
-                ));
-            }
-
-            // Solidity taint rules: same batched approach as C above.
-            // Intra-function only; each `function_definition` is analyzed
-            // independently with no cross-file work.
-            let enabled_solidity_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::Solidity) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::Solidity))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_solidity_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::solidity::run_solidity_taint_batched(
-                    source,
-                    tree,
-                    &enabled_solidity_taint_ids,
-                ));
-            }
-
-            // Bash taint rules: same batched approach as C above.
-            // Intraprocedural, no cross-file analysis; the top-level program
-            // and each function body are analyzed independently.
-            let enabled_bash_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::Bash) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::Bash))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_bash_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::bash::run_bash_taint_batched(
-                    source,
-                    tree,
-                    &enabled_bash_taint_ids,
-                ));
-            }
-
-            // Swift taint rules: same batched approach as Kotlin/C above.
-            // The Swift engine is intra-function only with no cross-file work;
-            // it recognises dynamically-constructed strings flowing into
-            // dangerous calls.
-            let enabled_swift_taint_ids: std::collections::HashSet<&str> =
-                if matches!(language, Language::Swift) {
-                    analysis_plan
-                        .taint_specs
-                        .iter()
-                        .filter(|spec| matches!(spec.engine, TaintEngine::Swift))
-                        .map(|spec| spec.rule_id)
-                        .collect()
-                } else {
-                    std::collections::HashSet::new()
-                };
-            if !enabled_swift_taint_ids.is_empty() {
-                file_findings.extend(crate::rules::swift::run_swift_taint_batched(
-                    source,
-                    tree,
-                    &enabled_swift_taint_ids,
-                ));
+            // Dispatch every built-in taint engine through one table
+            // (`TAINT_DISPATCH`) rather than a per-language block. For each
+            // engine, collect the enabled rule ids whose `spec.engine`
+            // matches, and run the batched dispatcher only when that set is
+            // non-empty — so a file pays only for engines with enabled rules
+            // for its language. Cross-file engines read `ctx` for Pass-1
+            // summaries; intra-file engines ignore it (see the adapters and
+            // table near the top of this module). Batched dispatch also
+            // avoids the per-rule `Rule::check` fallback path.
+            for (engine, runner) in TAINT_DISPATCH {
+                let enabled_ids: std::collections::HashSet<&str> = analysis_plan
+                    .taint_specs
+                    .iter()
+                    .filter(|spec| spec.engine == *engine)
+                    .map(|spec| spec.rule_id)
+                    .collect();
+                if !enabled_ids.is_empty() {
+                    file_findings.extend(runner(source, tree, &ctx, &enabled_ids));
+                }
             }
 
             file_findings.extend(ast_rule_batch.run(source, tree, &ctx));
