@@ -35,11 +35,15 @@
 //! (`system(x)` and `system x`) parse identically as `call` + `argument_list`.
 
 use crate::rules::common::AliasTable;
+use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary};
 use crate::rules::taint_engine::{
-    analyze_function_generic, attribution_hint_for_sink, match_call_sink, node_text,
-    taint_finding_for_node, AnalysisContext, TaintLanguageAdapter, TaintState,
+    analyze_function_generic, attribution_hint_for_sink, cross_file_taint_finding,
+    extract_cross_file_summary_for_function, match_call_sink, node_text, taint_finding_for_node,
+    AnalysisContext, TaintLanguageAdapter, TaintState,
 };
 pub use crate::rules::taint_engine::{NodeMatcher, TaintFinding, TaintSpec};
+use std::collections::HashSet;
+use std::path::PathBuf;
 use tree_sitter::Node;
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -909,6 +913,260 @@ fn leftmost_receiver_text<'a>(mut node: Node<'_>, source: &'a str) -> Option<&'a
     }
 }
 
+// ─── Cross-file (interprocedural across files) taint ─────────────────────
+//
+// Scope of the Ruby cross-file pass (deliberately narrow; mirrors the Java
+// and Go engines — see `src/rules/java_taint.rs`):
+//
+// * **Resolution is NAME + ARITY based, not type-based.** A method
+//   definition (`def run(x)`, `def self.run(x)`) is summarized by its bare
+//   method name. A call site resolves to a summary whenever the invoked
+//   method name matches a summarized method in a sibling file of the same
+//   directory (used as a same-package proxy, the way the Go/Java engines
+//   treat same-directory files). Only the argument *count* gates a
+//   per-parameter flow (`param_index >= arg count` is skipped); the
+//   receiver's class is never consulted. This intentionally
+//   over-approximates: `helper.run(x)`, `Helper.run(x)`, and a bare
+//   `run(x)` all resolve to *any* same-package `run` summary regardless of
+//   the receiver.
+// * **What is NOT modeled:** instance-vs-class dispatch, modules/mixins,
+//   method aliasing, blocks/procs passed as taint carriers, keyword/splat
+//   argument reordering (only positional `identifier` params are
+//   summarized, matching the intra-file seeding), `require`-based
+//   resolution across directories, and multi-hop chains (a helper that
+//   itself calls another cross-file helper). These need a Ruby symbol table
+//   the engine does not build.
+
+/// Extract cross-file taint summaries for every method definition in `root`.
+///
+/// Pass 1 of the two-pass scanner. For each `method` / `singleton_method`,
+/// every positional parameter is treated as a synthetic taint source; a
+/// parameter that reaches a sink records a `ParamSinkFlow`, and a parameter
+/// that flows to a `return` records a `params_to_return` index. Summaries
+/// are keyed by the bare method name (reusing the shared
+/// [`extract_cross_file_summary_for_function`] inner loop, like Go).
+pub fn extract_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+) -> Vec<FunctionTaintSummary> {
+    let mut summaries = Vec::new();
+    collect_method_defs(root, &mut |method_node| {
+        let Some(method_name) = method_node
+            .child_by_field_name("name")
+            .map(|n| node_text(n, source).to_string())
+        else {
+            return;
+        };
+        let param_names = method_param_names(method_node, source);
+        if let Some(summary) = extract_cross_file_summary_for_function::<RubyTaintAdapter, ()>(
+            method_node,
+            &method_name,
+            &param_names,
+            source,
+            aliases,
+            rule_specs,
+        ) {
+            summaries.push(summary);
+        }
+    });
+    summaries
+}
+
+/// Positional `identifier` parameter names of a Ruby method, in order.
+///
+/// Only simple identifier params are summarized — the same subset that
+/// [`seed_param_sources`] seeds — so summary parameter indices line up with
+/// the seeding model. Optional/keyword/splat/block params are skipped, which
+/// is why argument-position alignment is approximate (see the scope note).
+fn method_param_names(method_node: Node<'_>, source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(params) = method_node.child_by_field_name("parameters") {
+        let mut cursor = params.walk();
+        for child in params.named_children(&mut cursor) {
+            if child.kind() == "identifier" {
+                names.push(node_text(child, source).to_string());
+            }
+        }
+    }
+    names
+}
+
+/// Cross-file resolution info for the Ruby engine. Mirrors
+/// `java_taint::CrossFileInfo`.
+///
+/// `same_package_paths` are the canonical paths of sibling Ruby files in the
+/// same directory (the same-package proxy); `summaries` is the pass-1 map
+/// keyed by canonical path; `allowed_rule_ids` gates which rules may emit
+/// cross-file findings in the current run.
+pub struct CrossFileInfo<'a> {
+    pub same_package_paths: &'a [PathBuf],
+    pub summaries: &'a CrossFileSummaryMap,
+    pub allowed_rule_ids: &'a HashSet<String>,
+}
+
+/// Pass 2 cross-file resolution: walk every method scope, compute its
+/// intra-file taint state, and for each helper call that resolves to a
+/// sibling summary emit a finding when a tainted argument lands on a
+/// parameter with a recorded sink flow.
+///
+/// Returns findings whose `rule_id_hint` carries the attributed rule id.
+pub fn extract_cross_file_findings(
+    root: Node<'_>,
+    source: &str,
+    rule_specs: &[(&str, TaintSpec)],
+    cross_file: &CrossFileInfo<'_>,
+) -> Vec<TaintFinding> {
+    // The caller-side taint state is driven by the real sources (shared
+    // across the built-in Ruby rules); union them so an inline source
+    // argument like `helper(params[:x])` is recognized. Sanitizers are
+    // unioned too so a cleaned argument does not produce a finding.
+    let mut source_spec = TaintSpec::default();
+    for (_, spec) in rule_specs {
+        source_spec.sources.extend(spec.sources.iter().cloned());
+        source_spec
+            .sanitizers
+            .extend(spec.sanitizers.iter().cloned());
+    }
+    let empty_summary = crate::rules::taint_engine::ReturnSummary::new();
+    let ctx: RubyCtx<'_> = AnalysisContext {
+        source,
+        spec: &source_spec,
+        aliases: None,
+        summaries: &empty_summary,
+        cross_file: None,
+        sink_to_rules: None,
+    };
+
+    let mut out = Vec::new();
+    collect_method_defs(root, &mut |method_node| {
+        resolve_cross_file_scope(method_node, &ctx, cross_file, &mut out);
+    });
+    out
+}
+
+fn resolve_cross_file_scope(
+    method_node: Node<'_>,
+    ctx: &RubyCtx<'_>,
+    cross_file: &CrossFileInfo<'_>,
+    out: &mut Vec<TaintFinding>,
+) {
+    let mut state = TaintState::default();
+    if let Some(params) = method_node.child_by_field_name("parameters") {
+        seed_param_sources(params, ctx.source, ctx.spec, &mut state);
+    }
+    let Some(body) = method_node.child_by_field_name("body") else {
+        return;
+    };
+
+    // Flow-insensitive: run assignment propagation a few times to cover the
+    // common `source -> local -> derived` chain, mirroring the Java engine's
+    // three-pass loop (no fixed-point iteration in this small engine).
+    for _ in 0..3 {
+        propagate_assignments_only(body, ctx, &mut state);
+    }
+
+    walk_cross_file_calls(body, ctx, cross_file, &state, out);
+}
+
+/// Walk the scope body propagating taint through `assignment` nodes only —
+/// no intra-file sinks fire here (those are handled by [`analyze_tree`]).
+/// Nested method scopes are skipped (analyzed independently).
+fn propagate_assignments_only(node: Node<'_>, ctx: &RubyCtx<'_>, state: &mut TaintState) {
+    if RubyTaintAdapter::is_nested_scope(node.kind()) {
+        return;
+    }
+    if node.kind() == "assignment" {
+        handle_assignment(node, ctx, state);
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        propagate_assignments_only(child, ctx, state);
+    }
+}
+
+/// Walk the scope body for `call` nodes and resolve each against sibling
+/// summaries. Nested method scopes are skipped.
+fn walk_cross_file_calls(
+    node: Node<'_>,
+    ctx: &RubyCtx<'_>,
+    cross_file: &CrossFileInfo<'_>,
+    state: &TaintState,
+    out: &mut Vec<TaintFinding>,
+) {
+    if RubyTaintAdapter::is_nested_scope(node.kind()) {
+        return;
+    }
+    if node.kind() == "call" {
+        resolve_cross_file_call(node, ctx, cross_file, state, out);
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_cross_file_calls(child, ctx, cross_file, state, out);
+    }
+}
+
+fn resolve_cross_file_call(
+    node: Node<'_>,
+    ctx: &RubyCtx<'_>,
+    cross_file: &CrossFileInfo<'_>,
+    state: &TaintState,
+    out: &mut Vec<TaintFinding>,
+) {
+    // Resolve by the bare method name (last segment): `run(x)`,
+    // `helper.run(x)`, and `Helper.run(x)` all resolve to a same-package
+    // `run` summary, regardless of the receiver.
+    let Some(method_name) = node
+        .child_by_field_name("method")
+        .map(|n| node_text(n, ctx.source))
+    else {
+        return;
+    };
+    let Some(summary) = lookup_cross_file_summary(cross_file, method_name) else {
+        return;
+    };
+    let Some(args) = node.child_by_field_name("arguments") else {
+        return;
+    };
+    let mut cursor = args.walk();
+    let arg_nodes: Vec<Node<'_>> = args.named_children(&mut cursor).collect();
+
+    for flow in &summary.params_to_sink {
+        if !cross_file.allowed_rule_ids.contains(&flow.sink_rule_id) {
+            continue;
+        }
+        if flow.param_index >= arg_nodes.len() {
+            continue;
+        }
+        let arg = arg_nodes[flow.param_index];
+        if let Some((desc, line)) = expression_taint(arg, ctx, state) {
+            out.push(cross_file_taint_finding(
+                node,
+                desc,
+                line,
+                &flow.sink_description,
+                method_name,
+                &flow.sink_rule_id,
+            ));
+        }
+    }
+}
+
+fn lookup_cross_file_summary<'a>(
+    cross_file: &'a CrossFileInfo<'_>,
+    method_name: &str,
+) -> Option<&'a FunctionTaintSummary> {
+    for path in cross_file.same_package_paths {
+        if let Some(file_summaries) = cross_file.summaries.get(path) {
+            if let Some(summary) = file_summaries.iter().find(|s| s.name == method_name) {
+                return Some(summary);
+            }
+        }
+    }
+    None
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1274,6 +1532,74 @@ end
             1,
             "request.params must be tainted as Attribute source, got {:?}",
             f
+        );
+    }
+
+    // ── Cross-file (pass 1) summaries ─────────────────────────────────────────
+
+    fn summaries(src: &str) -> Vec<FunctionTaintSummary> {
+        let tree = parse_file(src, Language::Ruby).expect("parse");
+        let specs = ruby_taint_rule_specs();
+        extract_cross_file_summaries(tree.root_node(), src, None, &specs)
+    }
+
+    #[test]
+    fn cross_file_summary_records_param_to_sink() {
+        let src = r#"
+module CommandHelper
+  def self.run(term)
+    system("grep #{term} /var/log/app.log")
+  end
+end
+"#;
+        let found = summaries(src);
+        let helper = found
+            .iter()
+            .find(|s| s.name == "run")
+            .expect("run should be summarized");
+        let flow = helper
+            .params_to_sink
+            .iter()
+            .find(|f| f.param_index == 0)
+            .expect("param 0 should reach a sink");
+        assert_eq!(flow.sink_rule_id, "rb/taint-command-injection");
+    }
+
+    #[test]
+    fn cross_file_summary_records_param_to_return() {
+        let src = r#"
+module Passthrough
+  def self.clean(value)
+    return value
+  end
+end
+"#;
+        let found = summaries(src);
+        let helper = found
+            .iter()
+            .find(|s| s.name == "clean")
+            .expect("clean should be summarized");
+        assert!(
+            helper.params_to_return.contains(&0),
+            "param 0 should flow to the return value: {helper:?}"
+        );
+    }
+
+    #[test]
+    fn cross_file_summary_skips_methods_with_no_flow() {
+        // `log` neither sinks nor returns its parameter, so it must not be
+        // summarized at all.
+        let src = r#"
+module Plain
+  def self.log(message)
+    puts "constant"
+  end
+end
+"#;
+        let found = summaries(src);
+        assert!(
+            found.iter().all(|s| s.name != "log"),
+            "method with no param flow should not be summarized: {found:?}"
         );
     }
 }

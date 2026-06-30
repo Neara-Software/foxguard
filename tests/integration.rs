@@ -2191,6 +2191,78 @@ mod cross_file {
         );
     }
 
+    /// Ruby cross-file taint: a `params[:name]` source in `controller.rb`
+    /// flows into `CommandHelper.run(name)`, a helper defined in a sibling
+    /// file whose parameter reaches a `system` command sink. The two-pass
+    /// scanner must connect the source to the cross-file sink and emit
+    /// exactly one `rb/taint-command-injection` finding, reported in the
+    /// caller file and labelled as a cross-file flow.
+    #[test]
+    fn test_ruby_cross_file_taint_directory_scan() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/realistic/ruby_chain", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let cmd_taint: Vec<&serde_json::Value> = findings
+            .iter()
+            .filter(|f| f["rule_id"].as_str() == Some("rb/taint-command-injection"))
+            .collect();
+
+        assert_eq!(
+            cmd_taint.len(),
+            1,
+            "rb/taint-command-injection should fire exactly once cross-file on ruby_chain; got: {findings:?}"
+        );
+
+        // The single finding is reported in the *caller* file (controller.rb),
+        // at the cross-file helper call, and labelled as a cross-file flow.
+        let finding = cmd_taint[0];
+        assert!(
+            finding["file"]
+                .as_str()
+                .is_some_and(|f| f.ends_with("controller.rb")),
+            "cross-file finding should be reported in controller.rb; got: {finding:?}"
+        );
+        assert!(
+            finding["sink_description"]
+                .as_str()
+                .is_some_and(|d| d.contains("via cross-file call to run")),
+            "finding should be attributed to the cross-file helper call; got: {finding:?}"
+        );
+    }
+
+    /// Negative control for the Ruby cross-file pass: scanning only the
+    /// source file (`controller.rb`) — without the sibling helper that holds
+    /// the sink — must not produce a `rb/taint-command-injection` finding.
+    /// Single-file scans never run pass 1, so the helper body is unseen and
+    /// `run` is not itself a sink.
+    #[test]
+    fn test_ruby_cross_file_taint_single_file_finds_nothing() {
+        let output = foxguard_cmd_isolated()
+            .args([
+                "tests/fixtures/realistic/ruby_chain/controller.rb",
+                "-f",
+                "json",
+            ])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let n = findings
+            .iter()
+            .filter(|f| f["rule_id"].as_str() == Some("rb/taint-command-injection"))
+            .count();
+
+        assert_eq!(
+            n, 0,
+            "rb/taint-command-injection must not fire when controller.rb is scanned alone; got: {findings:?}"
+        );
+    }
+
     /// Semgrep-compatible `mode: taint` YAML rules should load via `--rules`
     /// and fire on the same flows as the native `py/taint-pickle-deserialization`
     /// rule. See issue #17.
