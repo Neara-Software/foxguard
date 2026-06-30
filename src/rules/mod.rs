@@ -28,6 +28,7 @@ pub mod rust_lang;
 pub mod scala_taint;
 pub mod semgrep_compat;
 pub mod semgrep_taint;
+pub mod solidity;
 pub mod solidity_taint;
 pub mod swift;
 pub mod swift_taint;
@@ -65,6 +66,7 @@ pub enum TaintEngine {
     Php,
     Python,
     Ruby,
+    Solidity,
 }
 
 #[derive(Debug, Clone)]
@@ -648,6 +650,15 @@ impl RuleRegistry {
         register_rules!(
             registry,
             [
+                solidity::TaintArbitraryDelegatecall,
+                solidity::TaintUnprotectedSelfdestruct,
+                solidity::TaintUncheckedCall,
+            ]
+        );
+
+        register_rules!(
+            registry,
+            [
                 c::TaintFormatString,
                 c::TaintCommandInjection,
                 c::TaintBufferOverflow,
@@ -952,6 +963,15 @@ fn builtin_taint_specs_for_language(language: Language) -> Vec<RegistryTaintSpec
                 rule_id,
                 language,
                 engine: TaintEngine::Php,
+                spec,
+            })
+            .collect(),
+        Language::Solidity => solidity_taint::solidity_taint_rule_specs()
+            .into_iter()
+            .map(|(rule_id, spec)| RegistryTaintSpec {
+                rule_id,
+                language,
+                engine: TaintEngine::Solidity,
                 spec,
             })
             .collect(),

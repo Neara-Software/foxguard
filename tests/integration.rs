@@ -1255,6 +1255,77 @@ mod c {
     }
 }
 
+// ─── Solidity ─────────────────────────────────────────────────────────────────
+
+mod solidity_taint {
+    use super::*;
+
+    /// Positive fixture for the Solidity taint engine. Each function flows an
+    /// untrusted parameter into a taint sink the engine models.
+    #[test]
+    fn test_vulnerable_solidity_taint_catches_every_flow() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/vulnerable_solidity_taint.sol", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        assert!(!output.status.success());
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for f in &findings {
+            if let Some(rule) = f["rule_id"].as_str() {
+                *counts.entry(rule).or_insert(0) += 1;
+            }
+        }
+
+        for (taint_rule, expected) in [
+            ("solidity/taint-arbitrary-delegatecall", 3usize),
+            ("solidity/taint-unprotected-selfdestruct", 1),
+            ("solidity/taint-unchecked-call", 1),
+        ] {
+            assert_eq!(
+                counts.get(taint_rule).copied(),
+                Some(expected),
+                "{} should fire exactly {} time(s) on vulnerable_solidity_taint.sol. counts={:?}",
+                taint_rule,
+                expected,
+                counts
+            );
+        }
+    }
+
+    /// Negative counterpart: every function in `safe_solidity_taint.sol`
+    /// targets a hard-coded / non-parameter address, so no solidity/taint-*
+    /// rule may fire.
+    #[test]
+    fn test_safe_solidity_taint_has_no_taint_findings() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/safe_solidity_taint.sol", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        for taint_rule in [
+            "solidity/taint-arbitrary-delegatecall",
+            "solidity/taint-unprotected-selfdestruct",
+            "solidity/taint-unchecked-call",
+        ] {
+            let n = findings
+                .iter()
+                .filter(|f| f["rule_id"].as_str() == Some(taint_rule))
+                .count();
+            assert_eq!(
+                n, 0,
+                "{} should not fire on safe_solidity_taint.sol, got {} findings",
+                taint_rule, n
+            );
+        }
+    }
+}
+
 // ─── Java ───────────────────────────────────────────────────────────────────
 
 mod java {

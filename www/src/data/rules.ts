@@ -251,6 +251,12 @@ const kotlinRules: Rule[] = [
   { id: 'kt/taint-ssrf', cwe: 'CWE-918', desc: 'Untrusted input from Ktor/Spring handler reaches HTTP/URL sink', severity: 'high' },
 ];
 
+const solidityRules: Rule[] = [
+  { id: 'solidity/taint-arbitrary-delegatecall', cwe: 'CWE-829', desc: 'Attacker-controlled address reaches delegatecall/callcode (arbitrary code execution)', severity: 'critical' },
+  { id: 'solidity/taint-unchecked-call', cwe: 'CWE-829', desc: 'Attacker-controlled address reaches a low-level .call() (reentrancy / fund theft)', severity: 'high' },
+  { id: 'solidity/taint-unprotected-selfdestruct', cwe: 'CWE-284', desc: 'Attacker-controlled recipient reaches selfdestruct/suicide without an access-control guard', severity: 'critical' },
+];
+
 const haskellRules: Rule[] = [
   { id: 'semgrep/cardano-haskell/cbor-decoder-edge', cwe: 'CWE-248', desc: 'CBOR/serialisation decoder edge; verify malformed or truncated bytes return a clean decoder error, not a panic or wrong state.', severity: 'high' },
   { id: 'semgrep/cardano-haskell/ffi-foreign-import', cwe: 'CWE-125', desc: 'Haskell FFI boundary; verify every ByteString/Ptr length assumption against the actual buffer length.', severity: 'critical' },
@@ -297,6 +303,7 @@ export const ruleGroups: RuleGroup[] = [
   { name: 'C#', slug: 'cs', rules: csharpRules },
   { name: 'Swift', slug: 'swift', rules: swiftRules },
   { name: 'Kotlin', slug: 'kt', rules: kotlinRules },
+  { name: 'Solidity', slug: 'sol', rules: solidityRules },
   { name: 'Haskell', slug: 'hs', rules: haskellRules },
   { name: 'Nginx', slug: 'nginxconf', rules: nginxconfRules },
   { name: 'Apache', slug: 'apacheconf', rules: apacheconfRules },
@@ -306,4 +313,4 @@ export const ruleGroups: RuleGroup[] = [
 ];
 
 export const totalRules = ruleGroups.reduce((sum, g) => sum + g.rules.length, 0);
-export const productLanguageCount = 16;
+export const productLanguageCount = 17;

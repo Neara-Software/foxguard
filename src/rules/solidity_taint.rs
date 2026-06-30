@@ -64,6 +64,117 @@ pub fn analyze_tree(
     findings
 }
 
+// ─── Built-in specs ──────────────────────────────────────────────────────────
+
+/// All Solidity taint rule IDs paired with their specs.
+pub fn solidity_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
+    vec![
+        (
+            "solidity/taint-arbitrary-delegatecall",
+            arbitrary_delegatecall_spec(),
+        ),
+        (
+            "solidity/taint-unprotected-selfdestruct",
+            unprotected_selfdestruct_spec(),
+        ),
+        ("solidity/taint-unchecked-call", unchecked_call_spec()),
+    ]
+}
+
+/// Shared sources for the Solidity taint rules.
+///
+/// The intraprocedural engine only seeds taint from function parameters
+/// (`seed_params`); the `$`-prefixed name triggers the any-parameter
+/// semantics so *every* parameter of the enclosing function is treated as
+/// attacker-controlled. Solidity "global" inputs such as `msg.sender`,
+/// `msg.data`, or `tx.origin` are intentionally NOT modeled here because
+/// `analyze_tree`/`expression_taint` has no global-variable source classifier
+/// — adding them would be inert (never fire) and, for the low-level-call rule,
+/// would cause false positives on the ubiquitous `msg.sender.call{value:..}("")`
+/// refund pattern.
+pub fn solidity_taint_sources() -> Vec<NodeMatcher> {
+    vec![NodeMatcher::ParamName {
+        names: vec!["$PARAM".into()],
+        description: "untrusted function parameter".into(),
+    }]
+}
+
+/// Shared sanitizers for the Solidity taint rules.
+///
+/// `require(...)` / `assert(...)` are the idiomatic Solidity guard calls. The
+/// engine consults these via `call_is_sanitizer` when taint would otherwise
+/// propagate through a call expression. (Access-control *modifiers* such as
+/// `onlyOwner` are not call expressions in the tree-sitter-solidity AST, so
+/// they are deliberately omitted — the engine could never match them.)
+pub fn solidity_taint_sanitizers() -> Vec<NodeMatcher> {
+    vec![
+        NodeMatcher::Call {
+            canonical: "require".into(),
+            description: "require() guard".into(),
+        },
+        NodeMatcher::Call {
+            canonical: "assert".into(),
+            description: "assert() guard".into(),
+        },
+    ]
+}
+
+/// `target.delegatecall(data)` / `target.callcode(data)` where the call
+/// *target* (receiver address) is attacker-controlled — the classic arbitrary
+/// delegatecall (CWE-829).
+fn arbitrary_delegatecall_spec() -> TaintSpec {
+    TaintSpec {
+        sources: solidity_taint_sources(),
+        sinks: vec![
+            NodeMatcher::MethodName {
+                method: "delegatecall".into(),
+                description: "delegatecall() to an attacker-controlled address".into(),
+            },
+            NodeMatcher::MethodName {
+                method: "callcode".into(),
+                description: "callcode() to an attacker-controlled address".into(),
+            },
+        ],
+        sanitizers: solidity_taint_sanitizers(),
+    }
+}
+
+/// `selfdestruct(target)` / `suicide(target)` with an attacker-controlled
+/// recipient — unprotected self-destruct (SWC-106 / CWE-284). The engine fires
+/// when a *tainted argument* reaches the call.
+fn unprotected_selfdestruct_spec() -> TaintSpec {
+    TaintSpec {
+        sources: solidity_taint_sources(),
+        sinks: vec![
+            NodeMatcher::Call {
+                canonical: "selfdestruct".into(),
+                description: "selfdestruct() with an attacker-controlled recipient".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "suicide".into(),
+                description: "suicide() with an attacker-controlled recipient".into(),
+            },
+        ],
+        sanitizers: solidity_taint_sanitizers(),
+    }
+}
+
+/// `target.call(data)` where the call *target* (receiver address) is
+/// attacker-controlled — a low-level external call to an arbitrary address
+/// (enables reentrancy / fund theft, CWE-829). `send`/`transfer` are
+/// intentionally excluded: forwarding ETH to a parameter-supplied recipient is
+/// frequently intended (e.g. user withdrawals) and would be noisy.
+fn unchecked_call_spec() -> TaintSpec {
+    TaintSpec {
+        sources: solidity_taint_sources(),
+        sinks: vec![NodeMatcher::MethodName {
+            method: "call".into(),
+            description: "low-level .call() to an attacker-controlled address".into(),
+        }],
+        sanitizers: solidity_taint_sanitizers(),
+    }
+}
+
 // ─── Seeding ────────────────────────────────────────────────────────────────
 
 /// Seed taint from function parameters.
