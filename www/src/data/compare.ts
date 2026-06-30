@@ -1,10 +1,10 @@
 // Data for the /compare page.
 //
 // foxguard ground truth is verified against the Rust source:
-//   196 built-in rules; 10 programming languages (JS/TS, Python, Go, Ruby, Java,
-//   PHP, Rust, C#, Swift, Kotlin) plus config/infra targets; cross-file taint for
-//   Python, JavaScript, and Go only; loads Semgrep/OpenGrep YAML via --rules;
-//   MIT OR Apache-2.0, free forever.
+//   200+ built-in rules; 11 programming languages (JS/TS, Python, Go, Ruby, Java,
+//   PHP, Rust, C#, Swift, Kotlin, Haskell) plus config/infra targets; first-party
+//   taint for 9 languages with cross-file taint for Python, JavaScript, Go, and
+//   Java; loads Semgrep/OpenGrep YAML via --rules; MIT OR Apache-2.0, free forever.
 //
 // Competitor facts were gathered from each vendor's official docs (2024-2026) and
 // are deliberately limited to widely-documented, defensible claims. Where a tier
@@ -116,7 +116,7 @@ export const matrixRows: MatrixRow[] = [
   },
   {
     capability: 'Cross-file taint on the free tier',
-    note: 'foxguard: Python, JS, Go. Semgrep needs Pro; SonarQube needs Developer ed.; OpenGrep is per-file today.',
+    note: 'foxguard: Python, JS, Go, Java. Semgrep needs Pro; SonarQube needs Developer ed.; OpenGrep is per-file today.',
     cells: {
       foxguard: 'yes',
       semgrep: 'Paid (Pro)',
@@ -293,9 +293,9 @@ export const coreRows: MatrixRow[] = [
   },
   {
     capability: 'Languages',
-    note: 'foxguard: 10 programming languages plus config/infra. Counts vary by edition/version.',
+    note: 'foxguard: 11 programming languages plus config/infra. Counts vary by edition/version.',
     cells: {
-      foxguard: '10 + config',
+      foxguard: '11 + config',
       semgrep: '30+',
       opengrep: '30+',
       codeql: '~11',
@@ -306,7 +306,7 @@ export const coreRows: MatrixRow[] = [
   {
     capability: 'Rule model',
     cells: {
-      foxguard: '196 built-in (CWE-mapped) + YAML',
+      foxguard: '200+ built-in (CWE-mapped) + YAML',
       semgrep: 'YAML registry + Pro packs',
       opengrep: 'Semgrep-compatible YAML',
       codeql: 'QL query packs',
