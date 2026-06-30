@@ -69,6 +69,7 @@ pub enum TaintEngine {
     Python,
     Ruby,
     Solidity,
+    Swift,
 }
 
 #[derive(Debug, Clone)]
@@ -627,6 +628,10 @@ impl RuleRegistry {
                 swift::NoTlsDisabled,
                 swift::NoPathTraversal,
                 swift::NoSsrf,
+                swift::TaintSqlInjection,
+                swift::TaintCommandInjection,
+                swift::TaintJsInjection,
+                swift::TaintNsexpressionInjection,
             ]
         );
 
@@ -985,6 +990,15 @@ fn builtin_taint_specs_for_language(language: Language) -> Vec<RegistryTaintSpec
                 rule_id,
                 language,
                 engine: TaintEngine::Solidity,
+                spec,
+            })
+            .collect(),
+        Language::Swift => swift_taint::swift_taint_rule_specs()
+            .into_iter()
+            .map(|(rule_id, spec)| RegistryTaintSpec {
+                rule_id,
+                language,
+                engine: TaintEngine::Swift,
                 spec,
             })
             .collect(),

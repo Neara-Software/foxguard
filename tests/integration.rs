@@ -1923,10 +1923,12 @@ mod swift {
 
         let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
 
+        // 19 syntax-rule findings + 1 from the first-party `swift/taint-sql-injection`
+        // rule, which fires on the dynamically-built SQL string in the fixture.
         assert_eq!(
             findings.len(),
-            19,
-            "vulnerable.swift should have 19 findings, got {}",
+            20,
+            "vulnerable.swift should have 20 findings, got {}",
             findings.len()
         );
 
@@ -1946,10 +1948,85 @@ mod swift {
             "swift/no-tls-disabled",
             "swift/no-path-traversal",
             "swift/no-ssrf",
+            "swift/taint-sql-injection",
         ];
 
         for rule in &expected_rules {
             assert!(rule_ids.contains(rule), "missing expected rule: {}", rule);
+        }
+    }
+}
+
+// ─── Swift taint ─────────────────────────────────────────────────────────────
+
+mod swift_taint {
+    use super::*;
+
+    /// Positive fixture for the Swift taint engine. Each function flows a
+    /// dynamically-constructed string into a dangerous call; every
+    /// `swift/taint-*` rule must fire exactly once.
+    #[test]
+    fn test_vulnerable_swift_taint_catches_every_flow() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/vulnerable_swift_taint.swift", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        assert!(!output.status.success());
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for f in &findings {
+            if let Some(rule) = f["rule_id"].as_str() {
+                *counts.entry(rule).or_insert(0) += 1;
+            }
+        }
+
+        for (taint_rule, expected) in [
+            ("swift/taint-sql-injection", 1usize),
+            ("swift/taint-command-injection", 1),
+            ("swift/taint-js-injection", 1),
+            ("swift/taint-nsexpression-injection", 1),
+        ] {
+            assert_eq!(
+                counts.get(taint_rule).copied(),
+                Some(expected),
+                "{} should fire exactly {} time(s) on vulnerable_swift_taint.swift. counts={:?}",
+                taint_rule,
+                expected,
+                counts
+            );
+        }
+    }
+
+    /// Negative counterpart. Every function passes a static literal into the
+    /// same sinks, so the dynamically-constructed-string source never fires.
+    /// No `swift/taint-*` rule may fire.
+    #[test]
+    fn test_safe_swift_taint_has_no_taint_findings() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/safe_swift_taint.swift", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        for taint_rule in [
+            "swift/taint-sql-injection",
+            "swift/taint-command-injection",
+            "swift/taint-js-injection",
+            "swift/taint-nsexpression-injection",
+        ] {
+            let n = findings
+                .iter()
+                .filter(|f| f["rule_id"].as_str() == Some(taint_rule))
+                .count();
+            assert_eq!(
+                n, 0,
+                "{} should not fire on safe_swift_taint.swift, got {} findings",
+                taint_rule, n
+            );
         }
     }
 }
