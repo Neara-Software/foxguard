@@ -64,17 +64,120 @@ pub fn analyze_tree(
 
     // Scope 1: the top-level program body (statements not inside any function).
     let mut top_state = TaintState::default();
+    seed_parameter_sources(root, spec, &mut top_state);
     walk_scope(root, source, spec, &mut top_state, &mut findings, true);
 
     // Scope 2..n: each function body, analyzed independently.
     collect_function_defs(root, &mut |func| {
         if let Some(body) = func.child_by_field_name("body") {
             let mut state = TaintState::default();
+            seed_parameter_sources(func, spec, &mut state);
             walk_scope(body, source, spec, &mut state, &mut findings, false);
         }
     });
 
     findings
+}
+
+/// Seed a scope's taint state from `ParamName` sources.
+///
+/// Bash positional/special parameters (`$1`…`$9`, `$@`, `$*`, `$REPLY`) carry
+/// untrusted script input. A `ParamName` source compiles each such name into a
+/// pre-tainted variable so a later expansion (`eval "$1"`) is recognised as a
+/// flow without an intervening assignment. The seed line is the scope's first
+/// line (the parameters are "introduced" at scope entry).
+fn seed_parameter_sources(scope_node: Node<'_>, spec: &TaintSpec, state: &mut TaintState) {
+    let line = scope_node.start_position().row + 1;
+    for matcher in &spec.sources {
+        if let NodeMatcher::ParamName { names, description } = matcher {
+            for name in names {
+                state.taint(name.clone(), description.clone(), line);
+            }
+        }
+    }
+}
+
+// ─── Built-in specs ──────────────────────────────────────────────────────────
+
+/// All Bash taint rule IDs paired with their specs.
+pub fn bash_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
+    vec![("bash/taint-command-injection", command_injection_spec())]
+}
+
+/// Shared sources for Bash taint rules.
+///
+/// Two source shapes the engine actually fires on:
+///
+/// * `ParamName` — positional/special parameters (`$1`…`$9`, `$@`, `$*`,
+///   `$REPLY`) seeded as pre-tainted at scope entry (see
+///   [`seed_parameter_sources`]).
+/// * `Call` — a value that introduces untrusted data, matched either against a
+///   command name inside a `$(…)` substitution (`$(curl …)`, `$(cat …)`) or, for
+///   the stdin-reader builtins, against the command that writes a variable
+///   (`read VAR`) (see [`handle_read_source`]).
+pub fn bash_taint_sources() -> Vec<NodeMatcher> {
+    let mut sources = vec![NodeMatcher::ParamName {
+        names: [
+            "1", "2", "3", "4", "5", "6", "7", "8", "9", "@", "*", "REPLY",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        description: "shell parameter ($1, $@, $REPLY, …)".into(),
+    }];
+    // Stdin reader builtin: `read VAR` taints VAR.
+    sources.push(NodeMatcher::Call {
+        canonical: "read".into(),
+        description: "read (stdin)".into(),
+    });
+    // Command-substitution sources: `var=$(curl …)`, `var=$(cat …)`.
+    for (cmd, desc) in [
+        ("curl", "$(curl …)"),
+        ("wget", "$(wget …)"),
+        ("cat", "$(cat …)"),
+    ] {
+        sources.push(NodeMatcher::Call {
+            canonical: cmd.into(),
+            description: desc.into(),
+        });
+    }
+    sources
+}
+
+/// Shared sanitizers for Bash taint rules. `printf %q` shell-quotes its input,
+/// so a value assigned from `$(printf %q "$x")` is treated as clean.
+pub fn bash_taint_sanitizers() -> Vec<NodeMatcher> {
+    vec![NodeMatcher::Call {
+        canonical: "printf".into(),
+        description: "printf %q (shell-quoted)".into(),
+    }]
+}
+
+/// Command-execution sinks: a tainted value expanded into the arguments of one
+/// of these commands is a shell command-injection.
+pub fn bash_taint_sinks() -> Vec<NodeMatcher> {
+    [
+        ("eval", "eval"),
+        ("bash", "bash -c"),
+        ("sh", "sh -c"),
+        ("source", "source"),
+        (".", ". (source)"),
+        ("system", "system"),
+    ]
+    .iter()
+    .map(|(cmd, desc)| NodeMatcher::Call {
+        canonical: (*cmd).into(),
+        description: (*desc).into(),
+    })
+    .collect()
+}
+
+fn command_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: bash_taint_sources(),
+        sinks: bash_taint_sinks(),
+        sanitizers: bash_taint_sanitizers(),
+    }
 }
 
 // ─── Scope walking ─────────────────────────────────────────────────────────
@@ -98,7 +201,13 @@ fn walk_scope(
 
     match node.kind() {
         "variable_assignment" => handle_assignment(node, source, spec, state),
-        "command" => handle_command(node, source, spec, state, findings),
+        "command" => {
+            // `read VAR` / `mapfile VAR` reads untrusted stdin into VAR. When the
+            // spec lists the builtin as a source, taint the variables it writes
+            // before treating the node as a possible sink.
+            handle_read_source(node, source, spec, state);
+            handle_command(node, source, spec, state, findings);
+        }
         _ => {}
     }
 
@@ -168,6 +277,48 @@ fn handle_command(
                 node, src_desc, sink_desc, src_line, None, 1,
             ));
             return;
+        }
+    }
+}
+
+/// Bash builtins that read untrusted input from stdin into the variables named
+/// by their (non-flag) word arguments.
+const STDIN_READER_BUILTINS: [&str; 3] = ["read", "mapfile", "readarray"];
+
+/// If `node` is a `read`/`mapfile`/`readarray` command AND the spec lists that
+/// builtin as a `Call` source, taint each variable it writes. Unlike a command
+/// substitution source (`$(curl …)`, which *reads* its args), a reader builtin
+/// *writes* its plain word arguments, so those become tainted.
+fn handle_read_source(node: Node<'_>, source: &str, spec: &TaintSpec, state: &mut TaintState) {
+    let Some(name) = command_name(node, source) else {
+        return;
+    };
+    if !STDIN_READER_BUILTINS.contains(&name.as_str()) {
+        return;
+    }
+    let Some(desc) = spec.sources.iter().find_map(|m| match m {
+        NodeMatcher::Call {
+            canonical,
+            description,
+        } if *canonical == name => Some(description.clone()),
+        _ => None,
+    }) else {
+        return;
+    };
+
+    let line = node.start_position().row + 1;
+    let mut cursor = node.walk();
+    for (i, child) in node.children(&mut cursor).enumerate() {
+        if node.field_name_for_child(i as u32) != Some("argument") {
+            continue;
+        }
+        // Skip flags (`-r`, `-a name`) — only plain word names receive input.
+        if child.kind() == "word" {
+            let text = node_text(child, source);
+            if text.starts_with('-') {
+                continue;
+            }
+            state.taint(text.to_string(), desc.clone(), line);
         }
     }
 }
@@ -312,12 +463,15 @@ fn command_name(node: Node<'_>, source: &str) -> Option<String> {
     Some(node_text(word, source).to_string())
 }
 
-/// Find the `variable_name` child of a `simple_expansion` / `expansion`.
+/// Find the `variable_name` / `special_variable_name` child of a
+/// `simple_expansion` / `expansion`. Positional/special parameters such as
+/// `$@` and `$*` parse to a `special_variable_name` child (not `variable_name`),
+/// so both kinds are accepted.
 fn find_variable_name(node: Node<'_>) -> Option<Node<'_>> {
     let count = node.child_count();
     (0..count)
         .filter_map(|i| node.child(i))
-        .find(|child| child.kind() == "variable_name")
+        .find(|child| matches!(child.kind(), "variable_name" | "special_variable_name"))
 }
 
 /// Collect every `function_definition` node in the tree.
@@ -446,4 +600,45 @@ eval "$safe"
         let f = run(src, &curl_to_eval());
         assert_eq!(f.len(), 0, "eval of a clean variable must not fire");
     }
+
+    // ── built-in command-injection spec ──────────────────────────────────
+
+    #[test]
+    fn positional_param_to_eval_fires() {
+        let src = "eval \"$1\"\n";
+        let f = run(src, &command_injection_spec());
+        assert_eq!(f.len(), 1, "$1 -> eval must fire, got {:?}", f);
+        assert!(f[0].source_description.contains("shell parameter"));
+    }
+
+    #[test]
+    fn special_param_at_to_bash_c_fires() {
+        let src = "bash -c \"$@\"\n";
+        let f = run(src, &command_injection_spec());
+        assert_eq!(f.len(), 1, "$@ -> bash -c must fire, got {:?}", f);
+        assert!(f[0].sink_description.contains("bash"));
+    }
+
+    #[test]
+    fn read_builtin_to_eval_fires() {
+        let src = "read userinput\neval \"$userinput\"\n";
+        let f = run(src, &command_injection_spec());
+        assert_eq!(f.len(), 1, "read -> eval must fire, got {:?}", f);
+        assert!(f[0].source_description.contains("read"));
+    }
+
+    #[test]
+    fn printf_q_sanitizer_kills_param_taint() {
+        let src = "safe=$(printf '%q' \"$1\")\neval \"$safe\"\n";
+        let f = run(src, &command_injection_spec());
+        assert_eq!(f.len(), 0, "printf %q must sanitize, got {:?}", f);
+    }
+
+    #[test]
+    fn literal_command_no_finding() {
+        let src = "eval \"ls -la\"\n";
+        let f = run(src, &command_injection_spec());
+        assert_eq!(f.len(), 0, "literal eval must not fire, got {:?}", f);
+    }
 }
+

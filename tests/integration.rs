@@ -1852,6 +1852,61 @@ mod csharp_taint {
     }
 }
 
+// ─── Bash taint (first-party) ────────────────────────────────────────────────
+
+mod bash_taint {
+    use super::*;
+
+    /// Positive fixture for the Bash taint engine. Six untrusted-input flows
+    /// reach a command-execution sink (positional/special params, `read` stdin,
+    /// `$(curl)`/`$(cat)` substitutions, plus one in a function body). The
+    /// `bash/taint-command-injection` rule must fire exactly six times, and the
+    /// three near-miss blocks must stay silent.
+    #[test]
+    fn test_vulnerable_bash_taint_catches_every_flow() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/vulnerable_bash_taint.sh", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        assert!(!output.status.success());
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+        let n = findings
+            .iter()
+            .filter(|f| f["rule_id"].as_str() == Some("bash/taint-command-injection"))
+            .count();
+        assert_eq!(
+            n, 6,
+            "bash/taint-command-injection should fire exactly 6 times on \
+             vulnerable_bash_taint.sh, got {}",
+            n
+        );
+    }
+
+    /// Negative counterpart. Every block in `safe_bash_taint.sh` uses a literal,
+    /// is shell-quoted with printf %q, or never reaches a sink. No bash/taint-*
+    /// rule may fire.
+    #[test]
+    fn test_safe_bash_taint_has_no_taint_findings() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/safe_bash_taint.sh", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+        let n = findings
+            .iter()
+            .filter(|f| f["rule_id"].as_str() == Some("bash/taint-command-injection"))
+            .count();
+        assert_eq!(
+            n, 0,
+            "bash/taint-command-injection should not fire on safe_bash_taint.sh, got {}",
+            n
+        );
+    }
+}
+
 // ─── Swift ──────────────────────────────────────────────────────────────────
 
 mod swift {
