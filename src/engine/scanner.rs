@@ -691,6 +691,7 @@ fn parse_inline_ignore(line: &str, language: Language) -> Option<(bool, InlineIg
             | Language::CSharp
             | Language::Swift
             | Language::Php
+            | Language::Solidity
             // Regex-mode rules inherit C-style block comment suppression so
             // `/* foxguard: ignore */` works in files where that syntax is valid.
             | Language::Regex
@@ -1374,6 +1375,28 @@ fn scan_files(
                     source,
                     tree,
                     &enabled_c_taint_ids,
+                ));
+            }
+
+            // Solidity taint rules: same batched approach as C above.
+            // Intra-function only; each `function_definition` is analyzed
+            // independently with no cross-file work.
+            let enabled_solidity_taint_ids: std::collections::HashSet<&str> =
+                if matches!(language, Language::Solidity) {
+                    analysis_plan
+                        .taint_specs
+                        .iter()
+                        .filter(|spec| matches!(spec.engine, TaintEngine::Solidity))
+                        .map(|spec| spec.rule_id)
+                        .collect()
+                } else {
+                    std::collections::HashSet::new()
+                };
+            if !enabled_solidity_taint_ids.is_empty() {
+                file_findings.extend(crate::rules::solidity::run_solidity_taint_batched(
+                    source,
+                    tree,
+                    &enabled_solidity_taint_ids,
                 ));
             }
 

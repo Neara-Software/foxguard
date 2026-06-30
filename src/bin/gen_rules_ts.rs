@@ -25,6 +25,7 @@ const LANGUAGE_ORDER: &[Language] = &[
     Language::CSharp,
     Language::Swift,
     Language::Kotlin,
+    Language::Solidity,
     Language::Haskell,
     Language::NginxConf,
     Language::ApacheConf,
