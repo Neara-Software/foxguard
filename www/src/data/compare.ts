@@ -4,8 +4,8 @@
 //   200+ built-in rules; 11 programming languages (JS/TS, Python, Go, Ruby, Java,
 //   PHP, Rust, C#, Swift, Kotlin, Haskell) plus config/infra targets; first-party
 //   taint for 12 languages (incl. C, Bash, Solidity) with cross-file taint for
-//   Python, JavaScript, Go, and Java; loads Semgrep/OpenGrep YAML via --rules;
-//   MIT OR Apache-2.0, free forever.
+//   Python, JavaScript, Go, Java, Ruby, PHP, and C#; loads Semgrep/OpenGrep
+//   YAML via --rules; MIT OR Apache-2.0, free forever.
 //
 // Competitor facts were gathered from each vendor's official docs (2024-2026) and
 // are deliberately limited to widely-documented, defensible claims. Where a tier
@@ -117,7 +117,7 @@ export const matrixRows: MatrixRow[] = [
   },
   {
     capability: 'Cross-file taint on the free tier',
-    note: 'foxguard: Python, JS, Go, Java. Semgrep needs Pro; SonarQube needs Developer ed.; OpenGrep is per-file today.',
+    note: 'foxguard: Python, JS, Go, Java, Ruby, PHP, C# (7 langs). Semgrep needs Pro; SonarQube needs Developer ed.; OpenGrep is per-file today.',
     cells: {
       foxguard: 'yes',
       semgrep: 'Paid (Pro)',
