@@ -27,7 +27,7 @@ npx foxguard .
 ## Why
 
 - 200+ built-in rules across 12 source languages, plus config and manifest checks
-- Taint tracking for 9 languages, with cross-file analysis for Python, JavaScript, Go, and Java
+- Taint tracking for 12 languages, with cross-file analysis for Python, JavaScript, Go, and Java
 - Fast local and CI scans, with diff mode for “what did this branch add?”
 - Secrets scanning, OSV-backed dependency scanning, and post-quantum crypto audit
 - Semgrep/OpenGrep-compatible YAML bridge for existing rule packs
@@ -91,10 +91,10 @@ foxguard --format semgrep-json .        # Semgrep CLI-compatible JSON
 | PHP | Yes | Yes | Laravel |
 | Rust | Yes | -- | -- |
 | C# | Yes | Yes | .NET |
-| Swift | Yes | -- | iOS |
+| Swift | Yes | Yes | iOS |
 | Haskell | Yes | -- | Cardano seed rules |
 
-Config, manifest, and external-rule scans cover Dockerfile, Nginx, Apache, HAProxy, HCL/Terraform, YAML/JSON/XML/HTML, C via Semgrep YAML/Coccinelle, and more.
+Taint tracking also covers C, Bash, and Solidity. Config, manifest, and external-rule scans cover Dockerfile, Nginx, Apache, HAProxy, HCL/Terraform, YAML/JSON/XML/HTML, C via Semgrep YAML/Coccinelle, and more.
 
 ## Security Modes
 
