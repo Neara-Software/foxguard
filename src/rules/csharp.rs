@@ -1152,25 +1152,69 @@ fn map_csharp_taint_finding(
 
 /// Run every enabled C# taint rule over `tree` in a single dispatch.
 ///
+/// Intra-file findings come from [`csharp_taint::analyze_tree`]. When the
+/// scanner supplied pass-1 cross-file summaries plus same-namespace sibling
+/// paths (multi-file C# scan), a second pass resolves helper-method calls to
+/// those summaries and emits cross-file findings. See `csharp_taint.rs` for the
+/// (name-based, same-directory) resolution scope.
+///
 /// Mirrors `run_java_taint_batched` in `java.rs`.
 pub fn run_csharp_taint_batched(
     source: &str,
     tree: &tree_sitter::Tree,
+    ctx: &crate::rules::FileContext<'_>,
     enabled_rule_ids: &std::collections::HashSet<&str>,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
-    for (rule_id, spec) in csharp_taint::csharp_taint_rule_specs() {
+    let rule_specs = csharp_taint::csharp_taint_rule_specs();
+    for (rule_id, spec) in &rule_specs {
         if !enabled_rule_ids.contains(rule_id) {
             continue;
         }
         let Some(meta) = csharp_taint_meta(rule_id) else {
             continue;
         };
-        let raw = csharp_taint::analyze_tree(tree.root_node(), source, &spec, None);
+        let raw = csharp_taint::analyze_tree(tree.root_node(), source, spec, None);
         for finding in raw {
             findings.push(map_csharp_taint_finding(&meta, source, finding));
         }
     }
+
+    // Cross-file resolution: only when pass-1 summaries and same-namespace
+    // sibling paths are both available (i.e. a multi-file C# scan).
+    if let (Some(summaries), Some(paths)) = (
+        ctx.cross_file_summaries,
+        ctx.csharp_same_package_paths.as_ref(),
+    ) {
+        let allowed: std::collections::HashSet<String> =
+            enabled_rule_ids.iter().map(|id| id.to_string()).collect();
+        let enabled_specs: Vec<(&str, csharp_taint::TaintSpec)> = rule_specs
+            .iter()
+            .filter(|(id, _)| enabled_rule_ids.contains(id))
+            .map(|(id, spec)| (*id, spec.clone()))
+            .collect();
+        let cross = csharp_taint::CrossFileInfo {
+            same_package_paths: paths,
+            summaries,
+            allowed_rule_ids: &allowed,
+        };
+        let raw = csharp_taint::extract_cross_file_findings(
+            tree.root_node(),
+            source,
+            &enabled_specs,
+            &cross,
+        );
+        for finding in raw {
+            let Some(rule_id) = finding.rule_id_hint.as_deref() else {
+                continue;
+            };
+            let Some(meta) = csharp_taint_meta(rule_id) else {
+                continue;
+            };
+            findings.push(map_csharp_taint_finding(&meta, source, finding));
+        }
+    }
+
     findings
 }
 

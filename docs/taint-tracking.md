@@ -29,7 +29,7 @@ The taint engine supports:
 Known limitations:
 
 - **Multi-hop interprocedural chains**: only one level of helper-call propagation is supported. A helper that itself calls another helper is not tracked through the deeper hop.
-- **Cross-file**: Cross-file taint is supported for Python (import resolution), JavaScript (require/import/export default), Go (same-package), and Java (same-directory, name-based method resolution) via two-pass function summary analysis. Kotlin and C are intrafile today. The Java cross-file pass resolves a helper-method call to a summarized method *by method name* within the same directory (a same-package proxy); it does not model type-based instance dispatch, interface/subclass dispatch, overload selection, cross-package `import` resolution, or multi-hop chains. See "Supported Java frameworks" below.
+- **Cross-file**: Cross-file taint is supported for Python (import resolution), JavaScript (require/import/export default), Go (same-package), Java (same-directory, name-based method resolution), and C# (same-directory, name-based method resolution) via two-pass function summary analysis. Kotlin and C are intrafile today. The Java and C# cross-file passes resolve a helper-method call to a summarized method *by method name* within the same directory (a same-package/same-namespace proxy); they do not model type-based instance dispatch, interface/subclass dispatch, overload selection by parameter type, cross-package/namespace (`import`/`using`) resolution, partial classes, or multi-hop chains. See "Supported Java frameworks" below.
 - **Instance and class methods in interprocedural summaries**: only top-level `function_declaration`s and `const/let/var foo = ...` arrow/function-expression helpers are summarized. `obj.method()` and `self.helper()` calls are not looked up in the summary map.
 - **Argument taint propagation**: helper summaries are computed with only their parameters' taint sources seeded (via `ParamName`). Passing an already-tainted local into a helper does not influence the helper's return summary — pass 1 analyzes helpers with a conservative view of their parameters.
 - **Per-finding sanitization**: Semgrep's `mode: taint` distinguishes "this specific flow was sanitized" from "the value is now clean"; it can still fire on secondary flows that bypassed the sanitizer along a different path. foxguard's v1 collapses both cases into "clean" and does not track per-finding sanitization state.
@@ -167,7 +167,7 @@ Taint rules do not replace direct-sink rules. For example, `py/no-pickle` fires 
 
 ## Performance
 
-The taint engines run only for languages with enabled taint-backed rules. Each walk is over the already-parsed AST with small in-memory state. No additional parsing, no network, no disk. Go, Python, and JavaScript batch compatible taint rules to avoid repeated summary walks; Kotlin, C, C#, Ruby, and PHP use lightweight intrafile dispatchers. Java uses an intrafile dispatcher plus an optional cross-file pass that only runs when more than one Java file is scanned.
+The taint engines run only for languages with enabled taint-backed rules. Each walk is over the already-parsed AST with small in-memory state. No additional parsing, no network, no disk. Go, Python, and JavaScript batch compatible taint rules to avoid repeated summary walks; Kotlin, C, Ruby, and PHP use lightweight intrafile dispatchers. Java and C# use an intrafile dispatcher plus an optional cross-file pass that only runs when more than one file of that language is scanned.
 
 ## Semgrep-compatible YAML bridge
 
@@ -372,8 +372,28 @@ Sources currently covered:
 ### C#-specific engine notes
 
 - **Scope**: method, constructor, local-function, lambda, and anonymous
-  method bodies are analyzed independently. There is no C# cross-file or
-  type-resolution pass yet.
+  method bodies are analyzed independently for intra-file flows.
+- **Cross-file (name-based, same-namespace proxy)**: when more than one C#
+  file is scanned, a two-pass analysis runs. Pass 1 summarizes each method /
+  local function by treating every parameter as a synthetic source and
+  recording which parameter indices reach a sink (`params_to_sink`) or the
+  return value (`params_to_return`). Pass 2 resolves a helper-method call to
+  a summarized method *by method name* in a *sibling file of the same
+  directory* (used as a same-namespace proxy, the way Java treats
+  same-directory files and Go treats same-directory `.go` files). A tainted
+  argument landing on a parameter with a recorded sink flow produces a
+  cross-file finding in the caller file, labelled
+  `... (via cross-file call to <name>)`. Argument count is honored only as a
+  positional bound (the flow's parameter index must be a valid argument
+  index), not as a strict overload discriminator.
+  - **Not modeled**: `using`/namespace resolution across directories,
+    type-based instance dispatch through interfaces or subclasses, overload
+    selection by parameter *type* (only positional arity is honored), partial
+    classes split across files, extension methods, and multi-hop chains (a
+    cross-file helper that itself calls another cross-file helper). These need
+    a C# type/symbol table the engine does not build. Name-based resolution
+    intentionally over-approximates: any same-directory method whose name and
+    arity match the call resolves, regardless of the receiver's declared type.
 - **Dotted sources**: the primary ASP.NET sources are dotted
   (`Request.QueryString`, `Request.Form`). They arrive as `Attribute`
   matchers and are matched against `member_access_expression` and
