@@ -67,6 +67,14 @@ fn run_bash_taint(
 ) -> Vec<Finding> {
     crate::rules::bash::run_bash_taint_batched(s, t, ids)
 }
+fn run_apex_taint(
+    s: &str,
+    t: &tree_sitter::Tree,
+    _c: &FileContext<'_>,
+    ids: &HashSet<&str>,
+) -> Vec<Finding> {
+    crate::rules::apex::run_apex_taint_batched(s, t, ids)
+}
 fn run_swift_taint(
     s: &str,
     t: &tree_sitter::Tree,
@@ -114,6 +122,7 @@ const TAINT_DISPATCH: &[(TaintEngine, TaintRunner)] = &[
     (TaintEngine::Solidity, run_solidity_taint),
     (TaintEngine::Bash, run_bash_taint),
     (TaintEngine::Swift, run_swift_taint),
+    (TaintEngine::Apex, run_apex_taint),
 ];
 
 /// Result of a scan with metadata.

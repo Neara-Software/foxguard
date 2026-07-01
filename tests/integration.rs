@@ -1907,6 +1907,63 @@ mod bash_taint {
     }
 }
 
+// ─── Apex taint ──────────────────────────────────────────────────────────────
+
+mod apex_taint {
+    use super::*;
+
+    /// Positive fixture for the Apex taint engine. Four untrusted-input flows
+    /// reach a dynamic SOQL sink (`Database.query` directly and via string
+    /// concat, an `ApexPages` page parameter into `Database.getQueryLocator`,
+    /// and a parameter into `Database.countQuery`). The
+    /// `apex/taint-soql-injection` rule must fire exactly four times, and the
+    /// three near-miss blocks (escapeSingleQuotes-sanitized, literal query,
+    /// log-only) must stay silent.
+    #[test]
+    fn test_vulnerable_apex_taint_catches_every_flow() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/vulnerable_apex_taint.cls", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        assert!(!output.status.success());
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+        let n = findings
+            .iter()
+            .filter(|f| f["rule_id"].as_str() == Some("apex/taint-soql-injection"))
+            .count();
+        assert_eq!(
+            n, 4,
+            "apex/taint-soql-injection should fire exactly 4 times on \
+             vulnerable_apex_taint.cls, got {}",
+            n
+        );
+    }
+
+    /// Negative counterpart. Every method in `safe_apex_taint.cls` uses a bind
+    /// variable, escapes input with String.escapeSingleQuotes, builds a literal
+    /// query, or never reaches a sink. No apex/taint-* rule may fire.
+    #[test]
+    fn test_safe_apex_taint_has_no_taint_findings() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/safe_apex_taint.cls", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+        let n = findings
+            .iter()
+            .filter(|f| f["rule_id"].as_str() == Some("apex/taint-soql-injection"))
+            .count();
+        assert_eq!(
+            n, 0,
+            "apex/taint-soql-injection should not fire on safe_apex_taint.cls, got {}",
+            n
+        );
+    }
+}
+
 // ─── Swift ──────────────────────────────────────────────────────────────────
 
 mod swift {
