@@ -339,6 +339,12 @@ pub struct FileContext<'a> {
     /// C# same-namespace file paths (same-directory proxy). Used to resolve
     /// cross-file helper-method calls by name. Excludes the current file.
     pub csharp_same_package_paths: Option<Vec<std::path::PathBuf>>,
+    /// Kotlin same-package file paths (same-directory proxy). Used to resolve
+    /// cross-file helper-function calls by name+arity. Excludes the current
+    /// file. Kotlin has package declarations, but the engine treats
+    /// sibling files in the same directory as the resolution scope (the same
+    /// over-approximation used for Go/Java/C#).
+    pub kotlin_same_package_paths: Option<Vec<std::path::PathBuf>>,
     /// Per-scan hardcoded-secret thresholds captured from the registry.
     pub secret_thresholds: common::SecretScanThresholds,
 }

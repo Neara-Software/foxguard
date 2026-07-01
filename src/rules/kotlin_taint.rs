@@ -59,8 +59,11 @@
 //! - **`MemberAssign { … }`** — JS-specific; ignored.
 
 use crate::rules::common::{walk_tree, AliasTable};
+use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary, ParamSinkFlow};
+use crate::rules::taint_engine::cross_file_taint_finding;
 pub use crate::rules::taint_engine::{NodeMatcher, TaintFinding, TaintSpec};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use tree_sitter::Node;
 
 // ─── Public API ────────────────────────────────────────────────────────────
@@ -800,6 +803,349 @@ fn byte_to_position(source: &str, byte: usize) -> (usize, usize) {
     (line, column)
 }
 
+// ─── Cross-file (interprocedural across files) taint ─────────────────────
+//
+// Scope of the Kotlin cross-file pass (deliberately narrow; mirrors the C#,
+// Ruby, Java, and Go engines):
+//
+// * **Resolution is NAME + ARITY based, not type-based.** A top-level or
+//   member `function_declaration` (`fun run(x)`) is summarized by its bare
+//   function name. A call site resolves to a summary whenever the invoked
+//   name matches a summarized function in a sibling file of the same
+//   directory (used as a same-package proxy, the way the Go/Java/C# engines
+//   treat same-directory files). Only the argument *count* gates a
+//   per-parameter flow (`param_index >= arg count` is skipped); the
+//   receiver's type is never consulted. This intentionally
+//   over-approximates: `run(x)`, `helper.run(x)`, and `Helper.run(x)` all
+//   resolve to *any* same-package `run` summary regardless of the receiver.
+// * **What is NOT modeled:** companion-object vs instance dispatch,
+//   extension functions (the receiver type before the name is ignored),
+//   function overloads discriminated by parameter *type* (only positional
+//   arity is honored), `import`-based resolution across directories,
+//   default/named/vararg argument reordering (only the first
+//   `simple_identifier` of each positional `parameter` is summarized), and
+//   multi-hop chains (a helper that itself calls another cross-file helper).
+//   These need a Kotlin symbol table the engine does not build.
+
+/// Extract cross-file taint summaries for every `function_declaration` in
+/// `root`.
+///
+/// Pass 1 of the two-pass scanner. For each function, every positional
+/// parameter is treated as a synthetic taint source; a parameter that reaches
+/// a sink records a [`ParamSinkFlow`], and a parameter that flows to a
+/// `return` records a `params_to_return` index. Summaries are keyed by the
+/// bare function name (last-write-wins on name collisions, mirroring the C#
+/// engine).
+pub fn extract_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    _aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+) -> Vec<FunctionTaintSummary> {
+    let mut summaries = Vec::new();
+    walk_tree(root, source, &mut |node, src| {
+        if node.kind() != "function_declaration" {
+            return;
+        }
+        let Some(name) = kotlin_function_name(node, src) else {
+            return;
+        };
+        let param_names = kotlin_function_param_names(node, src);
+        if let Some(summary) = summarize_kotlin_function(node, name, &param_names, src, rule_specs)
+        {
+            summaries.push(summary);
+        }
+    });
+    summaries
+}
+
+/// The bare name of a `function_declaration`: the first `simple_identifier`
+/// child. For an extension function (`fun Application.module()`) the receiver
+/// type precedes the name, so this over-approximates by taking the leftmost
+/// identifier — extension functions are documented as not-modeled.
+fn kotlin_function_name<'a>(node: Node<'a>, src: &'a str) -> Option<&'a str> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "simple_identifier" {
+            return Some(&src[child.byte_range()]);
+        }
+    }
+    None
+}
+
+/// Positional parameter names of a `function_declaration`, in order. Only the
+/// first `simple_identifier` of each `parameter` is taken, matching the subset
+/// that [`collect_param_sources`] seeds.
+fn kotlin_function_param_names(node: Node<'_>, source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "function_value_parameters" {
+            continue;
+        }
+        let mut c2 = child.walk();
+        for param in child.children(&mut c2) {
+            if param.kind() != "parameter" {
+                continue;
+            }
+            let mut c3 = param.walk();
+            for pc in param.children(&mut c3) {
+                if pc.kind() == "simple_identifier" {
+                    names.push(source[pc.byte_range()].to_string());
+                    break;
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Build a [`FunctionTaintSummary`] for a single function, or `None` if no
+/// parameter reaches a sink or a return value. Reuses the intra-file
+/// [`analyze_scope`] with a synthetic per-parameter source spec, exactly like
+/// the C# engine's `summarize_csharp_method`.
+fn summarize_kotlin_function(
+    func_node: Node<'_>,
+    func_name: &str,
+    param_names: &[String],
+    source: &str,
+    rule_specs: &[(&str, TaintSpec)],
+) -> Option<FunctionTaintSummary> {
+    if param_names.is_empty() {
+        return None;
+    }
+
+    let mut params_to_sink: Vec<ParamSinkFlow> = Vec::new();
+    let mut params_to_return: Vec<usize> = Vec::new();
+
+    for (param_idx, param_name) in param_names.iter().enumerate() {
+        if kotlin_param_flows_to_return(func_node, param_name, source) {
+            params_to_return.push(param_idx);
+        }
+
+        for (rule_id, rule_spec) in rule_specs {
+            let synthetic = TaintSpec {
+                sources: vec![NodeMatcher::ParamName {
+                    names: vec![param_name.clone()],
+                    description: format!("parameter '{param_name}'"),
+                }],
+                sinks: rule_spec.sinks.clone(),
+                sanitizers: rule_spec.sanitizers.clone(),
+            };
+            let mut findings = Vec::new();
+            analyze_scope(func_node, source, &synthetic, &mut findings);
+            if let Some(finding) = findings.first() {
+                params_to_sink.push(ParamSinkFlow {
+                    param_index: param_idx,
+                    sink_rule_id: rule_id.to_string(),
+                    sink_description: finding.sink_description.clone(),
+                });
+            }
+        }
+    }
+
+    if params_to_sink.is_empty() && params_to_return.is_empty() {
+        return None;
+    }
+
+    Some(FunctionTaintSummary {
+        name: func_name.to_string(),
+        params_to_return,
+        params_to_sink,
+    })
+}
+
+/// Does `param_name`, treated as a taint source, reach a `return` expression?
+///
+/// Best-effort: seed the parameter as a source, propagate through the tainted
+/// set, then look for a `jump_expression` (`return <expr>`) whose expression
+/// references a tainted name. `params_to_return` is recorded for parity with
+/// the C#/Ruby summaries but is not consumed by pass 2 (single-hop only), so
+/// an imperfect result here cannot produce or suppress a finding.
+fn kotlin_param_flows_to_return(func_node: Node<'_>, param_name: &str, source: &str) -> bool {
+    let synthetic = TaintSpec {
+        sources: vec![NodeMatcher::ParamName {
+            names: vec![param_name.to_string()],
+            description: format!("parameter '{param_name}'"),
+        }],
+        sinks: vec![],
+        sanitizers: vec![],
+    };
+    let body = find_function_body(func_node).unwrap_or(func_node);
+    let mut sources = collect_body_sources(body, source, &synthetic);
+    collect_param_sources(func_node, source, &synthetic, &mut sources);
+    let tainted = build_tainted_set(body, source, &sources);
+    if tainted.is_empty() {
+        return false;
+    }
+
+    let mut flows = false;
+    walk_tree(body, source, &mut |node, src| {
+        if flows || node.kind() != "jump_expression" {
+            return;
+        }
+        if src[node.byte_range()].trim_start().starts_with("return")
+            && expr_uses_tainted(node, src, &tainted)
+        {
+            flows = true;
+        }
+    });
+    flows
+}
+
+/// Cross-file resolution info for the Kotlin engine. Mirrors
+/// `csharp_taint::CrossFileInfo`.
+///
+/// `same_package_paths` are the canonical paths of sibling Kotlin files in the
+/// same directory (the same-package proxy); `summaries` is the pass-1 map keyed
+/// by canonical path; `allowed_rule_ids` gates which rules may emit cross-file
+/// findings in the current run.
+pub struct CrossFileInfo<'a> {
+    pub same_package_paths: &'a [PathBuf],
+    pub summaries: &'a CrossFileSummaryMap,
+    pub allowed_rule_ids: &'a HashSet<String>,
+}
+
+/// Pass 2 cross-file resolution: walk every function / lambda scope, compute
+/// its intra-file tainted-name set, and for each helper call that resolves to
+/// a sibling summary emit a finding when a tainted argument lands on a
+/// parameter with a recorded sink flow.
+///
+/// Returns findings whose `rule_id_hint` carries the attributed rule id.
+pub fn extract_cross_file_findings(
+    root: Node<'_>,
+    source: &str,
+    rule_specs: &[(&str, TaintSpec)],
+    cross_file: &CrossFileInfo<'_>,
+) -> Vec<TaintFinding> {
+    // The caller-side taint state is driven by the real sources (shared across
+    // the built-in Kotlin rules); union them so an inline source argument like
+    // `helper(call.receiveText())` is recognized.
+    let mut source_spec = TaintSpec::default();
+    for (_, spec) in rule_specs {
+        source_spec.sources.extend(spec.sources.iter().cloned());
+        source_spec
+            .sanitizers
+            .extend(spec.sanitizers.iter().cloned());
+    }
+
+    let mut out = Vec::new();
+    walk_tree(root, source, &mut |node, src| {
+        if node.kind() == "function_declaration" || node.kind() == "lambda_literal" {
+            resolve_cross_file_scope(node, src, &source_spec, cross_file, &mut out);
+        }
+    });
+    out
+}
+
+fn resolve_cross_file_scope(
+    scope_node: Node<'_>,
+    source: &str,
+    source_spec: &TaintSpec,
+    cross_file: &CrossFileInfo<'_>,
+    out: &mut Vec<TaintFinding>,
+) {
+    let body = find_function_body(scope_node).unwrap_or(scope_node);
+    let mut sources = collect_body_sources(body, source, source_spec);
+    if matches!(scope_node.kind(), "function_declaration") {
+        collect_param_sources(scope_node, source, source_spec, &mut sources);
+    }
+    let tainted = build_tainted_set(body, source, &sources);
+
+    walk_tree(body, source, &mut |node, src| {
+        if node.kind() != "call_expression" {
+            return;
+        }
+        let Some(callee) = call_callee_name(node, src) else {
+            return;
+        };
+        let Some(summary) = lookup_cross_file_summary(cross_file, callee) else {
+            return;
+        };
+        let Some(args) = call_arguments(node) else {
+            return;
+        };
+        let arg_nodes: Vec<Node<'_>> = {
+            let mut cursor = args.walk();
+            let mut v = Vec::new();
+            for child in args.children(&mut cursor) {
+                if child.kind() == "value_argument" {
+                    if let Some(expr) = child.child(0) {
+                        v.push(expr);
+                    }
+                }
+            }
+            v
+        };
+
+        for flow in &summary.params_to_sink {
+            if !cross_file.allowed_rule_ids.contains(&flow.sink_rule_id) {
+                continue;
+            }
+            if flow.param_index >= arg_nodes.len() {
+                continue;
+            }
+            let arg = arg_nodes[flow.param_index];
+            if let Some((desc, line)) = caller_arg_taint(arg, src, &sources, &tainted, source_spec)
+            {
+                out.push(cross_file_taint_finding(
+                    node,
+                    desc,
+                    line,
+                    &flow.sink_description,
+                    callee,
+                    &flow.sink_rule_id,
+                ));
+            }
+        }
+    });
+}
+
+/// The resolvable callee name of a `call_expression`: the method name for a
+/// `receiver.method(...)` navigation call, or the bare identifier for a
+/// `run(...)` / `Helper(...)` constructor-style call.
+fn call_callee_name<'a>(node: Node<'a>, src: &'a str) -> Option<&'a str> {
+    call_method_name(node, src).or_else(|| call_constructor_name(node, src))
+}
+
+/// Return `(source_description, source_line)` if a call argument carries taint:
+/// either an inline direct source (`helper(call.receiveText())`) or a reference
+/// to a tainted local (`helper(cmd)`). Uses the caller scope's first source as
+/// the representative attribution, matching [`analyze_scope`]'s "first source
+/// wins" rule.
+fn caller_arg_taint(
+    arg: Node<'_>,
+    src: &str,
+    sources: &[TaintSource],
+    tainted: &HashSet<String>,
+    source_spec: &TaintSpec,
+) -> Option<(String, usize)> {
+    if let Some(desc) = classify_source_expr(arg, src, source_spec) {
+        return Some((desc, arg.start_position().row + 1));
+    }
+    if !tainted.is_empty() && expr_uses_tainted(arg, src, tainted) {
+        if let Some(s) = sources.first() {
+            return Some((s.description.clone(), s.line));
+        }
+        return Some(("user input".to_string(), arg.start_position().row + 1));
+    }
+    None
+}
+
+fn lookup_cross_file_summary<'a>(
+    cross_file: &'a CrossFileInfo<'_>,
+    callee_name: &str,
+) -> Option<&'a FunctionTaintSummary> {
+    for path in cross_file.same_package_paths {
+        if let Some(file_summaries) = cross_file.summaries.get(path) {
+            if let Some(summary) = file_summaries.iter().find(|s| s.name == callee_name) {
+                return Some(summary);
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -922,5 +1268,103 @@ fun handler(call: ApplicationCall, conn: Connection) {
             "tainted SQL in prepareStatement should flag: {:?}",
             findings
         );
+    }
+
+    // ── Cross-file (pass 1) summaries ─────────────────────────────────────
+
+    fn summaries(src: &str) -> Vec<FunctionTaintSummary> {
+        let tree = parse_file(src, Language::Kotlin).expect("parse");
+        let specs = kotlin_taint_rule_specs();
+        extract_cross_file_summaries(tree.root_node(), src, None, &specs)
+    }
+
+    #[test]
+    fn cross_file_summary_records_param_to_sink() {
+        let src = r#"
+object CommandHelper {
+    fun run(term: String) {
+        Runtime.getRuntime().exec(term)
+    }
+}
+"#;
+        let found = summaries(src);
+        let helper = found
+            .iter()
+            .find(|s| s.name == "run")
+            .expect("run should be summarized");
+        let flow = helper
+            .params_to_sink
+            .iter()
+            .find(|f| f.param_index == 0)
+            .expect("param 0 should reach a sink");
+        assert_eq!(flow.sink_rule_id, "kt/taint-command-injection");
+    }
+
+    #[test]
+    fn cross_file_summary_skips_functions_with_no_flow() {
+        // `log` neither sinks nor returns its parameter, so it must not be
+        // summarized at all.
+        let src = r#"
+object Plain {
+    fun log(message: String) {
+        println("constant")
+    }
+}
+"#;
+        let found = summaries(src);
+        assert!(
+            found.iter().all(|s| s.name != "log"),
+            "function with no param flow should not be summarized: {found:?}"
+        );
+    }
+
+    #[test]
+    fn cross_file_findings_resolve_helper_call() {
+        // Caller passes a tainted local into a same-package helper whose
+        // parameter reaches a command sink; the call site must produce a
+        // cross-file finding.
+        let helper_src = r#"
+object CommandHelper {
+    fun run(term: String) {
+        Runtime.getRuntime().exec(term)
+    }
+}
+"#;
+        let caller_src = r#"
+fun handle(call: ApplicationCall) {
+    val cmd = call.receiveText()
+    CommandHelper.run(cmd)
+}
+"#;
+        let specs = kotlin_taint_rule_specs();
+        let helper_tree = parse_file(helper_src, Language::Kotlin).expect("parse helper");
+        let helper_summaries =
+            extract_cross_file_summaries(helper_tree.root_node(), helper_src, None, &specs);
+        let helper_path = PathBuf::from("CommandHelper.kt");
+        let mut summary_map = CrossFileSummaryMap::new();
+        summary_map.insert(helper_path.clone(), helper_summaries);
+
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let paths = vec![helper_path];
+        let cross = CrossFileInfo {
+            same_package_paths: &paths,
+            summaries: &summary_map,
+            allowed_rule_ids: &allowed,
+        };
+        let caller_tree = parse_file(caller_src, Language::Kotlin).expect("parse caller");
+        let findings =
+            extract_cross_file_findings(caller_tree.root_node(), caller_src, &specs, &cross);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly one cross-file finding: {findings:?}"
+        );
+        assert_eq!(
+            findings[0].rule_id_hint.as_deref(),
+            Some("kt/taint-command-injection")
+        );
+        assert!(findings[0]
+            .sink_description
+            .contains("via cross-file call to run"));
     }
 }
