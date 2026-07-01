@@ -1019,29 +1019,68 @@ fn map_kt_taint_finding(
 /// Run every enabled Kotlin taint rule over `tree` in a single dispatch
 /// loop and return per-rule `Finding`s.
 ///
-/// Mirrors the shape of `run_go_taint_batched` /
-/// `run_py_taint_batched` / `run_js_taint_batched`. There is no
-/// per-group sanitizer batching today because the three Kotlin taint
-/// rules share the (empty) sanitizer set; we still iterate per rule so
-/// each can attach its own message and severity.
+/// Intra-file findings come from [`kotlin_taint::analyze_tree`]. When the
+/// scanner supplied pass-1 cross-file summaries plus same-package sibling
+/// paths (multi-file Kotlin scan), a second pass resolves helper-function
+/// calls to those summaries and emits cross-file findings. See
+/// `kotlin_taint.rs` for the (name+arity, same-directory) resolution scope.
+/// Mirrors `run_csharp_taint_batched` / `run_ruby_taint_batched`.
 pub fn run_kt_taint_batched(
     source: &str,
     tree: &tree_sitter::Tree,
+    ctx: &crate::rules::FileContext<'_>,
     enabled_rule_ids: &std::collections::HashSet<&str>,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
-    for (rule_id, spec) in kotlin_taint::kotlin_taint_rule_specs() {
+    let rule_specs = kotlin_taint::kotlin_taint_rule_specs();
+    for (rule_id, spec) in &rule_specs {
         if !enabled_rule_ids.contains(rule_id) {
             continue;
         }
         let Some(meta) = kt_taint_meta(rule_id) else {
             continue;
         };
-        let raw = kotlin_taint::analyze_tree(tree.root_node(), source, &spec, None);
+        let raw = kotlin_taint::analyze_tree(tree.root_node(), source, spec, None);
         for finding in raw {
             findings.push(map_kt_taint_finding(&meta, source, finding));
         }
     }
+
+    // Cross-file resolution: only when pass-1 summaries and same-package
+    // sibling paths are both available (i.e. a multi-file Kotlin scan).
+    if let (Some(summaries), Some(paths)) = (
+        ctx.cross_file_summaries,
+        ctx.kotlin_same_package_paths.as_ref(),
+    ) {
+        let allowed: std::collections::HashSet<String> =
+            enabled_rule_ids.iter().map(|id| id.to_string()).collect();
+        let enabled_specs: Vec<(&str, kotlin_taint::TaintSpec)> = rule_specs
+            .iter()
+            .filter(|(id, _)| enabled_rule_ids.contains(id))
+            .map(|(id, spec)| (*id, spec.clone()))
+            .collect();
+        let cross = kotlin_taint::CrossFileInfo {
+            same_package_paths: paths,
+            summaries,
+            allowed_rule_ids: &allowed,
+        };
+        let raw = kotlin_taint::extract_cross_file_findings(
+            tree.root_node(),
+            source,
+            &enabled_specs,
+            &cross,
+        );
+        for finding in raw {
+            let Some(rule_id) = finding.rule_id_hint.as_deref() else {
+                continue;
+            };
+            let Some(meta) = kt_taint_meta(rule_id) else {
+                continue;
+            };
+            findings.push(map_kt_taint_finding(&meta, source, finding));
+        }
+    }
+
     findings
 }
 

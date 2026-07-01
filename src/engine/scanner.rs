@@ -3,6 +3,7 @@ use crate::rules::csharp_taint;
 use crate::rules::go_taint::{self, go_aliases_from_tree};
 use crate::rules::java_taint;
 use crate::rules::javascript_taint::{self, js_aliases_from_tree};
+use crate::rules::kotlin_taint;
 use crate::rules::php_taint;
 use crate::rules::python_aliases::{from_tree as py_aliases_from_tree, resolve_imports_to_paths};
 use crate::rules::python_taint;
@@ -35,14 +36,6 @@ type TaintRunner = fn(&str, &tree_sitter::Tree, &FileContext<'_>, &HashSet<&str>
 // ── Adapters for intra-file runners (no `ctx` parameter) ──────────────────────
 // These exist only so every engine shares the `TaintRunner` signature. The
 // cross-file runners already match it and are referenced directly in the table.
-fn run_kt_taint(
-    s: &str,
-    t: &tree_sitter::Tree,
-    _c: &FileContext<'_>,
-    ids: &HashSet<&str>,
-) -> Vec<Finding> {
-    crate::rules::kotlin::run_kt_taint_batched(s, t, ids)
-}
 fn run_c_taint(
     s: &str,
     t: &tree_sitter::Tree,
@@ -124,8 +117,11 @@ const TAINT_DISPATCH: &[(TaintEngine, TaintRunner)] = &[
         TaintEngine::CSharp,
         crate::rules::csharp::run_csharp_taint_batched,
     ),
+    (
+        TaintEngine::Kotlin,
+        crate::rules::kotlin::run_kt_taint_batched,
+    ),
     // Intra-file engines (adapted to ignore FileContext).
-    (TaintEngine::Kotlin, run_kt_taint),
     (TaintEngine::C, run_c_taint),
     (TaintEngine::Solidity, run_solidity_taint),
     (TaintEngine::Bash, run_bash_taint),
@@ -928,6 +924,9 @@ fn scan_files(
     let has_csharp_taint_rules = taint_specs_by_lang
         .get(&Language::CSharp)
         .is_some_and(|specs| !specs.is_empty());
+    let has_kotlin_taint_rules = taint_specs_by_lang
+        .get(&Language::Kotlin)
+        .is_some_and(|specs| !specs.is_empty());
     let mut prepared_files: HashMap<PathBuf, PreparedFile> = HashMap::new();
 
     // ── Pass 1: Extract cross-file taint summaries ────────────────────
@@ -948,6 +947,7 @@ fn scan_files(
     let ruby_files: Vec<_> = files_by_lang.remove(&Language::Ruby).unwrap_or_default();
     let php_files: Vec<_> = files_by_lang.remove(&Language::Php).unwrap_or_default();
     let csharp_files: Vec<_> = files_by_lang.remove(&Language::CSharp).unwrap_or_default();
+    let kotlin_files: Vec<_> = files_by_lang.remove(&Language::Kotlin).unwrap_or_default();
     let js_files: Vec<_> = files_by_lang
         .remove(&Language::JavaScript)
         .unwrap_or_default();
@@ -1345,6 +1345,62 @@ fn scan_files(
         cross_file_summaries.extend(csharp_summaries);
     }
 
+    // Kotlin cross-file summaries: extract from all Kotlin files. Kotlin
+    // resolution is same-directory (same-package proxy) + name+arity based, so
+    // like Go/Java/C# we only run pass 1 when there are multiple Kotlin files.
+    let mut has_kotlin_cross_file = false;
+    if has_kotlin_taint_rules && kotlin_files.len() > 1 {
+        let kotlin_rule_specs: Vec<_> = taint_specs_by_lang
+            .get(&Language::Kotlin)
+            .into_iter()
+            .flat_map(|specs| specs.iter())
+            .filter(|spec| matches!(spec.engine, TaintEngine::Kotlin))
+            .map(|spec| (spec.rule_id, spec.spec.clone()))
+            .collect();
+        let prepared_kotlin: Vec<_> = kotlin_files
+            .par_iter()
+            .filter_map(|(path, _)| {
+                if std::fs::metadata(path).ok()?.len() > max_file_size {
+                    return None;
+                }
+                let source = std::fs::read_to_string(path).ok()?;
+                if is_minified(&source) {
+                    return None;
+                }
+                let tree = super::parser::parse_file(&source, Language::Kotlin)?;
+                if tree.root_node().has_error() {
+                    return None;
+                }
+                let summaries = kotlin_taint::extract_cross_file_summaries(
+                    tree.root_node(),
+                    &source,
+                    None,
+                    &kotlin_rule_specs,
+                );
+                let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+                Some((
+                    path.clone(),
+                    PreparedFile {
+                        source,
+                        tree,
+                        aliases: AliasTable::default(),
+                        canonical_path: canonical,
+                    },
+                    summaries,
+                ))
+            })
+            .collect();
+        let mut kotlin_summaries = CrossFileSummaryMap::new();
+        for (path, prepared, file_summaries) in prepared_kotlin {
+            if !file_summaries.is_empty() {
+                kotlin_summaries.insert(prepared.canonical_path.clone(), file_summaries);
+            }
+            prepared_files.insert(path, prepared);
+        }
+        has_kotlin_cross_file = !kotlin_summaries.is_empty();
+        cross_file_summaries.extend(kotlin_summaries);
+    }
+
     let has_cross_file = !cross_file_summaries.is_empty();
 
     let canonical_path_lookup: HashMap<PathBuf, PathBuf> = {
@@ -1451,6 +1507,27 @@ fn scan_files(
         let mut index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
         for (path, lang) in &files {
             if matches!(lang, Language::CSharp) && !is_noise_path(path) {
+                if let Some(dir) = path.parent() {
+                    let canonical = prepared_files
+                        .get(path)
+                        .map(|prepared| prepared.canonical_path.clone())
+                        .unwrap_or_else(|| resolve_canonical_path(&canonical_path_lookup, path));
+                    index.entry(dir.to_path_buf()).or_default().push(canonical);
+                }
+            }
+        }
+        index
+    } else {
+        HashMap::new()
+    };
+
+    // Build a directory→files index for Kotlin same-package resolution.
+    // All Kotlin files in the same directory are treated as the same package
+    // (a proxy for the `package` declaration), mirroring the Java/Go/C# indexes.
+    let kotlin_dir_index: HashMap<PathBuf, Vec<PathBuf>> = if has_kotlin_cross_file {
+        let mut index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+        for (path, lang) in &files {
+            if matches!(lang, Language::Kotlin) && !is_noise_path(path) {
                 if let Some(dir) = path.parent() {
                     let canonical = prepared_files
                         .get(path)
@@ -1745,6 +1822,27 @@ fn scan_files(
                 None
             };
 
+            // Build Kotlin same-package paths for cross-file resolution, the
+            // same directory-as-package heuristic used for Java/Go/C# above.
+            let kotlin_same_package_paths = if has_kotlin_cross_file
+                && matches!(language, Language::Kotlin)
+            {
+                path.parent().and_then(|dir| {
+                    let canonical_self = prepared
+                        .map(|prepared| prepared.canonical_path.clone())
+                        .unwrap_or_else(|| resolve_canonical_path(&canonical_path_lookup, path));
+                    kotlin_dir_index.get(dir).map(|siblings| {
+                        siblings
+                            .iter()
+                            .filter(|p| **p != canonical_self)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                })
+            } else {
+                None
+            };
+
             let ctx = FileContext {
                 python_aliases,
                 javascript_aliases,
@@ -1761,6 +1859,7 @@ fn scan_files(
                 ruby_same_package_paths,
                 php_same_package_paths,
                 csharp_same_package_paths,
+                kotlin_same_package_paths,
                 secret_thresholds,
             };
 
