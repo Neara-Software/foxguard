@@ -75,6 +75,14 @@ fn run_swift_taint(
 ) -> Vec<Finding> {
     crate::rules::swift::run_swift_taint_batched(s, t, ids)
 }
+fn run_scala_taint(
+    s: &str,
+    t: &tree_sitter::Tree,
+    _c: &FileContext<'_>,
+    ids: &HashSet<&str>,
+) -> Vec<Finding> {
+    crate::rules::scala::run_scala_taint_batched(s, t, ids)
+}
 
 /// All built-in taint engines, paired with their batched runner. Adding a
 /// taint-backed language is a single row here plus the usual `TaintEngine`
@@ -114,6 +122,7 @@ const TAINT_DISPATCH: &[(TaintEngine, TaintRunner)] = &[
     (TaintEngine::Solidity, run_solidity_taint),
     (TaintEngine::Bash, run_bash_taint),
     (TaintEngine::Swift, run_swift_taint),
+    (TaintEngine::Scala, run_scala_taint),
 ];
 
 /// Result of a scan with metadata.

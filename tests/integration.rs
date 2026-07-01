@@ -1907,6 +1907,80 @@ mod bash_taint {
     }
 }
 
+// ─── Scala taint ──────────────────────────────────────────────────────────────
+
+mod scala_taint {
+    use super::*;
+
+    /// Positive fixture for the first-party Scala taint engine. Three untrusted
+    /// request-parameter flows reach a sink: a JDBC `executeQuery` (SQL), a
+    /// `Runtime.getRuntime.exec` (command), and an `Html(...)` render (XSS). Each
+    /// `scala/taint-*` rule must fire exactly once, and the near-miss handlers
+    /// (constant query / literal command / static HTML) must stay silent.
+    #[test]
+    fn test_vulnerable_scala_taint_catches_every_flow() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/vulnerable_scala_taint.scala", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        assert!(!output.status.success());
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+
+        for rule in [
+            "scala/taint-sql-injection",
+            "scala/taint-command-injection",
+            "scala/taint-xss",
+        ] {
+            let n = findings
+                .iter()
+                .filter(|f| f["rule_id"].as_str() == Some(rule))
+                .count();
+            assert_eq!(n, 1, "{rule} should fire exactly once, got {n}");
+        }
+
+        // No other scala/taint-* rule should fire (near-misses stay silent).
+        let total = findings
+            .iter()
+            .filter(|f| {
+                f["rule_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("scala/taint-"))
+            })
+            .count();
+        assert_eq!(
+            total, 3,
+            "expected exactly 3 scala taint findings, got {total}"
+        );
+    }
+
+    /// Negative counterpart. Every handler in `safe_scala_taint.scala` uses a
+    /// parameterized query, a fixed command, or emits no request input into an
+    /// HTML sink. No `scala/taint-*` rule may fire.
+    #[test]
+    fn test_safe_scala_taint_has_no_taint_findings() {
+        let output = foxguard_cmd_isolated()
+            .args(["tests/fixtures/safe_scala_taint.scala", "-f", "json"])
+            .output()
+            .expect("failed to execute foxguard");
+
+        let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
+        let n = findings
+            .iter()
+            .filter(|f| {
+                f["rule_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("scala/taint-"))
+            })
+            .count();
+        assert_eq!(
+            n, 0,
+            "no scala/taint-* rule should fire on safe_scala_taint.scala, got {n}"
+        );
+    }
+}
+
 // ─── Swift ──────────────────────────────────────────────────────────────────
 
 mod swift {

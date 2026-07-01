@@ -68,6 +68,107 @@ pub fn analyze_tree(
     findings
 }
 
+// ─── Built-in specs ──────────────────────────────────────────────────────────
+
+/// All Scala taint rule IDs paired with their specs.
+pub fn scala_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
+    vec![
+        ("scala/taint-sql-injection", sql_injection_spec()),
+        ("scala/taint-command-injection", command_injection_spec()),
+        ("scala/taint-xss", xss_spec()),
+    ]
+}
+
+/// Shared sources for Scala taint rules.
+///
+/// The engine can only introduce taint through function parameters (see
+/// [`seed_params`]); it does not classify dotted expressions such as
+/// `request.body` or `request.getQueryString(...)` as sources because
+/// `expression_taint` resolves taint purely through the per-function state.
+/// A Play controller binds request query/form/path values to its action
+/// method parameters (`def search(q: String) = Action { ... }`), so seeding
+/// every parameter of the enclosing function models untrusted request input
+/// faithfully for the idiomatic Play/Scala shape.
+pub fn scala_taint_sources() -> Vec<NodeMatcher> {
+    vec![NodeMatcher::ParamName {
+        // `$`-prefixed name → the metavariable wildcard that seeds every
+        // parameter of the enclosing function as tainted.
+        names: vec!["$PARAM".into()],
+        description: "untrusted request parameter".into(),
+    }]
+}
+
+/// Shared sanitizers for Scala taint rules. None are modeled yet — a Scala
+/// value that reaches a sink is treated as tainted regardless of intervening
+/// calls. Carried for symmetry with the other engines.
+pub fn scala_taint_sanitizers() -> Vec<NodeMatcher> {
+    vec![]
+}
+
+fn sql_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: scala_taint_sources(),
+        sinks: vec![
+            // JDBC `Statement` execution APIs. A tainted argument (typically a
+            // `"SELECT ..." + param` concatenation or an `s"...$param..."`
+            // interpolation) reaching any of these is a SQL-injection flow.
+            NodeMatcher::MethodName {
+                method: "executeQuery".into(),
+                description: "Statement.executeQuery() with tainted query (SQL injection)".into(),
+            },
+            NodeMatcher::MethodName {
+                method: "executeUpdate".into(),
+                description: "Statement.executeUpdate() with tainted query (SQL injection)".into(),
+            },
+            NodeMatcher::MethodName {
+                method: "execute".into(),
+                description: "Statement.execute() with tainted query (SQL injection)".into(),
+            },
+        ],
+        sanitizers: scala_taint_sanitizers(),
+    }
+}
+
+fn command_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: scala_taint_sources(),
+        sinks: vec![
+            // `Runtime.getRuntime.exec(cmd)` — the final method segment is
+            // `exec`, matched by any-receiver `MethodName`.
+            NodeMatcher::MethodName {
+                method: "exec".into(),
+                description: "Runtime.exec() with tainted argument (command injection)".into(),
+            },
+            // `scala.sys.process.Process(cmd)` — written idiomatically as
+            // `Process(cmd)` (callee identifier `Process`).
+            NodeMatcher::Call {
+                canonical: "Process".into(),
+                description: "Process() with tainted argument (command injection)".into(),
+            },
+        ],
+        sanitizers: scala_taint_sanitizers(),
+    }
+}
+
+fn xss_spec() -> TaintSpec {
+    TaintSpec {
+        sources: scala_taint_sources(),
+        sinks: vec![
+            // Play templates render `Html(...)` / `Html.apply(...)` content
+            // without escaping. Tainted content reaching it is reflected XSS.
+            NodeMatcher::Call {
+                canonical: "Html".into(),
+                description: "Html() with tainted content (XSS)".into(),
+            },
+            NodeMatcher::Call {
+                canonical: "Html.apply".into(),
+                description: "Html.apply() with tainted content (XSS)".into(),
+            },
+        ],
+        sanitizers: scala_taint_sanitizers(),
+    }
+}
+
 // ─── Seeding ────────────────────────────────────────────────────────────────
 
 /// Seed taint from function parameters. A metavariable `ParamName` source
