@@ -1947,6 +1947,11 @@ impl Rule for SemgrepTaintRule {
 // ─── YAML → TaintSpec compilation ─────────────────────────────────────────
 
 /// Outcome of trying to parse a single YAML rule as a taint rule.
+// The `Compiled` variant carries the full compiled rule, which is legitimately
+// larger than the `Skip`/`NotTaint` variants; this parse result is short-lived
+// and never stored in bulk, so the size difference is not worth an extra Box
+// indirection on the hot compile path.
+#[allow(clippy::large_enum_variant)]
 pub enum TaintRuleParse {
     /// The rule is `mode: taint` and was compiled successfully.
     Compiled(SemgrepTaintRule),
@@ -2253,6 +2258,10 @@ impl MatcherRole {
 /// The constraints are compiled to AST patterns later by the caller —
 /// collecting them here keeps `compile_entry` / `compile_patterns_block`
 /// focused on the expressible-matcher side.
+// Returns (expressible matchers, dropped `pattern-not` strings, dropped
+// `pattern-inside` strings). The three parallel Vecs are clearer inline than
+// behind a named struct for this single internal compile helper.
+#[allow(clippy::type_complexity)]
 fn compile_matcher_list(
     node: Option<&YamlValue>,
     role: MatcherRole,
