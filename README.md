@@ -27,7 +27,7 @@ npx foxguard .
 ## Why
 
 - 200+ built-in rules across 12 source languages, plus config and manifest checks
-- Taint tracking for 12 languages, with cross-file analysis for Python, JavaScript, Go, Java, Ruby, PHP, and C#
+- Taint tracking for 14 languages, with cross-file analysis for Python, JavaScript, Go, Java, Ruby, PHP, C#, and Kotlin
 - Fast local and CI scans, with diff mode for “what did this branch add?”
 - Secrets scanning, OSV-backed dependency scanning, and post-quantum crypto audit
 - Semgrep/OpenGrep-compatible YAML bridge for existing rule packs
