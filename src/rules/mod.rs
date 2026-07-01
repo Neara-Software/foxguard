@@ -1,3 +1,4 @@
+pub mod apex;
 pub mod apex_taint;
 pub mod bash;
 pub mod bash_taint;
@@ -58,6 +59,7 @@ static BUNDLED_RULES: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_M
 /// engine choice, source model, and sanitizer behavior stay consistent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaintEngine {
+    Apex,
     Bash,
     C,
     CSharp,
@@ -685,6 +687,8 @@ impl RuleRegistry {
             ]
         );
 
+        register_rules!(registry, [apex::TaintSoqlInjection]);
+
         register_rules!(registry, [bash::TaintCommandInjection]);
 
         register_rules!(
@@ -906,6 +910,15 @@ impl RuleRegistry {
 
 fn builtin_taint_specs_for_language(language: Language) -> Vec<RegistryTaintSpec> {
     match language {
+        Language::Apex => apex_taint::apex_taint_rule_specs()
+            .into_iter()
+            .map(|(rule_id, spec)| RegistryTaintSpec {
+                rule_id,
+                language,
+                engine: TaintEngine::Apex,
+                spec,
+            })
+            .collect(),
         Language::Bash => bash_taint::bash_taint_rule_specs()
             .into_iter()
             .map(|(rule_id, spec)| RegistryTaintSpec {

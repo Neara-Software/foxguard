@@ -73,6 +73,78 @@ impl TaintState {
     }
 }
 
+// ─── Built-in specs ──────────────────────────────────────────────────────────
+
+/// All Apex taint rule IDs paired with their specs.
+pub fn apex_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
+    vec![("apex/taint-soql-injection", soql_injection_spec())]
+}
+
+/// Shared sources for Apex taint rules — untrusted request inputs.
+///
+/// Two source shapes the engine actually fires on (verified empirically on the
+/// tree-sitter-sfapex grammar):
+///
+/// * `ParamName` wildcard — every method / constructor parameter is seeded as
+///   tainted at scope entry. Apex controller and `@AuraEnabled` / REST methods
+///   receive their untrusted input as parameters, so any parameter reaching a
+///   dynamic SOQL sink is a classic SOQL-injection vector.
+/// * `Call` — request-parameter reads. `ApexPages.currentPage().getParameters()
+///   .get('x')` is the Visualforce page-parameter accessor; the outer call is a
+///   `.get(...)` whose receiver text contains `getParameters()`, so a canonical
+///   of `getParameters.get` matches it (and only it — a bare `Map.get` has no
+///   `getParameters` receiver).
+pub fn apex_taint_sources() -> Vec<NodeMatcher> {
+    vec![
+        NodeMatcher::ParamName {
+            names: vec![crate::rules::taint_engine::ANY_PARAM_WILDCARD.into()],
+            description: "untrusted method parameter".into(),
+        },
+        // Visualforce page parameter: ApexPages.currentPage().getParameters().get('id')
+        NodeMatcher::Call {
+            canonical: "getParameters.get".into(),
+            description: "ApexPages page parameter".into(),
+        },
+    ]
+}
+
+/// Shared sanitizers for Apex taint rules. `String.escapeSingleQuotes` escapes
+/// single quotes in a string, neutralizing SOQL/SOSL injection, so a value
+/// derived from it is treated as clean.
+pub fn apex_taint_sanitizers() -> Vec<NodeMatcher> {
+    vec![NodeMatcher::Call {
+        canonical: "String.escapeSingleQuotes".into(),
+        description: "String.escapeSingleQuotes()".into(),
+    }]
+}
+
+/// Dynamic-SOQL sinks: a tainted value flowing into one of these executes an
+/// attacker-controlled query (SOQL injection — the signature Apex vulnerability).
+pub fn apex_taint_sinks() -> Vec<NodeMatcher> {
+    vec![
+        NodeMatcher::Call {
+            canonical: "Database.query".into(),
+            description: "Database.query() (dynamic SOQL)".into(),
+        },
+        NodeMatcher::Call {
+            canonical: "Database.countQuery".into(),
+            description: "Database.countQuery() (dynamic SOQL)".into(),
+        },
+        NodeMatcher::Call {
+            canonical: "Database.getQueryLocator".into(),
+            description: "Database.getQueryLocator() (dynamic SOQL)".into(),
+        },
+    ]
+}
+
+fn soql_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: apex_taint_sources(),
+        sinks: apex_taint_sinks(),
+        sanitizers: apex_taint_sanitizers(),
+    }
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /// Run the Apex taint engine over every method / constructor inside `root`,
