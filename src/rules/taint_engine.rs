@@ -72,7 +72,9 @@ pub enum NodeMatcher {
     },
 
     /// Match any method call whose final property name equals `method`,
-    /// regardless of receiver. Only meaningful as a sink matcher.
+    /// regardless of receiver. Used for sinks/sanitizers and — for the Java
+    /// engine — as a source too, so a typed-metavariable receiver source like
+    /// `(Req $R).getQueryParam(...)` (which compiles to this variant) is honoured.
     MethodName { method: String, description: String },
 
     /// Match a call whose *callee text* matches a compiled regex. Compiled

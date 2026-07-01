@@ -104,12 +104,20 @@ pub fn analyze_tree_labeled(
     _aliases: Option<&AliasTable>,
     propagators: &[Propagator],
     policy: Option<&LabelPolicy>,
-    _side_effect_sanitizers: &[NodeMatcher],
+    side_effect_sanitizers: &[NodeMatcher],
 ) -> Vec<TaintFinding> {
     let mut findings = Vec::new();
     walk_tree(root, source, &mut |node, src| {
         if is_scope_node(node.kind()) {
-            analyze_scope(node, src, spec, propagators, policy, &mut findings);
+            analyze_scope(
+                node,
+                src,
+                spec,
+                propagators,
+                policy,
+                side_effect_sanitizers,
+                &mut findings,
+            );
         }
     });
     findings
@@ -370,7 +378,7 @@ fn summarize_java_method(
                 sanitizers: rule_spec.sanitizers.clone(),
             };
             let mut findings = Vec::new();
-            analyze_scope(method_node, source, &synthetic, &[], None, &mut findings);
+            analyze_scope(method_node, source, &synthetic, &[], None, &[], &mut findings);
             if let Some(finding) = findings.first() {
                 params_to_sink.push(ParamSinkFlow {
                     param_index: param_idx,
@@ -698,6 +706,7 @@ fn analyze_scope(
     spec: &TaintSpec,
     propagators: &[Propagator],
     policy: Option<&LabelPolicy>,
+    side_effect_sanitizers: &[NodeMatcher],
     out: &mut Vec<TaintFinding>,
 ) {
     let body = find_scope_body(scope_node).unwrap_or(scope_node);
@@ -713,6 +722,9 @@ fn analyze_scope(
         propagate_assignments(body, source, spec, policy, &mut state);
         apply_propagators(body, source, spec, propagators, policy, &mut state);
     }
+    // A `by-side-effect` sanitizer call (e.g. an access check on an id) vouches
+    // for its identifier arguments: clear their taint before evaluating sinks.
+    apply_side_effect_sanitizers(body, source, side_effect_sanitizers, &mut state);
     find_sinks(body, source, spec, policy, &state, out);
 }
 
@@ -774,6 +786,46 @@ fn apply_propagators(
     }
 }
 
+/// Clear taint from the plain-identifier arguments of any call matching a
+/// `by-side-effect` sanitizer. The engine is not flow-sensitive (it fixpoints
+/// over the whole scope), so clearing applies to the entire scope. The compiled
+/// matcher does not preserve which argument the rule focused on, so every
+/// identifier argument is cleared — conservative, since over-sanitizing only
+/// suppresses findings and never fabricates them.
+fn apply_side_effect_sanitizers(
+    scope: Node<'_>,
+    source: &str,
+    side_effect_sanitizers: &[NodeMatcher],
+    state: &mut TaintState,
+) {
+    if side_effect_sanitizers.is_empty() {
+        return;
+    }
+    let mut to_clear: Vec<String> = Vec::new();
+    walk_scope_nodes(scope, source, &mut |node, src| {
+        if node.kind() != "method_invocation" {
+            return;
+        }
+        let matches = side_effect_sanitizers
+            .iter()
+            .any(|matcher| matcher_matches_call(matcher, node, src));
+        if !matches {
+            return;
+        }
+        if let Some(args) = call_arguments(node) {
+            let mut cursor = args.walk();
+            for arg in args.named_children(&mut cursor) {
+                if arg.kind() == "identifier" {
+                    to_clear.push(node_text(arg, src).to_string());
+                }
+            }
+        }
+    });
+    for name in to_clear {
+        state.clear(&name);
+    }
+}
+
 fn collect_param_sources(
     scope_node: Node<'_>,
     source: &str,
@@ -783,15 +835,22 @@ fn collect_param_sources(
 ) {
     let mut annotation_names: Vec<&str> = Vec::new();
     let mut bare_names: Vec<&str> = Vec::new();
+    // `type:`-prefixed name (`type:DbKey`) seeds every parameter whose declared
+    // simple type matches — compiled from a Semgrep source block with a typed
+    // signature `pattern-inside` (e.g. `DbKey<$T> $ID`) + `pattern: $ID`.
+    let mut type_names: Vec<&str> = Vec::new();
     // `$`-prefixed name (`$PARAM`) is the any-parameter wildcard compiled from a
     // Semgrep `pattern-inside: function(...,$ARG,...) + focus-metavariable: $ARG`
     // source block: seed *every* parameter of the enclosing scope.
     let mut wildcard = false;
+    let type_prefix = crate::rules::taint_engine::TYPE_PARAM_PREFIX;
     for matcher in &spec.sources {
         if let NodeMatcher::ParamName { names, .. } = matcher {
             for name in names {
                 if let Some(rest) = name.strip_prefix('@') {
                     annotation_names.push(rest);
+                } else if let Some(rest) = name.strip_prefix(type_prefix) {
+                    type_names.push(rest);
                 } else if name == crate::rules::taint_engine::ANY_PARAM_WILDCARD {
                     wildcard = true;
                 } else {
@@ -809,6 +868,9 @@ fn collect_param_sources(
         let matched_annotation = annotation_names
             .iter()
             .find(|annotation| text.contains(&format!("@{annotation}")));
+        let matched_type = formal_parameter_type(node, source)
+            .map(type_final_segment)
+            .filter(|ty| type_names.contains(ty));
 
         // Typed-metavariable source `(HttpServletRequest $REQ)`: seed the
         // parameter when its DECLARED TYPE matches, regardless of name.
@@ -830,6 +892,16 @@ fn collect_param_sources(
                 name.to_string(),
                 TaintInfo {
                     description,
+                    line: node.start_position().row + 1,
+                    hops: 0,
+                    labels: source_labels(policy),
+                },
+            );
+        } else if let Some(ty) = matched_type {
+            state.taint(
+                name.to_string(),
+                TaintInfo {
+                    description: format!("{ty} parameter '{name}'"),
                     line: node.start_position().row + 1,
                     hops: 0,
                     labels: source_labels(policy),
@@ -1365,16 +1437,11 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
     }
 
     spec.sources.iter().find_map(|matcher| {
-        if let NodeMatcher::Call {
-            canonical,
-            description,
-        } = matcher
-        {
-            if match_java_method_canonical(canonical, receiver, method) {
-                return Some(description.clone());
-            }
+        if matcher_matches_call(matcher, node, source) {
+            Some(matcher.description().to_string())
+        } else {
+            None
         }
-        None
     })
 }
 
@@ -1810,6 +1877,58 @@ mod tests {
             panic!("Java fixture should parse");
         };
         analyze_tree(tree.root_node(), src, spec, None)
+    }
+
+    // Regression: a metavariable-receiver source written in Semgrep
+    // typed-metavariable syntax — `(Req $R).getQueryParam(...)` — compiles to
+    // `NodeMatcher::MethodName`. The source classifier used to match only
+    // `NodeMatcher::Call { canonical }`, so a `MethodName` source was silently
+    // dropped and the whole taint rule matched nothing. It must now be honoured
+    // as an any-receiver source and carry the source→sink trace.
+    fn method_name_source_spec() -> TaintSpec {
+        TaintSpec {
+            sources: vec![NodeMatcher::MethodName {
+                method: "getQueryParam".to_string(),
+                description: "request query param".to_string(),
+            }],
+            sinks: vec![NodeMatcher::Call {
+                canonical: "File".to_string(),
+                description: "file path".to_string(),
+            }],
+            sanitizers: vec![],
+        }
+    }
+
+    #[test]
+    fn method_name_source_fires_on_any_receiver() {
+        let src = r#"
+public class Handler {
+    public java.io.File load(Req req) {
+        String p = req.getQueryParam("path");
+        return new File(p);
+    }
+}
+"#;
+        let findings = analyze(src, &method_name_source_spec());
+        assert_eq!(findings.len(), 1, "MethodName source must fire: {findings:?}");
+        assert!(findings[0].source_description.contains("request query param"));
+        assert!(findings[0].sink_description.contains("file path"));
+    }
+
+    #[test]
+    fn method_name_source_ignores_unrelated_method() {
+        let src = r#"
+public class Handler {
+    public java.io.File load(Req req) {
+        String p = req.getSomethingElse("path");
+        return new File(p);
+    }
+}
+"#;
+        assert!(
+            analyze(src, &method_name_source_spec()).is_empty(),
+            "an unrelated method must not seed taint"
+        );
     }
 
     #[test]
