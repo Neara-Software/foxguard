@@ -256,6 +256,37 @@ struct TaintNegatives {
     source: Vec<crate::rules::semgrep_compat::CompiledAstPattern>,
 }
 
+/// Compiled `pattern-inside` constraints extracted from a taint rule's
+/// `patterns:` AND-blocks, retained so the post-filter can ENFORCE them
+/// instead of dropping them (a precision bug: dropping a `pattern-inside`
+/// makes the matcher fire everywhere instead of only inside the required
+/// region).
+///
+/// Each entry is a SEARCH-mode [`CompiledAstPattern`] — compiled via the
+/// same path as positive `pattern-inside` matchers in `semgrep_compat.rs`.
+/// `pattern-inside` is the INVERSE of `pattern-not`: a `pattern-not`
+/// suppresses a finding whose node is *inside* the matched region, while a
+/// `pattern-inside` keeps a finding only when its node *is* inside the
+/// matched region (and drops it otherwise).
+///
+/// Constraints are partitioned by the role of the `patterns:` block they came
+/// from. A `pattern-inside` inside `pattern-sinks` is enforced against the
+/// finding's sink node. Source-side enforcement would require a source byte
+/// range the finding does not carry (same limitation as source-side
+/// `pattern-not`), so source insides are collected but not yet applied.
+#[derive(Clone, Default)]
+struct TaintInsides {
+    /// `pattern-inside` matchers compiled from `pattern-sinks` blocks.
+    /// Enforced against each finding's sink byte range in the post-filter:
+    /// a finding is kept only if its sink is contained by one of these.
+    sink: Vec<crate::rules::semgrep_compat::CompiledAstPattern>,
+    /// `pattern-inside` matchers compiled from `pattern-sources` blocks.
+    /// Collected (so we stop dropping them) but enforcement is deferred
+    /// until findings carry source byte offsets.
+    #[allow(dead_code)]
+    source: Vec<crate::rules::semgrep_compat::CompiledAstPattern>,
+}
+
 /// Convert the generic spec into a Python taint spec.
 fn to_python_spec(g: &GenericSpec) -> python_taint::TaintSpec {
     python_taint::TaintSpec {
@@ -1467,6 +1498,10 @@ pub struct SemgrepTaintRule {
     /// post-filter in [`SemgrepTaintRule::check_with_context`] enforces
     /// the sink-side negatives against each finding's sink node.
     negatives: TaintNegatives,
+    /// Compiled `pattern-inside` constraints, partitioned by role. The
+    /// post-filter enforces the sink-side insides against each finding's
+    /// sink node: a finding is kept only if its sink is inside one of them.
+    insides: TaintInsides,
 }
 
 /// Unified view over the three engine-specific `TaintFinding` types.
@@ -1843,6 +1878,31 @@ impl Rule for SemgrepTaintRule {
                     .any(|neg| neg.overlaps_range(root, source, t.sink_start_byte, t.sink_end_byte))
             });
         }
+        // ── Post-filter: enforce sink-side `pattern-inside` constraints ─────
+        //
+        // `compile_patterns_block` captured each `pattern-inside` inside a
+        // `pattern-sinks` `patterns:` AND-block into `self.insides.sink`.
+        // These express "the sink must appear textually INSIDE this region"
+        // (e.g. inside a particular handler/function). A finding is kept only
+        // when its sink node's byte range is *contained* by a region matched
+        // by at least one such `pattern-inside`; otherwise it is suppressed.
+        // This is the INVERSE of the `pattern-not` filter above (pattern-not
+        // suppresses when inside; pattern-inside suppresses when NOT inside)
+        // and restores the Semgrep AND semantics that were previously dropped
+        // (the matcher fired everywhere instead of only inside the region).
+        //
+        // Source-side `pattern-inside` is compiled but not enforced here:
+        // findings carry no source byte range, so we cannot test the source
+        // node's containment (deferred — same limitation as source-side
+        // `pattern-not`).
+        if !self.insides.sink.is_empty() {
+            let root = tree.root_node();
+            raw.retain(|t| {
+                self.insides.sink.iter().any(|inside| {
+                    inside.contains_range(root, source, t.sink_start_byte, t.sink_end_byte)
+                })
+            });
+        }
         raw.into_iter()
             .map(|t| Finding {
                 rule_id: self.id.clone(),
@@ -2010,7 +2070,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
     let cwe = extract_cwe(yaml);
 
     // ── Compile sources ────────────────────────────────────────────────
-    let (sources, source_neg_strings) =
+    let (sources, source_neg_strings, source_inside_strings) =
         match compile_matcher_list(yaml.get("pattern-sources"), MatcherRole::Source, &id, lang) {
             Ok(v) => v,
             Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
@@ -2022,7 +2082,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
         ));
     }
 
-    let (sinks, sink_neg_strings) =
+    let (sinks, sink_neg_strings, sink_inside_strings) =
         match compile_matcher_list(yaml.get("pattern-sinks"), MatcherRole::Sink, &id, lang) {
             Ok(v) => v,
             Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
@@ -2031,7 +2091,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
         return TaintRuleParse::Skip(format!("taint rule `{}` has no valid `pattern-sinks`", id));
     }
 
-    let (sanitizers, _sanitizer_neg_strings) = match compile_matcher_list(
+    let (sanitizers, _sanitizer_neg_strings, _sanitizer_inside_strings) = match compile_matcher_list(
         yaml.get("pattern-sanitizers"),
         MatcherRole::Sanitizer,
         &id,
@@ -2063,6 +2123,27 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
         );
     }
 
+    // ── Compile captured `pattern-inside` constraints into AST patterns ──
+    //
+    // Same SEARCH-mode compilation path as positive `pattern-inside` in
+    // search rules (see `semgrep_compat.rs`). Sink-side insides are enforced
+    // by the post-filter: a finding is kept only when its sink is contained
+    // by one of these regions. A pattern that fails to parse is
+    // warned-and-skipped (the rule still stands; the containment is just not
+    // enforced — matcher stays broader).
+    let sink_insides = compile_inside_patterns(&sink_inside_strings, lang, &id, "pattern-sinks");
+    let source_insides =
+        compile_inside_patterns(&source_inside_strings, lang, &id, "pattern-sources");
+    if !source_inside_strings.is_empty() {
+        eprintln!(
+            "Warning: taint rule `{}` has `pattern-inside` constraints inside a \
+             `pattern-sources` `patterns:` block; these are compiled but source-side \
+             enforcement is not yet applied (findings carry no source byte range) — \
+             documented limitation",
+            id
+        );
+    }
+
     TaintRuleParse::Compiled(SemgrepTaintRule {
         id: format!("semgrep/{}", id),
         message,
@@ -2077,6 +2158,10 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
         negatives: TaintNegatives {
             sink: sink_negatives,
             source: source_negatives,
+        },
+        insides: TaintInsides {
+            sink: sink_insides,
+            source: source_insides,
         },
     })
 }
@@ -2096,6 +2181,31 @@ fn compile_negative_patterns(
             Some(compiled) => out.push(compiled),
             None => eprintln!(
                 "Warning: taint rule `{}` {} `pattern-not: {}` did not parse into \
+                 a usable pattern; ignoring constraint (matcher stays broader)",
+                rule_id, role_label, p
+            ),
+        }
+    }
+    out
+}
+
+/// Compile a list of raw `pattern-inside` pattern strings (lifted from a
+/// `patterns:` AND-block of the given role) into SEARCH-mode AST patterns,
+/// warning-and-skipping any that do not parse into a usable pattern node.
+/// Compiled through the same path as `pattern-not` and positive search-mode
+/// `pattern-inside` so grammar/metavariable handling agrees across modes.
+fn compile_inside_patterns(
+    patterns: &[String],
+    lang: Language,
+    rule_id: &str,
+    role_label: &str,
+) -> Vec<crate::rules::semgrep_compat::CompiledAstPattern> {
+    let mut out = Vec::new();
+    for p in patterns {
+        match crate::rules::semgrep_compat::CompiledAstPattern::try_new(p, lang) {
+            Some(compiled) => out.push(compiled),
+            None => eprintln!(
+                "Warning: taint rule `{}` {} `pattern-inside: {}` did not parse into \
                  a usable pattern; ignoring constraint (matcher stays broader)",
                 rule_id, role_label, p
             ),
@@ -2137,20 +2247,20 @@ impl MatcherRole {
 /// entries the caller decides whether that is fatal for the whole rule
 /// (sources and sinks are required; sanitizers may legitimately be empty).
 ///
-/// Returns the compiled matchers and, separately, the raw `pattern-not`
-/// pattern strings lifted out of any `patterns:` AND-blocks in this list
-/// (keyed by `role` so the caller knows where to enforce them). The
-/// negatives are compiled to AST patterns later by the caller — collecting
-/// them here keeps `compile_entry` / `compile_patterns_block` focused on
-/// the expressible-matcher side.
+/// Returns the compiled matchers and, separately, the raw `pattern-not` and
+/// `pattern-inside` pattern strings lifted out of any `patterns:` AND-blocks
+/// in this list (keyed by `role` so the caller knows where to enforce them).
+/// The constraints are compiled to AST patterns later by the caller —
+/// collecting them here keeps `compile_entry` / `compile_patterns_block`
+/// focused on the expressible-matcher side.
 fn compile_matcher_list(
     node: Option<&YamlValue>,
     role: MatcherRole,
     rule_id: &str,
     lang: Language,
-) -> Result<(Vec<GenericMatcher>, Vec<String>), String> {
+) -> Result<(Vec<GenericMatcher>, Vec<String>, Vec<String>), String> {
     let Some(node) = node else {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), Vec::new()));
     };
     let Some(entries) = node.as_sequence() else {
         return Err(format!("{} must be a list", role.label()));
@@ -2158,10 +2268,19 @@ fn compile_matcher_list(
 
     let mut out = Vec::new();
     let mut negatives: Vec<String> = Vec::new();
+    let mut insides: Vec<String> = Vec::new();
     for entry in entries {
-        compile_entry(entry, role, rule_id, lang, &mut out, &mut negatives);
+        compile_entry(
+            entry,
+            role,
+            rule_id,
+            lang,
+            &mut out,
+            &mut negatives,
+            &mut insides,
+        );
     }
-    Ok((out, negatives))
+    Ok((out, negatives, insides))
 }
 
 /// Compile a single entry from a source/sink/sanitizer list, flattening
@@ -2169,10 +2288,10 @@ fn compile_matcher_list(
 /// `patterns:` AND-blocks. Invalid entries emit a warning and are skipped
 /// rather than aborting the whole rule.
 ///
-/// `negatives` accumulates the raw `pattern-not` pattern strings lifted from
-/// `patterns:` AND-blocks so the caller can compile and enforce them; every
-/// other constraint key is still dropped with a warning (Phase 2 only
-/// promotes `pattern-not`).
+/// `negatives` accumulates the raw `pattern-not` pattern strings and
+/// `insides` the raw `pattern-inside` pattern strings lifted from `patterns:`
+/// AND-blocks so the caller can compile and enforce them; every other
+/// constraint key is still dropped with a warning.
 fn compile_entry(
     entry: &YamlValue,
     role: MatcherRole,
@@ -2180,6 +2299,7 @@ fn compile_entry(
     lang: Language,
     out: &mut Vec<GenericMatcher>,
     negatives: &mut Vec<String>,
+    insides: &mut Vec<String>,
 ) {
     let Some(map) = entry.as_mapping() else {
         eprintln!(
@@ -2254,7 +2374,7 @@ fn compile_entry(
                 return;
             }
             for nested in inner {
-                compile_entry(nested, role, rule_id, lang, out, negatives);
+                compile_entry(nested, role, rule_id, lang, out, negatives, insides);
             }
         }
         Some("patterns") => {
@@ -2371,17 +2491,20 @@ fn compile_entry(
             // - Extract every `pattern:` and `pattern-either:` sub-item and
             //   compile them as expressible node-shape matchers.
             // - Capture `pattern-not:` sub-items into the `negatives`
-            //   accumulator so the post-filter can ENFORCE them against the
-            //   matched source/sink node (Phase 2 — previously dropped,
-            //   which broadened the matcher and caused false positives).
+            //   accumulator and `pattern-inside:` sub-items into the
+            //   `insides` accumulator so the post-filter can ENFORCE them
+            //   against the matched sink node (previously dropped, which
+            //   broadened the matcher and caused false positives —
+            //   pattern-inside made the rule fire everywhere instead of only
+            //   inside the required region).
             // - Drop the remaining constraint-only sub-items
-            //   (`pattern-inside:`, `pattern-not-inside:`,
-            //   `focus-metavariable:`, `metavariable-*:`) with a per-key
-            //   warning. This makes the compiled matcher slightly BROADER
-            //   than the original Semgrep rule — documented in
-            //   COMPATIBILITY.md — but only for those deferred keys.
+            //   (`pattern-not-inside:`, `focus-metavariable:`,
+            //   `metavariable-*:`) with a per-key warning. This makes the
+            //   compiled matcher slightly BROADER than the original Semgrep
+            //   rule — documented in COMPATIBILITY.md — but only for those
+            //   deferred keys.
             // - If no expressible matcher results, warn-skip the whole entry.
-            compile_patterns_block(v, role, rule_id, lang, out, negatives);
+            compile_patterns_block(v, role, rule_id, lang, out, negatives, insides);
         }
         Some(other) => {
             eprintln!(
@@ -2405,11 +2528,10 @@ fn compile_entry(
 /// constraint/narrowing operators — they refine the match scope but do not
 /// themselves name a code node shape. The taint engine has no equivalent for
 /// these (yet); they are dropped with a warning, making the compiled matcher
-/// broader. `pattern-not` is intentionally ABSENT from this list: it is
-/// captured into the negatives accumulator and enforced by the post-filter
-/// (Phase 2).
+/// broader. `pattern-not` and `pattern-inside` are intentionally ABSENT from
+/// this list: they are captured into the negatives/insides accumulators and
+/// ENFORCED by the post-filter (containment precision), instead of dropped.
 const PATTERNS_CONSTRAINT_KEYS: &[&str] = &[
-    "pattern-inside",
     "pattern-not-inside",
     "pattern-not-regex",
     "focus-metavariable",
@@ -2422,10 +2544,11 @@ const PATTERNS_CONSTRAINT_KEYS: &[&str] = &[
 
 /// Compile a `patterns:` AND-block value (the list under the `patterns:` key)
 /// by extracting all expressible `pattern:` and `pattern-either:` sub-items.
-/// `pattern-not:` sub-items are captured into `negatives` (compiled and
-/// enforced later by the post-filter). The remaining constraint-only
-/// sub-items are dropped with a warning. If no expressible matcher is
-/// produced the whole entry is warn-skipped.
+/// `pattern-not:` sub-items are captured into `negatives` and `pattern-inside:`
+/// sub-items into `insides` (both compiled and enforced later by the
+/// post-filter). The remaining constraint-only sub-items are dropped with a
+/// warning. If no expressible matcher is produced the whole entry is
+/// warn-skipped.
 fn compile_patterns_block(
     v: &YamlValue,
     role: MatcherRole,
@@ -2433,6 +2556,7 @@ fn compile_patterns_block(
     lang: Language,
     out: &mut Vec<GenericMatcher>,
     negatives: &mut Vec<String>,
+    insides: &mut Vec<String>,
 ) {
     let Some(inner) = v.as_sequence() else {
         eprintln!(
@@ -2465,7 +2589,26 @@ fn compile_patterns_block(
         match sk.as_str() {
             Some("pattern") | Some("pattern-either") => {
                 // Recursively compile via the normal entry path.
-                compile_entry(sub, role, rule_id, lang, out, negatives);
+                compile_entry(sub, role, rule_id, lang, out, negatives, insides);
+            }
+            Some("pattern-inside") => {
+                // Capture the containment context. It is compiled to a
+                // SEARCH-mode AST pattern by the caller and enforced against
+                // the matched sink node in the post-filter: a finding is kept
+                // only when its sink is textually inside a region matched by
+                // this pattern, instead of being dropped (which broadened the
+                // matcher — the rule fired everywhere rather than only inside
+                // the required region).
+                match sv.as_str() {
+                    Some(p) if !p.trim().is_empty() => insides.push(p.to_string()),
+                    _ => eprintln!(
+                        "Warning: taint rule `{}` {} `patterns:` block has a \
+                         `pattern-inside:` whose value is not a non-empty string; \
+                         ignoring constraint",
+                        rule_id,
+                        role.label()
+                    ),
+                }
             }
             Some("pattern-not") => {
                 // Phase 2: capture the negative pattern string. It is
@@ -4690,6 +4833,99 @@ pattern-sinks:
                 .unwrap_or(false),
             "the surviving finding should be the dangerous() sink, got {:?}",
             findings[0].sink_description
+        );
+    }
+
+    // ── `pattern-inside` enforcement in taint `patterns:` AND-blocks ─────────
+    //
+    // Previously a `pattern-inside:` inside a `pattern-sinks` `patterns:` block
+    // was DROPPED, so the sink matched EVERYWHERE instead of only inside the
+    // required region — the rule fired far too broadly. These tests pin the
+    // fix: with an identical tainted flow present in TWO functions, the rule
+    // fires on BOTH sinks when there is no `pattern-inside`, and only on the
+    // sink inside the named region when a `pattern-inside` restricts it. Both
+    // rules compile through the real `parse_taint_rule` path the CLI uses.
+    //
+    // `pattern-inside` is the INVERSE of `pattern-not` (which suppresses a
+    // finding whose sink is INSIDE the region): `pattern-inside` keeps a
+    // finding only when its sink IS inside the region.
+
+    const PATTERN_INSIDE_SRC: &str = r#"
+def safe_zone():
+    cmd = input()
+    dangerous(cmd)
+
+def other_zone():
+    cmd = input()
+    dangerous(cmd)
+"#;
+
+    #[test]
+    fn taint_patterns_block_without_pattern_inside_reports_both_regions() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-no-inside
+mode: taint
+languages: [python]
+severity: ERROR
+message: "tainted input reaches a sink"
+metadata:
+  cwe: "CWE-78"
+pattern-sources:
+  - pattern: input($X)
+pattern-sinks:
+  - pattern: dangerous($X)
+"#,
+        );
+        let tree = parse_file(PATTERN_INSIDE_SRC, Language::Python).expect("fixture parses");
+        let findings = rule.check(PATTERN_INSIDE_SRC, &tree);
+        assert_eq!(
+            findings.len(),
+            2,
+            "without pattern-inside, dangerous() should fire in BOTH functions, got lines {:?}",
+            findings.iter().map(|f| f.line).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn taint_patterns_block_pattern_inside_restricts_to_region() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: py-with-inside
+mode: taint
+languages: [python]
+severity: ERROR
+message: "tainted input reaches a sink"
+metadata:
+  cwe: "CWE-78"
+pattern-sources:
+  - pattern: input($X)
+pattern-sinks:
+  - patterns:
+      - pattern: dangerous($X)
+      - pattern-inside: |
+          def safe_zone():
+              ...
+"#,
+        );
+        let tree = parse_file(PATTERN_INSIDE_SRC, Language::Python).expect("fixture parses");
+        let findings = rule.check(PATTERN_INSIDE_SRC, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "pattern-inside should keep ONLY the sink inside safe_zone(), got lines {:?}",
+            findings.iter().map(|f| f.line).collect::<Vec<_>>()
+        );
+        // The surviving finding must be the `dangerous(cmd)` on line 4 (inside
+        // safe_zone), NOT the identical one on line 8 (inside other_zone).
+        assert_eq!(
+            findings[0].line, 4,
+            "the surviving finding should be inside safe_zone() (line 4), got line {}",
+            findings[0].line
         );
     }
 

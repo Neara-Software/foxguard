@@ -455,6 +455,29 @@ impl CompiledAstPattern {
             .iter()
             .any(|m| m.start_byte < end_byte && start_byte < m.end_byte)
     }
+
+    /// Run this pattern against every node in `root` and return `true` if
+    /// any match's byte range *contains* the half-open `[start_byte, end_byte)`
+    /// span — i.e. the candidate location is textually **inside** a region
+    /// this pattern matches.
+    ///
+    /// Used by the taint bridge's post-filter to enforce `pattern-inside`
+    /// against a finding's sink node: a finding is kept only when its sink's
+    /// range is contained by some region matched by a positive `pattern-inside`
+    /// constraint. The containment test mirrors SEARCH mode's `pattern-inside`
+    /// filtering (`build_matcher`: `r.start_byte >= start && r.end_byte <= end`),
+    /// keeping inside-containment behaviour consistent across modes.
+    pub(crate) fn contains_range(
+        &self,
+        root: tree_sitter::Node<'_>,
+        source: &str,
+        start_byte: usize,
+        end_byte: usize,
+    ) -> bool {
+        match_single_pattern(self, root, source)
+            .iter()
+            .any(|m| m.start_byte <= start_byte && end_byte <= m.end_byte)
+    }
 }
 
 #[derive(Debug, Clone)]
