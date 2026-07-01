@@ -27,6 +27,7 @@ pub mod python_taint;
 pub mod ruby;
 pub mod ruby_taint;
 pub mod rust_lang;
+pub mod scala;
 pub mod scala_taint;
 pub mod semgrep_compat;
 pub mod semgrep_taint;
@@ -70,6 +71,7 @@ pub enum TaintEngine {
     Php,
     Python,
     Ruby,
+    Scala,
     Solidity,
     Swift,
 }
@@ -694,6 +696,15 @@ impl RuleRegistry {
         register_rules!(
             registry,
             [
+                scala::TaintSqlInjection,
+                scala::TaintCommandInjection,
+                scala::TaintXss,
+            ]
+        );
+
+        register_rules!(
+            registry,
+            [
                 php::TaintCommandInjection,
                 php::TaintSqlInjection,
                 php::TaintXss,
@@ -1006,6 +1017,15 @@ fn builtin_taint_specs_for_language(language: Language) -> Vec<RegistryTaintSpec
                 rule_id,
                 language,
                 engine: TaintEngine::Php,
+                spec,
+            })
+            .collect(),
+        Language::Scala => scala_taint::scala_taint_rule_specs()
+            .into_iter()
+            .map(|(rule_id, spec)| RegistryTaintSpec {
+                rule_id,
+                language,
+                engine: TaintEngine::Scala,
                 spec,
             })
             .collect(),
