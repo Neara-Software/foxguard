@@ -1599,15 +1599,15 @@ class QueryHelper {
 "#;
         let tree = parse_file(helper, Language::CSharp).expect("parse");
         let specs = csharp_taint_rule_specs();
-        let summaries =
-            extract_cross_file_summaries(tree.root_node(), helper, None, &specs);
+        let summaries = extract_cross_file_summaries(tree.root_node(), helper, None, &specs);
         let run = summaries
             .iter()
             .find(|s| s.name == "RunQuery")
             .expect("RunQuery should be summarized");
         assert!(
-            run.params_to_sink.iter().any(|f| f.param_index == 0
-                && f.sink_rule_id == "csharp/taint-sql-injection"),
+            run.params_to_sink
+                .iter()
+                .any(|f| f.param_index == 0 && f.sink_rule_id == "csharp/taint-sql-injection"),
             "param 0 must reach the SQL sink: {run:?}"
         );
     }
@@ -1641,8 +1641,9 @@ class Handler {
         let mut summary_map = CrossFileSummaryMap::new();
         summary_map.insert(helper_path.clone(), helper_summaries);
 
-        let allowed: HashSet<String> =
-            ["csharp/taint-sql-injection".to_string()].into_iter().collect();
+        let allowed: HashSet<String> = ["csharp/taint-sql-injection".to_string()]
+            .into_iter()
+            .collect();
         let paths = vec![helper_path];
         let cross = CrossFileInfo {
             same_package_paths: &paths,
@@ -1653,7 +1654,10 @@ class Handler {
         let findings = extract_cross_file_findings(
             caller_tree.root_node(),
             caller,
-            &specs.iter().map(|(id, s)| (*id, s.clone())).collect::<Vec<_>>(),
+            &specs
+                .iter()
+                .map(|(id, s)| (*id, s.clone()))
+                .collect::<Vec<_>>(),
             &cross,
         );
         assert_eq!(

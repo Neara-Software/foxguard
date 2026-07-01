@@ -30,25 +30,49 @@ use std::time::Instant;
 /// and import/package resolution; intra-file engines ignore it. Adapting the
 /// intra-file runners (which take no `ctx`) to this signature is a one-line
 /// wrapper below.
-type TaintRunner =
-    fn(&str, &tree_sitter::Tree, &FileContext<'_>, &HashSet<&str>) -> Vec<Finding>;
+type TaintRunner = fn(&str, &tree_sitter::Tree, &FileContext<'_>, &HashSet<&str>) -> Vec<Finding>;
 
 // ── Adapters for intra-file runners (no `ctx` parameter) ──────────────────────
 // These exist only so every engine shares the `TaintRunner` signature. The
 // cross-file runners already match it and are referenced directly in the table.
-fn run_kt_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+fn run_kt_taint(
+    s: &str,
+    t: &tree_sitter::Tree,
+    _c: &FileContext<'_>,
+    ids: &HashSet<&str>,
+) -> Vec<Finding> {
     crate::rules::kotlin::run_kt_taint_batched(s, t, ids)
 }
-fn run_c_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+fn run_c_taint(
+    s: &str,
+    t: &tree_sitter::Tree,
+    _c: &FileContext<'_>,
+    ids: &HashSet<&str>,
+) -> Vec<Finding> {
     crate::rules::c::run_c_taint_batched(s, t, ids)
 }
-fn run_solidity_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+fn run_solidity_taint(
+    s: &str,
+    t: &tree_sitter::Tree,
+    _c: &FileContext<'_>,
+    ids: &HashSet<&str>,
+) -> Vec<Finding> {
     crate::rules::solidity::run_solidity_taint_batched(s, t, ids)
 }
-fn run_bash_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+fn run_bash_taint(
+    s: &str,
+    t: &tree_sitter::Tree,
+    _c: &FileContext<'_>,
+    ids: &HashSet<&str>,
+) -> Vec<Finding> {
     crate::rules::bash::run_bash_taint_batched(s, t, ids)
 }
-fn run_swift_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &HashSet<&str>) -> Vec<Finding> {
+fn run_swift_taint(
+    s: &str,
+    t: &tree_sitter::Tree,
+    _c: &FileContext<'_>,
+    ids: &HashSet<&str>,
+) -> Vec<Finding> {
     crate::rules::swift::run_swift_taint_batched(s, t, ids)
 }
 
@@ -63,12 +87,27 @@ fn run_swift_taint(s: &str, t: &tree_sitter::Tree, _c: &FileContext<'_>, ids: &H
 const TAINT_DISPATCH: &[(TaintEngine, TaintRunner)] = &[
     // Cross-file engines (consume FileContext Pass-1 summaries).
     (TaintEngine::Go, crate::rules::go::run_go_taint_batched),
-    (TaintEngine::Java, crate::rules::java::run_java_taint_batched),
-    (TaintEngine::Python, crate::rules::python::run_py_taint_batched),
-    (TaintEngine::JavaScript, crate::rules::javascript::run_js_taint_batched),
-    (TaintEngine::Ruby, crate::rules::ruby::run_ruby_taint_batched),
+    (
+        TaintEngine::Java,
+        crate::rules::java::run_java_taint_batched,
+    ),
+    (
+        TaintEngine::Python,
+        crate::rules::python::run_py_taint_batched,
+    ),
+    (
+        TaintEngine::JavaScript,
+        crate::rules::javascript::run_js_taint_batched,
+    ),
+    (
+        TaintEngine::Ruby,
+        crate::rules::ruby::run_ruby_taint_batched,
+    ),
     (TaintEngine::Php, crate::rules::php::run_php_taint_batched),
-    (TaintEngine::CSharp, crate::rules::csharp::run_csharp_taint_batched),
+    (
+        TaintEngine::CSharp,
+        crate::rules::csharp::run_csharp_taint_batched,
+    ),
     // Intra-file engines (adapted to ignore FileContext).
     (TaintEngine::Kotlin, run_kt_taint),
     (TaintEngine::C, run_c_taint),
