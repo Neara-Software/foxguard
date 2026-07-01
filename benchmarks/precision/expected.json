@@ -1,23 +1,23 @@
 {
   "aggregate": {
-    "false_positive": 32,
-    "labeled": 48,
-    "reviewed": 48,
-    "reviewed_noise_rate": 0.6667,
-    "reviewed_precision": 0.3333,
-    "total": 48,
+    "false_positive": 20,
+    "labeled": 36,
+    "reviewed": 36,
+    "reviewed_noise_rate": 0.5556,
+    "reviewed_precision": 0.4444,
+    "total": 36,
     "true_positive": 16,
     "unsure": 0
   },
   "generated_by": "benchmarks/precision/precision.py",
   "repos": {
     "echo": {
-      "false_positive": 6,
-      "labeled": 6,
-      "reviewed": 6,
+      "false_positive": 2,
+      "labeled": 2,
+      "reviewed": 2,
       "reviewed_noise_rate": 1.0,
       "reviewed_precision": 0.0,
-      "total": 6,
+      "total": 2,
       "true_positive": 0,
       "unsure": 0
     },
@@ -32,12 +32,12 @@
       "unsure": 0
     },
     "flask": {
-      "false_positive": 14,
-      "labeled": 14,
-      "reviewed": 14,
+      "false_positive": 6,
+      "labeled": 6,
+      "reviewed": 6,
       "reviewed_noise_rate": 1.0,
       "reviewed_precision": 0.0,
-      "total": 14,
+      "total": 6,
       "true_positive": 0,
       "unsure": 0
     },
@@ -60,16 +60,6 @@
       "reviewed_noise_rate": 1.0,
       "reviewed_precision": 0.0,
       "total": 2,
-      "true_positive": 0,
-      "unsure": 0
-    },
-    "go/no-hardcoded-secret": {
-      "false_positive": 4,
-      "labeled": 4,
-      "reviewed": 4,
-      "reviewed_noise_rate": 1.0,
-      "reviewed_precision": 0.0,
-      "total": 4,
       "true_positive": 0,
       "unsure": 0
     },
@@ -194,12 +184,12 @@
       "unsure": 0
     },
     "py/no-path-traversal": {
-      "false_positive": 9,
-      "labeled": 9,
-      "reviewed": 9,
+      "false_positive": 1,
+      "labeled": 1,
+      "reviewed": 1,
       "reviewed_noise_rate": 1.0,
       "reviewed_precision": 0.0,
-      "total": 9,
+      "total": 1,
       "true_positive": 0,
       "unsure": 0
     },
