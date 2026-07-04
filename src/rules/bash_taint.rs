@@ -101,7 +101,11 @@ fn seed_parameter_sources(scope_node: Node<'_>, spec: &TaintSpec, state: &mut Ta
 
 /// All Bash taint rule IDs paired with their specs.
 pub fn bash_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
-    vec![("bash/taint-command-injection", command_injection_spec())]
+    vec![
+        ("bash/taint-command-injection", command_injection_spec()),
+        ("bash/taint-path-traversal", path_traversal_spec()),
+        ("bash/taint-ssrf", ssrf_spec()),
+    ]
 }
 
 /// Shared sources for Bash taint rules.
@@ -176,6 +180,61 @@ fn command_injection_spec() -> TaintSpec {
     TaintSpec {
         sources: bash_taint_sources(),
         sinks: bash_taint_sinks(),
+        sanitizers: bash_taint_sanitizers(),
+    }
+}
+
+/// File-operation sinks: a tainted value expanded into the path argument of one
+/// of these commands lets an attacker read, overwrite, or delete an arbitrary
+/// path (directory/path traversal). Each is matched by *command name* exactly
+/// like the command-injection sinks — the engine scans the command's word
+/// arguments for a tainted expansion (`cat "$f"`, `rm "$1"`).
+pub fn bash_taint_path_sinks() -> Vec<NodeMatcher> {
+    [
+        ("cat", "cat <tainted path>"),
+        ("head", "head <tainted path>"),
+        ("tail", "tail <tainted path>"),
+        ("rm", "rm <tainted path>"),
+        ("cp", "cp <tainted path>"),
+        ("mv", "mv <tainted path>"),
+        ("tee", "tee <tainted path>"),
+    ]
+    .iter()
+    .map(|(cmd, desc)| NodeMatcher::Call {
+        canonical: (*cmd).into(),
+        description: (*desc).into(),
+    })
+    .collect()
+}
+
+fn path_traversal_spec() -> TaintSpec {
+    TaintSpec {
+        sources: bash_taint_sources(),
+        sinks: bash_taint_path_sinks(),
+        sanitizers: bash_taint_sanitizers(),
+    }
+}
+
+/// Network-fetch sinks: a tainted value expanded into the URL argument of
+/// `curl`/`wget` lets an attacker point the request at an arbitrary host
+/// (server-side request forgery).
+pub fn bash_taint_url_sinks() -> Vec<NodeMatcher> {
+    [
+        ("curl", "curl <tainted URL>"),
+        ("wget", "wget <tainted URL>"),
+    ]
+    .iter()
+    .map(|(cmd, desc)| NodeMatcher::Call {
+        canonical: (*cmd).into(),
+        description: (*desc).into(),
+    })
+    .collect()
+}
+
+fn ssrf_spec() -> TaintSpec {
+    TaintSpec {
+        sources: bash_taint_sources(),
+        sinks: bash_taint_url_sinks(),
         sanitizers: bash_taint_sanitizers(),
     }
 }

@@ -1860,8 +1860,9 @@ mod bash_taint {
     /// Positive fixture for the Bash taint engine. Six untrusted-input flows
     /// reach a command-execution sink (positional/special params, `read` stdin,
     /// `$(curl)`/`$(cat)` substitutions, plus one in a function body). The
-    /// `bash/taint-command-injection` rule must fire exactly six times, and the
-    /// three near-miss blocks must stay silent.
+    /// `bash/taint-command-injection` rule must fire exactly six times; the
+    /// path-traversal (`cat "$userfile"`) and SSRF (`curl "$target_url"`) rules
+    /// fire once each, and the near-miss blocks must stay silent.
     #[test]
     fn test_vulnerable_bash_taint_catches_every_flow() {
         let output = foxguard_cmd_isolated()
@@ -1872,15 +1873,28 @@ mod bash_taint {
         assert!(!output.status.success());
 
         let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
-        let n = findings
-            .iter()
-            .filter(|f| f["rule_id"].as_str() == Some("bash/taint-command-injection"))
-            .count();
+        let count = |rule: &str| {
+            findings
+                .iter()
+                .filter(|f| f["rule_id"].as_str() == Some(rule))
+                .count()
+        };
+        let n = count("bash/taint-command-injection");
         assert_eq!(
             n, 6,
             "bash/taint-command-injection should fire exactly 6 times on \
              vulnerable_bash_taint.sh, got {}",
             n
+        );
+        assert_eq!(
+            count("bash/taint-path-traversal"),
+            1,
+            "bash/taint-path-traversal should fire exactly once (cat \"$userfile\")"
+        );
+        assert_eq!(
+            count("bash/taint-ssrf"),
+            1,
+            "bash/taint-ssrf should fire exactly once (curl \"$target_url\")"
         );
     }
 
@@ -1897,11 +1911,15 @@ mod bash_taint {
         let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
         let n = findings
             .iter()
-            .filter(|f| f["rule_id"].as_str() == Some("bash/taint-command-injection"))
+            .filter(|f| {
+                f["rule_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("bash/taint-"))
+            })
             .count();
         assert_eq!(
             n, 0,
-            "bash/taint-command-injection should not fire on safe_bash_taint.sh, got {}",
+            "no bash/taint-* rule should fire on safe_bash_taint.sh, got {}",
             n
         );
     }
@@ -1916,8 +1934,9 @@ mod apex_taint {
     /// reach a dynamic SOQL sink (`Database.query` directly and via string
     /// concat, an `ApexPages` page parameter into `Database.getQueryLocator`,
     /// and a parameter into `Database.countQuery`). The
-    /// `apex/taint-soql-injection` rule must fire exactly four times, and the
-    /// three near-miss blocks (escapeSingleQuotes-sanitized, literal query,
+    /// `apex/taint-soql-injection` rule must fire exactly four times, the
+    /// `apex/taint-sosl-injection` rule fires once (`Search.query(sosl)`), and
+    /// the near-miss blocks (escapeSingleQuotes-sanitized, literal query,
     /// log-only) must stay silent.
     #[test]
     fn test_vulnerable_apex_taint_catches_every_flow() {
@@ -1929,15 +1948,23 @@ mod apex_taint {
         assert!(!output.status.success());
 
         let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
-        let n = findings
-            .iter()
-            .filter(|f| f["rule_id"].as_str() == Some("apex/taint-soql-injection"))
-            .count();
+        let count = |rule: &str| {
+            findings
+                .iter()
+                .filter(|f| f["rule_id"].as_str() == Some(rule))
+                .count()
+        };
+        let n = count("apex/taint-soql-injection");
         assert_eq!(
             n, 4,
             "apex/taint-soql-injection should fire exactly 4 times on \
              vulnerable_apex_taint.cls, got {}",
             n
+        );
+        assert_eq!(
+            count("apex/taint-sosl-injection"),
+            1,
+            "apex/taint-sosl-injection should fire exactly once (Search.query(sosl))"
         );
     }
 
@@ -1954,11 +1981,15 @@ mod apex_taint {
         let findings: Vec<serde_json::Value> = scan_json_findings_from_slice(&output.stdout);
         let n = findings
             .iter()
-            .filter(|f| f["rule_id"].as_str() == Some("apex/taint-soql-injection"))
+            .filter(|f| {
+                f["rule_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("apex/taint-"))
+            })
             .count();
         assert_eq!(
             n, 0,
-            "apex/taint-soql-injection should not fire on safe_apex_taint.cls, got {}",
+            "no apex/taint-* rule should fire on safe_apex_taint.cls, got {}",
             n
         );
     }
@@ -1969,11 +2000,13 @@ mod apex_taint {
 mod scala_taint {
     use super::*;
 
-    /// Positive fixture for the first-party Scala taint engine. Three untrusted
+    /// Positive fixture for the first-party Scala taint engine. Five untrusted
     /// request-parameter flows reach a sink: a JDBC `executeQuery` (SQL), a
-    /// `Runtime.getRuntime.exec` (command), and an `Html(...)` render (XSS). Each
-    /// `scala/taint-*` rule must fire exactly once, and the near-miss handlers
-    /// (constant query / literal command / static HTML) must stay silent.
+    /// `Runtime.getRuntime.exec` (command), an `Html(...)` render (XSS), a
+    /// `Source.fromFile(...)` open (path traversal), and a `ws.url(...)` fetch
+    /// (SSRF). Each `scala/taint-*` rule must fire exactly once, and the
+    /// near-miss handlers (constant query / literal command / static HTML /
+    /// fixed path / fixed URL) must stay silent.
     #[test]
     fn test_vulnerable_scala_taint_catches_every_flow() {
         let output = foxguard_cmd_isolated()
@@ -1989,6 +2022,8 @@ mod scala_taint {
             "scala/taint-sql-injection",
             "scala/taint-command-injection",
             "scala/taint-xss",
+            "scala/taint-path-traversal",
+            "scala/taint-ssrf",
         ] {
             let n = findings
                 .iter()
@@ -2007,8 +2042,8 @@ mod scala_taint {
             })
             .count();
         assert_eq!(
-            total, 3,
-            "expected exactly 3 scala taint findings, got {total}"
+            total, 5,
+            "expected exactly 5 scala taint findings, got {total}"
         );
     }
 

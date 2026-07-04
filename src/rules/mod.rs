@@ -695,9 +695,19 @@ impl RuleRegistry {
             ]
         );
 
-        register_rules!(registry, [apex::TaintSoqlInjection]);
+        register_rules!(
+            registry,
+            [apex::TaintSoqlInjection, apex::TaintSoslInjection]
+        );
 
-        register_rules!(registry, [bash::TaintCommandInjection]);
+        register_rules!(
+            registry,
+            [
+                bash::TaintCommandInjection,
+                bash::TaintPathTraversal,
+                bash::TaintSsrf,
+            ]
+        );
 
         register_rules!(
             registry,
@@ -705,6 +715,8 @@ impl RuleRegistry {
                 scala::TaintSqlInjection,
                 scala::TaintCommandInjection,
                 scala::TaintXss,
+                scala::TaintPathTraversal,
+                scala::TaintSsrf,
             ]
         );
 

@@ -26,3 +26,13 @@ bash -c "$quoted"
 # NEAR MISS: curl output is printed, never executed.
 out=$(curl -s http://example.com)
 echo "$out"
+
+# NEAR MISS (path traversal): literal file path, no tainted input.
+cat /etc/hostname
+
+# NEAR MISS (path traversal): printf %q shell-quotes the parameter before cat.
+safe_path=$(printf '%q' "$1")
+cat "$safe_path"
+
+# NEAR MISS (SSRF): fixed URL, no request input reaches curl.
+curl -s https://status.example.com/health

@@ -22,4 +22,11 @@ public class SafeApexTaint {
     public void audit(String actor) {
         System.debug(LoggingLevel.INFO, 'actor=' + actor);
     }
+
+    // Escaped input before building a dynamic SOSL query — no SOSL injection.
+    public List<List<sObject>> escapedSosl(String term) {
+        String clean = String.escapeSingleQuotes(term);
+        String sosl = 'FIND \'' + clean + '\' IN ALL FIELDS RETURNING Account(Id)';
+        return Search.query(sosl);
+    }
 }

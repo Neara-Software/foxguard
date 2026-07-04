@@ -44,6 +44,14 @@ fn scala_taint_xss_desc(src: &str, sink: &str) -> String {
     format!("{src} reaches {sink} — untrusted input reaches an HTML output sink (XSS)")
 }
 
+fn scala_taint_path_traversal_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted request input can traverse to an arbitrary path")
+}
+
+fn scala_taint_ssrf_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted request input can redirect the request to an arbitrary host")
+}
+
 fn scala_taint_meta(rule_id: &str) -> Option<ScalaTaintRuleMeta<'static>> {
     match rule_id {
         "scala/taint-sql-injection" => Some(ScalaTaintRuleMeta {
@@ -72,6 +80,24 @@ fn scala_taint_meta(rule_id: &str) -> Option<ScalaTaintRuleMeta<'static>> {
                 "HTML-escape untrusted values before rendering them; avoid wrapping request input in Html(...) which bypasses Play's auto-escaping",
             ),
             format_description: scala_taint_xss_desc,
+        }),
+        "scala/taint-path-traversal" => Some(ScalaTaintRuleMeta {
+            rule_id: "scala/taint-path-traversal",
+            severity: Severity::High,
+            cwe: Some("CWE-22"),
+            fix_suggestion: Some(
+                "Validate request input against an allowlist and resolve it under a fixed base directory before opening a file (Source.fromFile / Paths.get)",
+            ),
+            format_description: scala_taint_path_traversal_desc,
+        }),
+        "scala/taint-ssrf" => Some(ScalaTaintRuleMeta {
+            rule_id: "scala/taint-ssrf",
+            severity: Severity::High,
+            cwe: Some("CWE-918"),
+            fix_suggestion: Some(
+                "Do not build URLs from request input; validate the host against an allowlist of trusted endpoints before calling Source.fromURL / WSClient.url",
+            ),
+            format_description: scala_taint_ssrf_desc,
         }),
         _ => None,
     }
@@ -215,6 +241,48 @@ impl_rule! {
     severity = Severity::High,
     cwe = Some("CWE-79"),
     description = "Untrusted request input reaches an HTML output sink",
+    language = Language::Scala,
+    fn check(_self, source, tree) {
+        let spec = scala_taint::scala_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_scala_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 4: scala/taint-path-traversal ─────────────────────────────────────
+
+pub struct TaintPathTraversal;
+
+impl_rule! {
+    TaintPathTraversal,
+    id = "scala/taint-path-traversal",
+    severity = Severity::High,
+    cwe = Some("CWE-22"),
+    description = "Untrusted request input reaches a file-open sink (path traversal)",
+    language = Language::Scala,
+    fn check(_self, source, tree) {
+        let spec = scala_taint::scala_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_scala_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule 5: scala/taint-ssrf ───────────────────────────────────────────────
+
+pub struct TaintSsrf;
+
+impl_rule! {
+    TaintSsrf,
+    id = "scala/taint-ssrf",
+    severity = Severity::High,
+    cwe = Some("CWE-918"),
+    description = "Untrusted request input reaches a URL-fetch sink (SSRF)",
     language = Language::Scala,
     fn check(_self, source, tree) {
         let spec = scala_taint::scala_taint_rule_specs()

@@ -33,6 +33,14 @@ fn bash_taint_command_injection_desc(src: &str, sink: &str) -> String {
     format!("{src} reaches {sink} — untrusted shell input can inject OS commands")
 }
 
+fn bash_taint_path_traversal_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted shell input can traverse to an arbitrary path")
+}
+
+fn bash_taint_ssrf_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted shell input can redirect the request to an arbitrary host")
+}
+
 fn bash_taint_meta(rule_id: &str) -> Option<BashTaintRuleMeta<'static>> {
     match rule_id {
         "bash/taint-command-injection" => Some(BashTaintRuleMeta {
@@ -43,6 +51,24 @@ fn bash_taint_meta(rule_id: &str) -> Option<BashTaintRuleMeta<'static>> {
                 "Do not pass untrusted input to eval/bash -c/sh -c/source; validate against an allowlist or shell-quote with printf %q",
             ),
             format_description: bash_taint_command_injection_desc,
+        }),
+        "bash/taint-path-traversal" => Some(BashTaintRuleMeta {
+            rule_id: "bash/taint-path-traversal",
+            severity: Severity::High,
+            cwe: Some("CWE-22"),
+            fix_suggestion: Some(
+                "Validate untrusted input against an allowlist and resolve it under a fixed base directory before passing it to file commands (cat/rm/cp/mv/...)",
+            ),
+            format_description: bash_taint_path_traversal_desc,
+        }),
+        "bash/taint-ssrf" => Some(BashTaintRuleMeta {
+            rule_id: "bash/taint-ssrf",
+            severity: Severity::High,
+            cwe: Some("CWE-918"),
+            fix_suggestion: Some(
+                "Do not build curl/wget URLs from untrusted input; validate the host against an allowlist of trusted endpoints",
+            ),
+            format_description: bash_taint_ssrf_desc,
         }),
         _ => None,
     }
@@ -143,6 +169,48 @@ impl_rule! {
     severity = Severity::Critical,
     cwe = Some("CWE-78"),
     description = "Untrusted shell input reaches a command execution sink",
+    language = Language::Bash,
+    fn check(_self, source, tree) {
+        let spec = bash_taint::bash_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_bash_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule: bash/taint-path-traversal ────────────────────────────────────────
+
+pub struct TaintPathTraversal;
+
+impl_rule! {
+    TaintPathTraversal,
+    id = "bash/taint-path-traversal",
+    severity = Severity::High,
+    cwe = Some("CWE-22"),
+    description = "Untrusted shell input reaches a file-operation sink (path traversal)",
+    language = Language::Bash,
+    fn check(_self, source, tree) {
+        let spec = bash_taint::bash_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_bash_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule: bash/taint-ssrf ──────────────────────────────────────────────────
+
+pub struct TaintSsrf;
+
+impl_rule! {
+    TaintSsrf,
+    id = "bash/taint-ssrf",
+    severity = Severity::High,
+    cwe = Some("CWE-918"),
+    description = "Untrusted shell input reaches a curl/wget URL sink (SSRF)",
     language = Language::Bash,
     fn check(_self, source, tree) {
         let spec = bash_taint::bash_taint_rule_specs()
