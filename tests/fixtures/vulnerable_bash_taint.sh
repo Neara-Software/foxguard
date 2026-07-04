@@ -27,6 +27,14 @@ run_it() {
   eval "$1"
 }
 
+# POSITIVE (path traversal): tainted parameter -> cat an arbitrary file.
+userfile="$1"
+cat "$userfile"
+
+# POSITIVE (SSRF): tainted parameter -> curl an arbitrary URL.
+target_url="$2"
+curl -s "$target_url"
+
 # NEAR MISS: literal argument, no expansion.
 eval "ls -la"
 
@@ -37,3 +45,9 @@ eval "$safe_cmd"
 # NEAR MISS: printf %q shell-quotes the parameter before it reaches eval.
 quoted=$(printf '%q' "$1")
 eval "$quoted"
+
+# NEAR MISS (path traversal): literal file path, nothing tainted.
+cat /etc/hostname
+
+# NEAR MISS (SSRF): fixed URL, no request input.
+curl -s https://status.example.com/health

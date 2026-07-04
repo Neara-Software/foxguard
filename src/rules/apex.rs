@@ -33,6 +33,10 @@ fn apex_taint_soql_injection_desc(src: &str, sink: &str) -> String {
     format!("{src} reaches {sink} — untrusted input can inject SOQL")
 }
 
+fn apex_taint_sosl_injection_desc(src: &str, sink: &str) -> String {
+    format!("{src} reaches {sink} — untrusted input can inject SOSL")
+}
+
 fn apex_taint_meta(rule_id: &str) -> Option<ApexTaintRuleMeta<'static>> {
     match rule_id {
         "apex/taint-soql-injection" => Some(ApexTaintRuleMeta {
@@ -43,6 +47,15 @@ fn apex_taint_meta(rule_id: &str) -> Option<ApexTaintRuleMeta<'static>> {
                 "Use static SOQL with bind variables, or escape untrusted input with String.escapeSingleQuotes() before building a dynamic query",
             ),
             format_description: apex_taint_soql_injection_desc,
+        }),
+        "apex/taint-sosl-injection" => Some(ApexTaintRuleMeta {
+            rule_id: "apex/taint-sosl-injection",
+            severity: Severity::Critical,
+            cwe: Some("CWE-943"),
+            fix_suggestion: Some(
+                "Use a static SOSL FIND clause, or escape untrusted input with String.escapeSingleQuotes() before building a dynamic Search.query()",
+            ),
+            format_description: apex_taint_sosl_injection_desc,
         }),
         _ => None,
     }
@@ -143,6 +156,27 @@ impl_rule! {
     severity = Severity::Critical,
     cwe = Some("CWE-943"),
     description = "Untrusted input reaches a dynamic SOQL query sink",
+    language = Language::Apex,
+    fn check(_self, source, tree) {
+        let spec = apex_taint::apex_taint_rule_specs()
+            .into_iter()
+            .find(|(id, _)| *id == _self.id())
+            .map(|(_, spec)| spec)
+            .unwrap_or_default();
+        run_apex_taint_single(_self.id(), source, tree, &spec)
+    }
+}
+
+// ─── Rule: apex/taint-sosl-injection ────────────────────────────────────────
+
+pub struct TaintSoslInjection;
+
+impl_rule! {
+    TaintSoslInjection,
+    id = "apex/taint-sosl-injection",
+    severity = Severity::Critical,
+    cwe = Some("CWE-943"),
+    description = "Untrusted input reaches a dynamic SOSL query sink",
     language = Language::Apex,
     fn check(_self, source, tree) {
         let spec = apex_taint::apex_taint_rule_specs()

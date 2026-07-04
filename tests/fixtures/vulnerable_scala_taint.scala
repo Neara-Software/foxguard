@@ -5,9 +5,11 @@
 // is treated as untrusted request input by the engine.
 //
 // Expected findings:
-//   scala/taint-sql-injection      → line ~18 (stmt.executeQuery(concat))
-//   scala/taint-command-injection  → line ~25 (Runtime.getRuntime.exec)
-//   scala/taint-xss                → line ~32 (Html(concat))
+//   scala/taint-sql-injection      → stmt.executeQuery(concat)
+//   scala/taint-command-injection  → Runtime.getRuntime.exec
+//   scala/taint-xss                → Html(concat)
+//   scala/taint-path-traversal     → Source.fromFile(param)
+//   scala/taint-ssrf               → ws.url(param)
 
 package controllers
 
@@ -31,6 +33,16 @@ object VulnerableController {
     Ok(Html("<h1>Hello " + msg + "</h1>"))
   }
 
+  // Path traversal: request parameter opens an arbitrary file.
+  def download(path: String) = Action {
+    Ok(Source.fromFile(path).mkString)
+  }
+
+  // SSRF: request parameter fetches an arbitrary URL.
+  def fetch(target: String) = Action {
+    Ok(ws.url(target).toString)
+  }
+
   // ── Near-misses (must NOT fire) ──────────────────────────────────────────
 
   // Constant query, no parameter reaches the sink.
@@ -49,5 +61,15 @@ object VulnerableController {
   // Static HTML content, nothing tainted.
   def banner() = Action {
     Ok(Html("<h1>Welcome</h1>"))
+  }
+
+  // Fixed file path, no request input reaches the file-open sink.
+  def motd() = Action {
+    Ok(Source.fromFile("/etc/motd").mkString)
+  }
+
+  // Fixed URL, no request input reaches the fetch sink.
+  def healthcheck() = Action {
+    Ok(ws.url("https://status.example.com").toString)
   }
 }

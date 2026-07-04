@@ -31,4 +31,14 @@ object SafeController {
     logger.info("received: " + msg)
     Ok("received")
   }
+
+  // Fixed file path — request input never reaches the file-open sink.
+  def readme(name: String) = Action {
+    Ok(Source.fromFile("/etc/motd").mkString)
+  }
+
+  // Fixed URL — request input never reaches the fetch sink.
+  def fetch(target: String) = Action {
+    Ok(ws.url("https://status.example.com").toString)
+  }
 }

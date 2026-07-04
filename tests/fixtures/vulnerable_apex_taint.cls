@@ -25,11 +25,23 @@ public class VulnerableApexTaint {
         return Database.countQuery(q);
     }
 
+    // POSITIVE 5 (SOSL): tainted parameter concatenated into a dynamic SOSL
+    // FIND clause and executed via Search.query.
+    public List<List<sObject>> searchAnything(String term) {
+        String sosl = 'FIND \'' + term + '\' IN ALL FIELDS RETURNING Account(Id)';
+        return Search.query(sosl);
+    }
+
     // NEAR-MISS 1: input is escaped with String.escapeSingleQuotes before use.
     public List<Account> safeSearch(String name) {
         String clean = String.escapeSingleQuotes(name);
         String q = 'SELECT Id FROM Account WHERE Name = \'' + clean + '\'';
         return Database.query(q);
+    }
+
+    // NEAR-MISS 4 (SOSL): fully literal SOSL query — nothing untrusted flows in.
+    public List<List<sObject>> searchLiteral() {
+        return Search.query('FIND \'acme\' IN ALL FIELDS RETURNING Account(Id)');
     }
 
     // NEAR-MISS 2: fully static/literal query — no untrusted input reaches the sink.

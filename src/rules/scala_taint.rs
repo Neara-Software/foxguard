@@ -76,6 +76,8 @@ pub fn scala_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
         ("scala/taint-sql-injection", sql_injection_spec()),
         ("scala/taint-command-injection", command_injection_spec()),
         ("scala/taint-xss", xss_spec()),
+        ("scala/taint-path-traversal", path_traversal_spec()),
+        ("scala/taint-ssrf", ssrf_spec()),
     ]
 }
 
@@ -165,6 +167,55 @@ fn xss_spec() -> TaintSpec {
                 description: "Html.apply() with tainted content (XSS)".into(),
             },
         ],
+        sanitizers: scala_taint_sanitizers(),
+    }
+}
+
+fn path_traversal_spec() -> TaintSpec {
+    TaintSpec {
+        sources: scala_taint_sources(),
+        sinks: vec![
+            // `scala.io.Source.fromFile(path)` opens an arbitrary file. The
+            // final method segment is `fromFile`, matched by any-receiver
+            // `MethodName` (also fires for `Source.fromFile`).
+            NodeMatcher::MethodName {
+                method: "fromFile".into(),
+                description: "Source.fromFile() with tainted path (path traversal)".into(),
+            },
+            // `java.nio.file.Paths.get(path)` builds a `Path` from untrusted
+            // input — the standard traversal entry point. Written idiomatically
+            // as `Paths.get(...)` (callee `Paths.get`).
+            NodeMatcher::Call {
+                canonical: "Paths.get".into(),
+                description: "Paths.get() with tainted path (path traversal)".into(),
+            },
+        ],
+        // `new File(path)` / `new java.io.File(path)` construction is NOT a
+        // `call_expression` in tree-sitter-scala (it is an `instance_expression`),
+        // so the engine cannot match it as a sink — intentionally omitted.
+        sanitizers: scala_taint_sanitizers(),
+    }
+}
+
+fn ssrf_spec() -> TaintSpec {
+    TaintSpec {
+        sources: scala_taint_sources(),
+        sinks: vec![
+            // `scala.io.Source.fromURL(url)` fetches an arbitrary URL. Final
+            // segment `fromURL`, any-receiver `MethodName`.
+            NodeMatcher::MethodName {
+                method: "fromURL".into(),
+                description: "Source.fromURL() with tainted URL (SSRF)".into(),
+            },
+            // Play's `WSClient.url(url)` opens a request to an arbitrary host —
+            // `ws.url(tainted)`. Final method segment `url`.
+            NodeMatcher::MethodName {
+                method: "url".into(),
+                description: "WSClient.url() with tainted URL (SSRF)".into(),
+            },
+        ],
+        // `new URL(url)` construction is an `instance_expression`, not a call —
+        // the engine cannot match it, so it is intentionally omitted.
         sanitizers: scala_taint_sanitizers(),
     }
 }

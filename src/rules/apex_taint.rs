@@ -77,7 +77,10 @@ impl TaintState {
 
 /// All Apex taint rule IDs paired with their specs.
 pub fn apex_taint_rule_specs() -> Vec<(&'static str, TaintSpec)> {
-    vec![("apex/taint-soql-injection", soql_injection_spec())]
+    vec![
+        ("apex/taint-soql-injection", soql_injection_spec()),
+        ("apex/taint-sosl-injection", sosl_injection_spec()),
+    ]
 }
 
 /// Shared sources for Apex taint rules — untrusted request inputs.
@@ -141,6 +144,25 @@ fn soql_injection_spec() -> TaintSpec {
     TaintSpec {
         sources: apex_taint_sources(),
         sinks: apex_taint_sinks(),
+        sanitizers: apex_taint_sanitizers(),
+    }
+}
+
+/// Dynamic-SOSL sinks: `Search.query(sosl)` executes an attacker-controlled
+/// full-text search string (SOSL injection — the SOSL analogue of SOQL
+/// injection, CWE-943). `String.escapeSingleQuotes` neutralizes it, so it is
+/// carried as the shared sanitizer.
+pub fn apex_taint_sosl_sinks() -> Vec<NodeMatcher> {
+    vec![NodeMatcher::Call {
+        canonical: "Search.query".into(),
+        description: "Search.query() (dynamic SOSL)".into(),
+    }]
+}
+
+fn sosl_injection_spec() -> TaintSpec {
+    TaintSpec {
+        sources: apex_taint_sources(),
+        sinks: apex_taint_sosl_sinks(),
         sanitizers: apex_taint_sanitizers(),
     }
 }
