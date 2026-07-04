@@ -260,6 +260,40 @@ pub struct Propagator {
     pub description: String,
 }
 
+/// A bounded taint-**labels** policy for the tractable Java `CONCAT`-family
+/// rules (single positive label; NO `not`/`and`/`or`).
+///
+/// See `docs/parity/taint-labels-design.md`. Semgrep's advanced taint mode lets
+/// a source emit a named **label** and gates sinks (and label-emitting
+/// sources/propagators) on a `requires:` boolean over labels. This struct models
+/// only the smallest self-contained slice — the shape shared by
+/// `formatted-sql-string`, `tainted-html-string`, and `tainted-system-command`:
+///
+/// - every primary source emits `source_label` (e.g. `INPUT`);
+/// - a value carrying `relabel_from` that flows through a string-building node
+///   (`+` / `+=` / `String.format` / `String.join` / `.concat` /
+///   `StringBuilder.append` / `new StringBuilder(...)`) additionally acquires
+///   `relabel_to` (e.g. `INPUT` → `CONCAT`) — the conditional-relabel mechanic
+///   compiled from a source/propagator with `label: L2, requires: L1`;
+/// - a sink fires ONLY when the reaching value carries `sink_requires`
+///   (e.g. `CONCAT`).
+///
+/// The `not`/`and`/`or` `requires:` tier (Go/TS/JS rules) is deliberately NOT
+/// modeled here; rules needing it stay skipped (see the bridge's
+/// `detect_label_policy`). Only the Java engine consults this policy.
+#[derive(Debug, Clone)]
+pub struct LabelPolicy {
+    /// Label emitted by every primary (unconditional) source.
+    pub source_label: String,
+    /// Trigger label for the string-building conditional relabel.
+    pub relabel_from: String,
+    /// Label added to a value that carries `relabel_from` and flows through a
+    /// string-building node.
+    pub relabel_to: String,
+    /// Sink gating label: a sink fires only when the reaching value carries it.
+    pub sink_requires: String,
+}
+
 /// A single source→sink flow reported by the engine.
 #[derive(Debug, Clone)]
 pub struct TaintFinding {

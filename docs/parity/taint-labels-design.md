@@ -1,5 +1,20 @@
 # Taint-labels (`label:` / `requires:`) feasibility assessment
 
+> **Update (2026-07-04): the Java `CONCAT` family is now IMPLEMENTED** (the
+> single-positive-label slice recommended below). `formatted-sql-string` and
+> `tainted-system-command` now load and match faithfully — a tainted value that
+> flows through a string concatenation/format into the sink fires, while the
+> same value reaching the sink WITHOUT a concat (e.g. a parameterized query)
+> does not (the `requires: CONCAT` discrimination). Mechanism: a per-value label
+> set on the Java engine's `TaintInfo`, a `LabelPolicy` compiled by
+> `detect_label_policy` in the bridge (single positive label only — `not`/`and`/
+> `or` still skip via `Unsupported`), a string-building conditional relabel
+> (`requires INPUT → emit CONCAT`), and a sink label gate. `tainted-html-string`
+> still skips: its `ResponseEntity` focus-metavariable sink shape does not
+> compile to a matcher (a sink-compat gap, independent of labels). The
+> `not`/`and`/`or` `requires:` tier (Go/TS/JS) remains deferred. The rest of this
+> note is the original assessment.
+
 Status: **assessment-only — nothing implemented.** The faithfully-loadable
 subset is empty; every registry rule that uses taint-labels needs the full
 labeled-taint algebra (per-value label *sets*, conditional relabeling

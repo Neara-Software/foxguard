@@ -1622,6 +1622,12 @@ pub struct SemgrepTaintRule {
     /// yet consult propagators (a documented false-negative, never a false
     /// positive).
     propagators: Vec<crate::rules::taint_engine::Propagator>,
+    /// Compiled taint-**labels** policy (Semgrep advanced taint, `CONCAT`-family
+    /// slice). `Some` only for the Java rules whose `label:`/`requires:` shape is
+    /// the tractable single-positive-label form (see [`detect_label_policy`]);
+    /// `None` for every unlabeled rule (unchanged behavior). Consulted only by
+    /// the Java engine.
+    label_policy: Option<crate::rules::taint_engine::LabelPolicy>,
 }
 
 /// Unified view over the three engine-specific `TaintFinding` types.
@@ -1899,12 +1905,13 @@ impl Rule for SemgrepTaintRule {
             }
             Language::Java => {
                 let spec = to_java_spec(&self.spec);
-                java_taint::analyze_tree_with_propagators(
+                java_taint::analyze_tree_labeled(
                     tree.root_node(),
                     source,
                     &spec,
                     None,
                     &self.propagators,
+                    self.label_policy.as_ref(),
                 )
                 .into_iter()
                 .map(TaintFindingView::from_java)
@@ -2101,6 +2108,140 @@ pub enum TaintRuleParse {
 /// Returns [`TaintRuleParse::NotTaint`] when the rule does not declare
 /// `mode: taint`, so the caller can keep running its normal pattern-rule
 /// compilation without an early exit.
+/// Outcome of scanning a taint rule's `label:` / `requires:` usage.
+enum LabelDetect {
+    /// No `label:` / `requires:` anywhere — an ordinary unlabeled rule.
+    None,
+    /// Uses taint-labels but NOT in the tractable single-positive-label
+    /// `CONCAT`-family shape (e.g. `not`/`and`/`or` in `requires:`, or a
+    /// structure this slice does not model). The bridge treats it exactly as the
+    /// pre-labels loader did (labeled entries stay multi-key and drop, so the
+    /// rule skips) — never faking a subset that would over-match.
+    Unsupported,
+    /// The tractable `CONCAT`-family shape: one primary source label `L1`, a
+    /// conditional relabel `requires L1 -> emit L2`, and every sink gating on
+    /// `requires: L2`.
+    Policy(crate::rules::taint_engine::LabelPolicy),
+}
+
+/// True when `s` is a single positive taint label token (`INPUT`, `CONCAT`, …)
+/// — no `not`/`and`/`or`, parens, or whitespace. Anything else means the
+/// `requires:` needs the deferred boolean-algebra tier and is not modeled here.
+fn is_single_label_token(s: &str) -> bool {
+    let s = s.trim();
+    !s.is_empty()
+        && s.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        // Reserved boolean keywords, defensively excluded even if they were a
+        // lone token.
+        && !matches!(s, "not" | "and" | "or" | "NOT" | "AND" | "OR")
+}
+
+/// Scan a `mode: taint` rule's sources / propagators / sinks for taint-labels
+/// usage and classify it (see [`LabelDetect`]).
+///
+/// Recognizes ONLY the `CONCAT`-family shape shared by `formatted-sql-string`,
+/// `tainted-html-string`, and `tainted-system-command`:
+/// - every primary (no-`requires`) labeled source emits the SAME label `L1`;
+/// - one or more sources/propagators carry `label: L2, requires: L1` (the
+///   conditional relabel);
+/// - every sink carries `requires: L2` (single positive label), and no sink is
+///   left ungated.
+///
+/// Any deviation (negation/conjunction in `requires:`, multiple primary labels,
+/// a sink that emits a label or is ungated, a source/propagator with `requires:`
+/// but no `label:`) yields [`LabelDetect::Unsupported`], keeping the rule's safe
+/// pre-labels skip rather than loading an over-matching approximation.
+fn detect_label_policy(yaml: &YamlValue) -> LabelDetect {
+    let empty: Vec<YamlValue> = Vec::new();
+    let seq = |key: &str| -> Vec<YamlValue> {
+        yaml.get(key)
+            .and_then(YamlValue::as_sequence)
+            .cloned()
+            .unwrap_or_else(|| empty.clone())
+    };
+    let sources = seq("pattern-sources");
+    let propagators = seq("pattern-propagators");
+    let sinks = seq("pattern-sinks");
+
+    let mut any_labels = false;
+    let mut primary_labels: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // (requires_label, emitted_label) for each conditional-relabel entry.
+    let mut relabels: Vec<(String, String)> = Vec::new();
+
+    for entry in sources.iter().chain(propagators.iter()) {
+        let label = entry.get("label").and_then(YamlValue::as_str);
+        let requires = entry.get("requires").and_then(YamlValue::as_str);
+        if label.is_some() || requires.is_some() {
+            any_labels = true;
+        }
+        match (label, requires) {
+            (Some(l), None) => {
+                primary_labels.insert(l.trim().to_string());
+            }
+            (Some(l), Some(r)) => {
+                if !is_single_label_token(r) || !is_single_label_token(l) {
+                    return LabelDetect::Unsupported;
+                }
+                relabels.push((r.trim().to_string(), l.trim().to_string()));
+            }
+            // A source/propagator that `requires:` a label but emits none is not
+            // part of the CONCAT-family shape.
+            (None, Some(_)) => return LabelDetect::Unsupported,
+            (None, None) => {}
+        }
+    }
+
+    let mut sink_requires: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut sink_ungated = false;
+    for entry in &sinks {
+        // A sink that itself EMITS a label is outside this slice.
+        if entry.get("label").is_some() {
+            return LabelDetect::Unsupported;
+        }
+        match entry.get("requires").and_then(YamlValue::as_str) {
+            Some(r) => {
+                any_labels = true;
+                if !is_single_label_token(r) {
+                    return LabelDetect::Unsupported;
+                }
+                sink_requires.insert(r.trim().to_string());
+            }
+            None => sink_ungated = true,
+        }
+    }
+
+    if !any_labels {
+        return LabelDetect::None;
+    }
+
+    // Validate the CONCAT-family shape: exactly one primary label and at least
+    // one conditional relabel.
+    let (Some(l1), 1) = (primary_labels.iter().next().cloned(), primary_labels.len()) else {
+        return LabelDetect::Unsupported;
+    };
+    let Some((_, l2)) = relabels.first().cloned() else {
+        return LabelDetect::Unsupported;
+    };
+    if !relabels.iter().all(|(r, e)| r == &l1 && e == &l2) {
+        return LabelDetect::Unsupported;
+    }
+    // Every sink must gate on exactly L2; a mix of gated/ungated sinks (or a
+    // different required label) is not the shape we model.
+    if sink_ungated || sink_requires.len() != 1 || !sink_requires.contains(&l2) {
+        return LabelDetect::Unsupported;
+    }
+
+    LabelDetect::Policy(crate::rules::taint_engine::LabelPolicy {
+        source_label: l1.clone(),
+        relabel_from: l1,
+        relabel_to: l2.clone(),
+        sink_requires: l2,
+    })
+}
+
 pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
     // Only engage for rules that explicitly declare `mode: taint`.
     let mode = yaml.get("mode").and_then(YamlValue::as_str);
@@ -2206,12 +2347,32 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
 
     let cwe = extract_cwe(yaml);
 
+    // ── Taint-labels detection (Semgrep advanced taint, `CONCAT`-family) ──
+    //
+    // Only the Java `CONCAT` family is modeled (single positive label; no
+    // `not`/`and`/`or`). A `Policy` enables label-aware compilation (strip the
+    // `label:`/`requires:` keys so labeled entries no longer drop as multi-key,
+    // and skip the relabel source entries — the policy subsumes them). `None`
+    // and `Unsupported` both compile exactly as the pre-labels loader did, so an
+    // unlabeled rule is unchanged and an unsupported labeled rule keeps its safe
+    // skip (labeled entries stay multi-key and drop) instead of over-matching.
+    let label_policy = match detect_label_policy(yaml) {
+        LabelDetect::Policy(p) if lang == Language::Java => Some(p),
+        _ => None,
+    };
+    let labels_enabled = label_policy.is_some();
+
     // ── Compile sources ────────────────────────────────────────────────
-    let (sources, source_neg_strings, source_inside_strings) =
-        match compile_matcher_list(yaml.get("pattern-sources"), MatcherRole::Source, &id, lang) {
-            Ok(v) => v,
-            Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
-        };
+    let (sources, source_neg_strings, source_inside_strings) = match compile_matcher_list(
+        yaml.get("pattern-sources"),
+        MatcherRole::Source,
+        &id,
+        lang,
+        labels_enabled,
+    ) {
+        Ok(v) => v,
+        Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
+    };
     if sources.is_empty() {
         return TaintRuleParse::Skip(format!(
             "taint rule `{}` has no valid `pattern-sources`",
@@ -2219,11 +2380,16 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
         ));
     }
 
-    let (sinks, sink_neg_strings, sink_inside_strings) =
-        match compile_matcher_list(yaml.get("pattern-sinks"), MatcherRole::Sink, &id, lang) {
-            Ok(v) => v,
-            Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
-        };
+    let (sinks, sink_neg_strings, sink_inside_strings) = match compile_matcher_list(
+        yaml.get("pattern-sinks"),
+        MatcherRole::Sink,
+        &id,
+        lang,
+        labels_enabled,
+    ) {
+        Ok(v) => v,
+        Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
+    };
     if sinks.is_empty() {
         return TaintRuleParse::Skip(format!("taint rule `{}` has no valid `pattern-sinks`", id));
     }
@@ -2233,6 +2399,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
         MatcherRole::Sanitizer,
         &id,
         lang,
+        labels_enabled,
     ) {
         Ok(v) => v,
         Err(e) => return TaintRuleParse::Skip(format!("taint rule `{}` skipped: {}", id, e)),
@@ -2312,6 +2479,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
             source: source_insides,
         },
         propagators,
+        label_policy,
     })
 }
 
@@ -2592,6 +2760,7 @@ fn compile_matcher_list(
     role: MatcherRole,
     rule_id: &str,
     lang: Language,
+    labels_enabled: bool,
 ) -> Result<(Vec<GenericMatcher>, Vec<String>, Vec<String>), String> {
     let Some(node) = node else {
         return Ok((Vec::new(), Vec::new(), Vec::new()));
@@ -2609,6 +2778,7 @@ fn compile_matcher_list(
             role,
             rule_id,
             lang,
+            labels_enabled,
             &mut out,
             &mut negatives,
             &mut insides,
@@ -2626,11 +2796,13 @@ fn compile_matcher_list(
 /// `insides` the raw `pattern-inside` pattern strings lifted from `patterns:`
 /// AND-blocks so the caller can compile and enforce them; every other
 /// constraint key is still dropped with a warning.
+#[allow(clippy::too_many_arguments)]
 fn compile_entry(
     entry: &YamlValue,
     role: MatcherRole,
     rule_id: &str,
     lang: Language,
+    labels_enabled: bool,
     out: &mut Vec<GenericMatcher>,
     negatives: &mut Vec<String>,
     insides: &mut Vec<String>,
@@ -2644,15 +2816,44 @@ fn compile_entry(
         return;
     };
 
+    // Taint-labels: for a rule whose `label:`/`requires:` shape is the tractable
+    // `CONCAT` family ([`detect_label_policy`]), a SOURCE entry that carries a
+    // `requires:` is the conditional-relabel source (e.g. the `$X + $INPUT`
+    // concat shapes with `label: CONCAT, requires: INPUT`). Its behavior is
+    // captured entirely by the [`LabelPolicy`]'s string-building relabel, so we
+    // do NOT compile it to a matcher — compiling `String.format(...)` etc. as a
+    // literal SOURCE matcher would wrongly seed those calls as taint origins.
+    if labels_enabled {
+        if let MatcherRole::Source = role {
+            if map.get(YamlValue::from("requires")).is_some() {
+                return;
+            }
+        }
+    }
+
     // `by-side-effect:` is a Semgrep taint-source flag (the *side-effect* of the
     // matched expression is the source, not its value). The compiled matcher
     // shape is the same either way, so we treat the flag as a no-op marker and
     // compile the companion `pattern:`/`patterns:`/`pattern-either:` key. Drop
     // the flag from the key count so an entry like
     // `{ by-side-effect: true, pattern: ... }` is not mis-rejected as multi-key.
+    //
+    // `label:` / `requires:` are the taint-labels keys. When a `LabelPolicy` is
+    // active they are consumed by the policy, so drop them from the key count
+    // too (the companion `pattern:`/`patterns:` still compiles) — otherwise a
+    // labeled entry looks multi-key and is wrongly rejected.
     let effective_keys: Vec<(&YamlValue, &YamlValue)> = map
         .iter()
-        .filter(|(k, _)| k.as_str() != Some("by-side-effect"))
+        .filter(|(k, _)| {
+            let key = k.as_str();
+            if key == Some("by-side-effect") {
+                return false;
+            }
+            if labels_enabled && matches!(key, Some("label") | Some("requires")) {
+                return false;
+            }
+            true
+        })
         .collect();
 
     // Entries are expected to carry exactly one top-level key (after dropping
@@ -2708,7 +2909,16 @@ fn compile_entry(
                 return;
             }
             for nested in inner {
-                compile_entry(nested, role, rule_id, lang, out, negatives, insides);
+                compile_entry(
+                    nested,
+                    role,
+                    rule_id,
+                    lang,
+                    labels_enabled,
+                    out,
+                    negatives,
+                    insides,
+                );
             }
         }
         Some("patterns") => {
@@ -2838,7 +3048,16 @@ fn compile_entry(
             //   rule — documented in COMPATIBILITY.md — but only for those
             //   deferred keys.
             // - If no expressible matcher results, warn-skip the whole entry.
-            compile_patterns_block(v, role, rule_id, lang, out, negatives, insides);
+            compile_patterns_block(
+                v,
+                role,
+                rule_id,
+                lang,
+                labels_enabled,
+                out,
+                negatives,
+                insides,
+            );
         }
         Some(other) => {
             eprintln!(
@@ -2883,11 +3102,13 @@ const PATTERNS_CONSTRAINT_KEYS: &[&str] = &[
 /// post-filter). The remaining constraint-only sub-items are dropped with a
 /// warning. If no expressible matcher is produced the whole entry is
 /// warn-skipped.
+#[allow(clippy::too_many_arguments)]
 fn compile_patterns_block(
     v: &YamlValue,
     role: MatcherRole,
     rule_id: &str,
     lang: Language,
+    labels_enabled: bool,
     out: &mut Vec<GenericMatcher>,
     negatives: &mut Vec<String>,
     insides: &mut Vec<String>,
@@ -2923,7 +3144,16 @@ fn compile_patterns_block(
         match sk.as_str() {
             Some("pattern") | Some("pattern-either") => {
                 // Recursively compile via the normal entry path.
-                compile_entry(sub, role, rule_id, lang, out, negatives, insides);
+                compile_entry(
+                    sub,
+                    role,
+                    rule_id,
+                    lang,
+                    labels_enabled,
+                    out,
+                    negatives,
+                    insides,
+                );
             }
             Some("pattern-inside") => {
                 // Capture the containment context. It is compiled to a
@@ -3472,6 +3702,24 @@ enum BareCallee {
 /// concrete callee returns `None` (handled by the normal pattern compiler).
 fn bare_metavar_callee(pat: &str) -> Option<BareCallee> {
     let c = pat.trim().trim_end_matches(';').trim();
+    // A leading Java typed-receiver cast `(Type $RECV).…` is a droppable
+    // narrowing: normalize `(Statement $S).$SQLFUNC(...)` to `$S.$SQLFUNC(...)`
+    // so the receiver reads as a bare metavariable and the method metavariable
+    // can be pinned by its `metavariable-regex`. Without this the leading `(`
+    // makes the callee parse as empty and the shape is missed (the whole
+    // `formatted-sql-string` / `tainted-system-command` SQL/exec sink family).
+    let normalized;
+    let c = if c.starts_with('(') {
+        match parse_typed_metavar(c) {
+            Some((_, metavar, remainder)) if !remainder.trim().is_empty() => {
+                normalized = format!("{metavar}{remainder}");
+                normalized.as_str()
+            }
+            _ => c,
+        }
+    } else {
+        c
+    };
     let open = c.find('(')?;
     let callee = c[..open].trim();
     if let Some(dot) = callee.find('.') {
@@ -3520,7 +3768,12 @@ fn collect_regex_callee_parts(
                         }
                     }
                 }
-                Some("pattern-either") => {
+                Some("pattern-either") | Some("patterns") => {
+                    // Recurse into both `pattern-either` and nested `patterns:`
+                    // AND-blocks so a `$OBJ.$M(...)` + `metavariable-regex` pair
+                    // buried inside a nested `patterns:` (e.g.
+                    // `tainted-system-command`'s `(Runtime $R).$EXEC(...)` block)
+                    // is still recognised.
                     if let Some(seq) = val.as_sequence() {
                         collect_regex_callee_parts(seq, callees, pins);
                     }
@@ -10296,6 +10549,255 @@ class Handler {
             1,
             "a read off a locally-declared HttpServletRequest reaching exec() must fire, got {:?}",
             findings
+        );
+    }
+
+    // ── Taint-labels (`label:` / `requires:`) — Java `CONCAT` family ─────────
+    //
+    // These exercise the tractable single-positive-label slice
+    // (`docs/parity/taint-labels-design.md`) end-to-end through the real
+    // `parse_taint_rule` → `compiled()` → `check()` path. The HARD faithfulness
+    // gate is discrimination: tainted input that flows THROUGH a string
+    // concatenation into the sink FIRES, while the SAME tainted input reaching
+    // the sink WITHOUT a concat (a parameterized query) does NOT — proving the
+    // `requires: CONCAT` gate is honored rather than degrading to "any taint".
+
+    /// A faithful reduction of the registry `formatted-sql-string` shape: an
+    /// `INPUT`-labeled source, a `CONCAT` relabel source `requires: INPUT`, and
+    /// a `requires: CONCAT` SQL-exec sink.
+    const CONCAT_SQL_RULE: &str = r#"
+id: labels-sql
+mode: taint
+languages: [java]
+severity: ERROR
+message: "Formatted SQL string"
+metadata:
+  cwe: "CWE-89"
+pattern-sources:
+  - patterns:
+      - pattern-either:
+          - pattern: (HttpServletRequest $REQ)
+          - patterns:
+              - pattern-inside: |
+                  $ANNOT $FUNC (..., $INPUT, ...) {
+                    ...
+                  }
+              - pattern: (String $INPUT)
+              - focus-metavariable: $INPUT
+    label: INPUT
+  - patterns:
+      - pattern-either:
+          - pattern: $X + $INPUT
+          - pattern: String.format(..., $INPUT, ...)
+    label: CONCAT
+    requires: INPUT
+pattern-sinks:
+  - patterns:
+      - pattern-either:
+          - pattern: (Statement $S).$SQLFUNC(...)
+          - pattern: (PreparedStatement $P).$SQLFUNC(...)
+      - metavariable-regex:
+          metavariable: $SQLFUNC
+          regex: execute|executeQuery|createQuery
+    requires: CONCAT
+"#;
+
+    #[test]
+    fn taint_labels_concat_flow_fires() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(CONCAT_SQL_RULE);
+        assert!(
+            rule.label_policy.is_some(),
+            "CONCAT-family rule must compile a LabelPolicy"
+        );
+        // Tainted input flows through a `+` concatenation into `q`, then reaches
+        // the SQL sink — the value carries CONCAT, so the sink fires.
+        let src = r#"
+class C {
+    void find(String input, java.sql.Statement stmt) throws Exception {
+        String q = "SELECT * FROM users WHERE name = '" + input + "'";
+        stmt.executeQuery(q);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "concatenated tainted input into executeQuery must fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn taint_labels_direct_param_does_not_fire() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(CONCAT_SQL_RULE);
+        // The SAME tainted input reaches the sink directly, WITHOUT going through
+        // a concatenation: it carries only INPUT (never CONCAT), so `requires:
+        // CONCAT` must reject it. This is the discrimination that taint-labels
+        // exist for — firing here would be the over-match the design forbids.
+        let src = r#"
+class C {
+    void find(String input, java.sql.Statement stmt) throws Exception {
+        stmt.executeQuery(input);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "non-concatenated tainted input must NOT fire (requires: CONCAT), got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn taint_labels_parameterized_query_stays_clean() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(CONCAT_SQL_RULE);
+        // A safe parameterized query: input is bound via setString and never
+        // concatenated. Must stay clean.
+        let src = r#"
+class C {
+    void find(String input, java.sql.PreparedStatement stmt) throws Exception {
+        stmt.setString(1, input);
+        stmt.executeQuery();
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "parameterized query must stay clean, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn taint_labels_stringbuilder_append_relabel_propagator_fires() {
+        use crate::engine::parser::parse_file;
+        // A relabel PROPAGATOR: `(StringBuilder $SB).append($INPUT)` with
+        // `label: CONCAT, requires: INPUT` builds the CONCAT-labeled string on
+        // the receiver, which then reaches the exec sink.
+        let rule = compiled(
+            r#"
+id: labels-cmd
+mode: taint
+languages: [java]
+severity: ERROR
+message: "Tainted system command"
+metadata:
+  cwe: "CWE-78"
+pattern-propagators:
+  - pattern: (StringBuilder $SB).append($INPUT)
+    from: $INPUT
+    to: $SB
+    label: CONCAT
+    requires: INPUT
+pattern-sources:
+  - patterns:
+      - pattern-inside: |
+          $ANNOT $FUNC (..., $INPUT, ...) {
+            ...
+          }
+      - pattern: (String $INPUT)
+      - focus-metavariable: $INPUT
+    label: INPUT
+pattern-sinks:
+  - patterns:
+      - pattern-either:
+          - pattern: (Runtime $R).$EXEC(...)
+      - metavariable-regex:
+          metavariable: $EXEC
+          regex: exec|load
+    requires: CONCAT
+"#,
+        );
+        let fire = r#"
+class C {
+    void run(String input) throws Exception {
+        StringBuilder b = new StringBuilder();
+        b.append(input);
+        Runtime.getRuntime().exec(b.toString());
+    }
+}
+"#;
+        let tree = parse_file(fire, Language::Java).expect("java fixture parses");
+        assert_eq!(
+            rule.check(fire, &tree).len(),
+            1,
+            "append relabel propagator must carry CONCAT to the exec sink"
+        );
+        // Direct (non-appended) input must NOT fire.
+        let clean = r#"
+class C {
+    void run(String input) throws Exception {
+        Runtime.getRuntime().exec(input);
+    }
+}
+"#;
+        let tree = parse_file(clean, Language::Java).expect("java fixture parses");
+        assert!(
+            rule.check(clean, &tree).is_empty(),
+            "non-concatenated input must NOT fire (requires: CONCAT)"
+        );
+    }
+
+    #[test]
+    fn taint_labels_negation_requires_stays_skipped() {
+        // The deferred `not`/`and`/`or` tier: a `requires:` with a boolean
+        // operator must NOT be faked into a positive-label load. The rule keeps
+        // its safe pre-labels skip (labeled entries stay multi-key and drop),
+        // never an over-matching approximation.
+        let yaml = r#"
+id: labels-negation
+mode: taint
+languages: [java]
+severity: ERROR
+message: "open redirect"
+pattern-sources:
+  - pattern: (HttpServletRequest $REQ)
+    label: INPUT
+  - pattern: $X + $INPUT
+    label: CLEAN
+    requires: INPUT
+pattern-sinks:
+  - patterns:
+      - pattern-either:
+          - pattern: (Statement $S).$SQLFUNC(...)
+      - metavariable-regex:
+          metavariable: $SQLFUNC
+          regex: execute
+    requires: INPUT and not CLEAN
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        assert!(
+            matches!(parse_taint_rule(&v), TaintRuleParse::Skip(_)),
+            "a `requires:` with `and`/`not` must stay skipped, not load an over-match"
+        );
+    }
+
+    #[test]
+    fn unlabeled_taint_rule_has_no_label_policy() {
+        // Backward-compat: a rule with no `label:`/`requires:` compiles with no
+        // policy, so every existing engine path stays on the unlabeled behavior.
+        let rule = compiled(
+            r#"
+id: plain
+mode: taint
+languages: [java]
+severity: ERROR
+message: m
+pattern-sources:
+  - pattern: (HttpServletRequest $REQ)
+pattern-sinks:
+  - pattern: (Statement $S).executeQuery(...)
+"#,
+        );
+        assert!(
+            rule.label_policy.is_none(),
+            "an unlabeled rule must have no LabelPolicy"
         );
     }
 }

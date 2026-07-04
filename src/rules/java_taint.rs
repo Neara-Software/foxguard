@@ -18,8 +18,10 @@
 use crate::rules::common::{walk_tree, AliasTable};
 use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary, ParamSinkFlow};
 use crate::rules::taint_engine::cross_file_taint_finding;
-pub use crate::rules::taint_engine::{NodeMatcher, Propagator, TaintFinding, TaintSpec};
-use std::collections::{HashMap, HashSet};
+pub use crate::rules::taint_engine::{
+    LabelPolicy, NodeMatcher, Propagator, TaintFinding, TaintSpec,
+};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use tree_sitter::Node;
 
@@ -28,6 +30,12 @@ struct TaintInfo {
     description: String,
     line: usize,
     hops: u8,
+    /// Optional taint-**labels** set carried by this value (Semgrep advanced
+    /// taint mode). `None` = the historical unlabeled/boolean behavior (every
+    /// existing engine path and rule is unchanged). `Some(set)` is populated
+    /// only when a [`LabelPolicy`] is active for the rule under analysis; the
+    /// sink then fires only when the set contains the policy's required label.
+    labels: Option<BTreeSet<String>>,
 }
 
 #[derive(Default)]
@@ -72,13 +80,31 @@ pub fn analyze_tree_with_propagators(
     root: Node<'_>,
     source: &str,
     spec: &TaintSpec,
+    aliases: Option<&AliasTable>,
+    propagators: &[Propagator],
+) -> Vec<TaintFinding> {
+    analyze_tree_labeled(root, source, spec, aliases, propagators, None)
+}
+
+/// Like [`analyze_tree_with_propagators`] but also honors a taint-**labels**
+/// [`LabelPolicy`] (Semgrep advanced taint mode, `CONCAT`-family slice). With
+/// `policy = None` this is byte-for-byte the historical unlabeled behavior, so
+/// every existing built-in and Semgrep rule is unaffected. With `policy =
+/// Some(..)` primary sources emit the policy's source label, values passing
+/// through string-building nodes are conditionally relabeled, and a sink fires
+/// only when the reaching value carries the policy's required label.
+pub fn analyze_tree_labeled(
+    root: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
     _aliases: Option<&AliasTable>,
     propagators: &[Propagator],
+    policy: Option<&LabelPolicy>,
 ) -> Vec<TaintFinding> {
     let mut findings = Vec::new();
     walk_tree(root, source, &mut |node, src| {
         if is_scope_node(node.kind()) {
-            analyze_scope(node, src, spec, propagators, &mut findings);
+            analyze_scope(node, src, spec, propagators, policy, &mut findings);
         }
     });
     findings
@@ -336,7 +362,7 @@ fn summarize_java_method(
                 sanitizers: rule_spec.sanitizers.clone(),
             };
             let mut findings = Vec::new();
-            analyze_scope(method_node, source, &synthetic, &[], &mut findings);
+            analyze_scope(method_node, source, &synthetic, &[], None, &mut findings);
             if let Some(finding) = findings.first() {
                 params_to_sink.push(ParamSinkFlow {
                     param_index: param_idx,
@@ -370,9 +396,9 @@ fn java_param_flows_to_return(method_node: Node<'_>, param_name: &str, source: &
     };
     let body = find_scope_body(method_node).unwrap_or(method_node);
     let mut state = TaintState::default();
-    collect_param_sources(method_node, source, &synthetic, &mut state);
+    collect_param_sources(method_node, source, &synthetic, None, &mut state);
     for _ in 0..3 {
-        propagate_assignments(body, source, &synthetic, &mut state);
+        propagate_assignments(body, source, &synthetic, None, &mut state);
     }
 
     let mut flows = false;
@@ -381,7 +407,7 @@ fn java_param_flows_to_return(method_node: Node<'_>, param_name: &str, source: &
             return;
         }
         if let Some(expr) = node.named_child(0) {
-            if expression_taint(expr, src, &synthetic, &state).is_some() {
+            if expression_taint(expr, src, &synthetic, None, &state).is_some() {
                 flows = true;
             }
         }
@@ -442,9 +468,9 @@ fn resolve_cross_file_scope(
 ) {
     let body = find_scope_body(scope_node).unwrap_or(scope_node);
     let mut state = TaintState::default();
-    collect_param_sources(scope_node, source, source_spec, &mut state);
+    collect_param_sources(scope_node, source, source_spec, None, &mut state);
     for _ in 0..3 {
-        propagate_assignments(body, source, source_spec, &mut state);
+        propagate_assignments(body, source, source_spec, None, &mut state);
     }
 
     walk_scope_nodes(body, source, &mut |node, src| {
@@ -471,7 +497,7 @@ fn resolve_cross_file_scope(
                 continue;
             }
             let arg = arg_nodes[flow.param_index];
-            if let Some(info) = expression_taint(arg, src, source_spec, &state) {
+            if let Some(info) = expression_taint(arg, src, source_spec, None, &state) {
                 out.push(cross_file_taint_finding(
                     node,
                     info.description,
@@ -504,11 +530,12 @@ fn analyze_scope(
     source: &str,
     spec: &TaintSpec,
     propagators: &[Propagator],
+    policy: Option<&LabelPolicy>,
     out: &mut Vec<TaintFinding>,
 ) {
     let body = find_scope_body(scope_node).unwrap_or(scope_node);
     let mut state = TaintState::default();
-    collect_param_sources(scope_node, source, spec, &mut state);
+    collect_param_sources(scope_node, source, spec, policy, &mut state);
 
     // Three passes cover the common `source -> local -> derived -> sink`
     // chain without adding a fixed-point loop to this deliberately small
@@ -516,10 +543,10 @@ fn analyze_scope(
     // `source -> local -> sb.append(local) -> stmt.execute(sb.toString())`
     // resolves as taint flows through the body.
     for _ in 0..3 {
-        propagate_assignments(body, source, spec, &mut state);
-        apply_propagators(body, source, spec, propagators, &mut state);
+        propagate_assignments(body, source, spec, policy, &mut state);
+        apply_propagators(body, source, spec, propagators, policy, &mut state);
     }
-    find_sinks(body, source, spec, &state, out);
+    find_sinks(body, source, spec, policy, &state, out);
 }
 
 /// Apply "argument taints receiver" [`Propagator`]s: for each
@@ -535,6 +562,7 @@ fn apply_propagators(
     source: &str,
     spec: &TaintSpec,
     propagators: &[Propagator],
+    policy: Option<&LabelPolicy>,
     state: &mut TaintState,
 ) {
     if propagators.is_empty() {
@@ -565,7 +593,12 @@ fn apply_propagators(
         if state.info(recv_name).is_some() {
             return;
         }
-        if let Some(info) = sink_argument_taint(node, src, spec, state) {
+        if let Some(info) = sink_argument_taint(node, src, spec, policy, state) {
+            // A relabel propagator such as `(StringBuilder $SB).append($INPUT)`
+            // with `label: CONCAT, requires: INPUT` builds a string on the
+            // receiver: apply the string-building relabel so the receiver picks
+            // up the emitted label (e.g. `CONCAT`).
+            let info = relabel_through(node, src, info, policy);
             pending.push((recv_name.to_string(), bump_hops(info)));
         }
     });
@@ -578,6 +611,7 @@ fn collect_param_sources(
     scope_node: Node<'_>,
     source: &str,
     spec: &TaintSpec,
+    policy: Option<&LabelPolicy>,
     state: &mut TaintState,
 ) {
     let mut annotation_names: Vec<&str> = Vec::new();
@@ -621,6 +655,7 @@ fn collect_param_sources(
                     description: format!("@{annotation} parameter '{name}'"),
                     line: node.start_position().row + 1,
                     hops: 0,
+                    labels: source_labels(policy),
                 },
             );
         } else if let Some((description, name)) = typed_desc {
@@ -630,6 +665,7 @@ fn collect_param_sources(
                     description,
                     line: node.start_position().row + 1,
                     hops: 0,
+                    labels: source_labels(policy),
                 },
             );
         } else if bare_names.contains(&name) || wildcard {
@@ -639,13 +675,20 @@ fn collect_param_sources(
                     description: format!("parameter '{name}'"),
                     line: node.start_position().row + 1,
                     hops: 0,
+                    labels: source_labels(policy),
                 },
             );
         }
     }
 }
 
-fn propagate_assignments(scope: Node<'_>, source: &str, spec: &TaintSpec, state: &mut TaintState) {
+fn propagate_assignments(
+    scope: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
+    policy: Option<&LabelPolicy>,
+    state: &mut TaintState,
+) {
     walk_scope_nodes(scope, source, &mut |node, src| {
         if node.kind() == "variable_declarator" {
             let Some(name_node) = node.child_by_field_name("name") else {
@@ -655,7 +698,7 @@ fn propagate_assignments(scope: Node<'_>, source: &str, spec: &TaintSpec, state:
             let Some(value) = node.child_by_field_name("value") else {
                 return;
             };
-            match expression_taint(value, src, spec, state) {
+            match expression_taint(value, src, spec, policy, state) {
                 Some(info) => state.taint(name, bump_hops(info)),
                 None => {
                     // Typed-metavariable source `(HttpServletRequest $REQ)`
@@ -673,6 +716,7 @@ fn propagate_assignments(scope: Node<'_>, source: &str, spec: &TaintSpec, state:
                                 description,
                                 line: node.start_position().row + 1,
                                 hops: 0,
+                                labels: source_labels(policy),
                             },
                         ),
                         None => state.clear(&name),
@@ -691,8 +735,18 @@ fn propagate_assignments(scope: Node<'_>, source: &str, spec: &TaintSpec, state:
             let Some(right) = node.child_by_field_name("right") else {
                 return;
             };
-            match expression_taint(right, src, spec, state) {
-                Some(info) => state.taint(name.to_string(), bump_hops(info)),
+            match expression_taint(right, src, spec, policy, state) {
+                Some(info) => {
+                    // A `$X += $INPUT` compound assignment builds a string on
+                    // `$X`; treat it as a string-building relabel node so the
+                    // target acquires the emitted label (e.g. `CONCAT`).
+                    let info = if assignment_is_concat(node, src) {
+                        apply_relabel(info, policy)
+                    } else {
+                        info
+                    };
+                    state.taint(name.to_string(), bump_hops(info));
+                }
                 None => state.clear(name),
             }
         }
@@ -703,6 +757,7 @@ fn find_sinks(
     scope: Node<'_>,
     source: &str,
     spec: &TaintSpec,
+    policy: Option<&LabelPolicy>,
     state: &TaintState,
     out: &mut Vec<TaintFinding>,
 ) {
@@ -713,9 +768,24 @@ fn find_sinks(
         let Some(sink_description) = match_sink(node, src, spec) else {
             return;
         };
-        let taint = sink_argument_taint(node, src, spec, state)
+        let taint = sink_argument_taint(node, src, spec, policy, state)
             .or_else(|| read_object_receiver_taint(node, src, state));
         if let Some(info) = taint {
+            // Taint-labels gating: when a `LabelPolicy` is active the sink fires
+            // ONLY if the reaching value carries the required label (e.g.
+            // `requires: CONCAT`). A value that reached the sink WITHOUT going
+            // through a string-building relabel carries only the source label
+            // and is correctly rejected — the precision that taint-labels exist
+            // for (see `docs/parity/taint-labels-design.md`).
+            if let Some(p) = policy {
+                let satisfied = info
+                    .labels
+                    .as_ref()
+                    .is_some_and(|ls| ls.contains(&p.sink_requires));
+                if !satisfied {
+                    return;
+                }
+            }
             out.push(taint_finding_for_node(node, info, sink_description));
         }
     });
@@ -725,6 +795,23 @@ fn expression_taint(
     node: Node<'_>,
     source: &str,
     spec: &TaintSpec,
+    policy: Option<&LabelPolicy>,
+    state: &TaintState,
+) -> Option<TaintInfo> {
+    let info = expression_taint_core(node, source, spec, policy, state)?;
+    // Conditional relabel: a value that carries the policy's `relabel_from`
+    // label and flows through a string-building node (`+`, `String.format`,
+    // `.concat`, `.append`, `new StringBuilder(...)`) additionally acquires the
+    // `relabel_to` label. This is the `CONCAT`-family relabel mechanic; with no
+    // policy it is a no-op.
+    Some(relabel_through(node, source, info, policy))
+}
+
+fn expression_taint_core(
+    node: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
+    policy: Option<&LabelPolicy>,
     state: &TaintState,
 ) -> Option<TaintInfo> {
     let text = node_text(node, source);
@@ -745,30 +832,107 @@ fn expression_taint(
             description,
             line: node.start_position().row + 1,
             hops: 0,
+            labels: source_labels(policy),
         });
     }
 
     if node.kind() == "method_invocation" {
         if let Some(receiver) = node.child_by_field_name("object") {
-            if let Some(info) = expression_taint(receiver, source, spec, state) {
+            if let Some(info) = expression_taint(receiver, source, spec, policy, state) {
                 return Some(bump_hops(info));
             }
         }
     }
 
     if let Some(args) = call_arguments(node) {
-        if let Some(info) = expression_taint(args, source, spec, state) {
+        if let Some(info) = expression_taint(args, source, spec, policy, state) {
             return Some(bump_hops(info));
         }
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if let Some(info) = expression_taint(child, source, spec, state) {
+        if let Some(info) = expression_taint(child, source, spec, policy, state) {
             return Some(info);
         }
     }
     None
+}
+
+// ─── Taint-labels helpers (Semgrep advanced taint, `CONCAT`-family slice) ──
+
+/// The label set a freshly-seeded primary source carries under `policy`:
+/// `Some({source_label})` when a policy is active, else `None` (the historical
+/// unlabeled behavior).
+fn source_labels(policy: Option<&LabelPolicy>) -> Option<BTreeSet<String>> {
+    policy.map(|p| {
+        let mut set = BTreeSet::new();
+        set.insert(p.source_label.clone());
+        set
+    })
+}
+
+/// Add the policy's `relabel_to` label to `info` when it already carries
+/// `relabel_from`. No-op without a policy or without the trigger label.
+fn apply_relabel(mut info: TaintInfo, policy: Option<&LabelPolicy>) -> TaintInfo {
+    if let Some(p) = policy {
+        let has_trigger = info
+            .labels
+            .as_ref()
+            .is_some_and(|ls| ls.contains(&p.relabel_from));
+        if has_trigger {
+            info.labels
+                .get_or_insert_with(BTreeSet::new)
+                .insert(p.relabel_to.clone());
+        }
+    }
+    info
+}
+
+/// Apply the string-building relabel to `info` when `node` is a string-building
+/// node (`+` binary, `String.format`/`String.join`/`.concat`/`.append` call, or
+/// a `new StringBuilder(...)`/`new StringBuffer(...)` construction).
+fn relabel_through(
+    node: Node<'_>,
+    source: &str,
+    info: TaintInfo,
+    policy: Option<&LabelPolicy>,
+) -> TaintInfo {
+    if policy.is_some() && is_string_building_node(node, source) {
+        apply_relabel(info, policy)
+    } else {
+        info
+    }
+}
+
+/// True when `node` is a Java string-building expression: a `+` concatenation,
+/// a `String.format`/`String.join`/`.concat`/`.append` call, or a
+/// `new StringBuilder(...)` / `new StringBuffer(...)` construction. These are
+/// exactly the shapes the `CONCAT`-family relabel source/propagator enumerates.
+fn is_string_building_node(node: Node<'_>, source: &str) -> bool {
+    match node.kind() {
+        "binary_expression" => {
+            node.child_by_field_name("operator")
+                .map(|op| node_text(op, source))
+                == Some("+")
+        }
+        "method_invocation" => matches!(
+            call_method_name(node, source),
+            Some("format" | "join" | "concat" | "append")
+        ),
+        "object_creation_expression" => object_creation_type(node, source)
+            .map(type_final_segment)
+            .is_some_and(|ty| ty == "StringBuilder" || ty == "StringBuffer"),
+        _ => false,
+    }
+}
+
+/// True when `node` is a `$X += ...` compound-assignment (string-building on
+/// the target).
+fn assignment_is_concat(node: Node<'_>, source: &str) -> bool {
+    node.child_by_field_name("operator")
+        .map(|op| node_text(op, source))
+        == Some("+=")
 }
 
 fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String> {
@@ -825,7 +989,35 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         NodeMatcher::Call { canonical, .. } if node.kind() == "object_creation_expression" => {
             object_creation_type(node, source).is_some_and(|actual| actual == canonical)
         }
+        // Any-receiver method-name regex sink `$OBJ.$M(...)` + `metavariable-regex`
+        // pinning `$M` (e.g. the `formatted-sql-string` SQL-exec methods). The
+        // receiver type (`Statement`, `PreparedStatement`, …) is a droppable
+        // narrowing; the method-name regex is what bounds the match.
+        NodeMatcher::MethodNameRegex { regex, .. } => {
+            node.kind() == "method_invocation"
+                && call_method_name(node, source).is_some_and(|m| regex.is_match(m))
+        }
+        // Bare-metavar callee regex sink `$F(...)` + `metavariable-regex` pinning
+        // `$F` — matched against the full callee text.
+        NodeMatcher::CallRegex { regex, .. } if node.kind() == "method_invocation" => {
+            call_full_callee_text(node, source).is_some_and(|c| regex.is_match(&c))
+        }
+        // Any-method call on a concrete root receiver `recv.$M(...)`.
+        NodeMatcher::ReceiverCall { receiver, .. } if node.kind() == "method_invocation" => {
+            call_receiver_text(node, source)
+                .is_some_and(|r| r.split('.').next().unwrap_or(r) == receiver)
+        }
         _ => false,
+    }
+}
+
+/// The full callee text of a method invocation (`receiver.method` or bare
+/// `method`), used to test a `CallRegex` sink against the whole callee.
+fn call_full_callee_text(node: Node<'_>, source: &str) -> Option<String> {
+    let method = call_method_name(node, source)?;
+    match call_receiver_text(node, source) {
+        Some(recv) => Some(format!("{recv}.{method}")),
+        None => Some(method.to_string()),
     }
 }
 
@@ -847,9 +1039,10 @@ fn sink_argument_taint(
     node: Node<'_>,
     source: &str,
     spec: &TaintSpec,
+    policy: Option<&LabelPolicy>,
     state: &TaintState,
 ) -> Option<TaintInfo> {
-    call_arguments(node).and_then(|args| expression_taint(args, source, spec, state))
+    call_arguments(node).and_then(|args| expression_taint(args, source, spec, policy, state))
 }
 
 fn read_object_receiver_taint(
