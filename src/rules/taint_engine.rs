@@ -192,6 +192,50 @@ pub struct TaintSpec {
     pub sanitizers: Vec<NodeMatcher>,
 }
 
+/// A compiled taint **propagator**: a method call through which taint flows
+/// from an argument to the receiver.
+///
+/// Compiled by the Semgrep YAML bridge from a `pattern-propagators` entry of
+/// the "argument taints receiver" form
+///
+/// ```yaml
+/// pattern-propagators:
+///   - pattern: (StringBuilder $TO).append($FROM)
+///     from: $FROM
+///     to: $TO
+/// ```
+///
+/// Semantics (the tractable, high-value subset): when a method call
+/// `receiver.method(args)` is evaluated during the per-function walk and any
+/// argument is tainted, the receiver variable becomes tainted. This is the
+/// generalization of the existing method-call-on-tainted-*receiver* rule
+/// (receiver → result) in the reverse direction (argument → receiver), letting
+/// taint flow through container-mutating helpers such as
+/// `StringBuilder.append`, `StringBuffer.append`, and `.concat` that would
+/// otherwise drop the taint and cause false negatives.
+///
+/// `method = Some(name)` requires the invoked method name to match (e.g.
+/// `append`, `concat`); `method = None` matches any method name (compiled from
+/// a metavariable method like `$ANY`, e.g. C#'s
+/// `(StringBuilder $B).$ANY(...,(string $X),...)`). Only the arg→receiver
+/// direction with a plain-identifier receiver is compiled; other propagator
+/// shapes (argument→argument, receiver→argument, and augmented-assignment
+/// `$VAR += $FROM`, the latter already covered by the engine's assignment
+/// propagation) are dropped by the bridge with a warning. A missing propagator
+/// is a potential false NEGATIVE, never a false positive.
+///
+/// Applied only by the Java and C# engines today — the only registry rules
+/// that use `pattern-propagators` target those two languages. Other language
+/// engines carry the compiled propagator list but do not yet consult it.
+#[derive(Debug, Clone)]
+pub struct Propagator {
+    /// The method name that must match, or `None` to match any method name
+    /// (compiled from a metavariable method).
+    pub method: Option<String>,
+    /// Human-readable description for diagnostics.
+    pub description: String,
+}
+
 /// A single source→sink flow reported by the engine.
 #[derive(Debug, Clone)]
 pub struct TaintFinding {
