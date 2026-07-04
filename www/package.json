@@ -18,5 +18,8 @@
     "@tailwindcss/vite": "^4.2.2",
     "astro": "^6.4.6",
     "tailwindcss": "^4.2.2"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   }
 }
