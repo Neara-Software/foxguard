@@ -233,6 +233,9 @@ pub struct PatternClause {
     /// instead of the full enclosing match.
     #[serde(default, rename = "focus-metavariable")]
     pub focus_metavariable: Option<FocusMetavariableValue>,
+    /// `metavariable-type:` — constrain a metavariable to a declared type.
+    #[serde(default, rename = "metavariable-type")]
+    pub metavariable_type: Option<SemgrepMetavariableTypeClause>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -338,6 +341,18 @@ pub struct SemgrepMetavariableAnalysisClause {
     pub analyzer: String,
 }
 
+/// A `metavariable-type:` clause inside a `patterns:` block.
+///
+/// Constrains a metavariable to a **declared** type, e.g. only match `$X` when
+/// `$X` is (declared as) a `Statement`. This is the type-constraint sibling of
+/// `metavariable-regex` (constrain by regex on the bound text).
+#[derive(Debug, Deserialize, Clone)]
+pub struct SemgrepMetavariableTypeClause {
+    pub metavariable: String,
+    #[serde(rename = "type")]
+    pub type_name: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum CweValue {
@@ -386,6 +401,7 @@ pub enum PatternMatcher {
         metavariable_comparisons: Vec<MetavariableComparisonConstraint>,
         metavariable_patterns: Vec<MetavariablePatternConstraint>,
         metavariable_analyses: Vec<MetavariableAnalysisConstraint>,
+        metavariable_types: Vec<MetavariableTypeConstraint>,
         /// `focus-metavariable:` — when non-empty, the reported finding range is
         /// overridden to point at the first listed metavariable's binding range
         /// (falling back to the full match range if the metavar isn't bound).
@@ -616,6 +632,123 @@ impl MetavariableAnalysisConstraint {
         };
         shannon_entropy(text) >= ENTROPY_THRESHOLD
     }
+}
+
+/// A compiled `metavariable-type:` constraint.
+///
+/// Constrains the bound metavariable to a declared type. Enforcement is purely
+/// **syntactic**: the metavariable must bind to a simple identifier whose
+/// declaration (a parameter or a local/field with a written-out type) is
+/// resolvable in the surrounding tree-sitter tree of a statically-typed
+/// language. When the type cannot be resolved (the binding is a complex
+/// expression, or the declaration/type is not syntactically present) the
+/// constraint is treated as **unsatisfied** — the candidate is dropped rather
+/// than matched, so an unresolvable type never causes an over-match.
+///
+/// Rules whose language has no syntactic type resolution here are *not loaded*
+/// at all (see [`metavariable_type_enforceable`] / `build_matcher`), so a
+/// dropped-because-unenforceable constraint can never silently broaden a rule.
+#[derive(Debug, Clone)]
+pub struct MetavariableTypeConstraint {
+    metavariable: String,
+    /// The required type, normalized to its simple name (see
+    /// [`normalize_type_name`]).
+    type_name: String,
+    lang: Language,
+}
+
+impl MetavariableTypeConstraint {
+    /// Build a constraint for an enforceable language. Callers must gate on
+    /// [`metavariable_type_enforceable`] first; this only normalizes the type.
+    fn from_yaml(clause: &SemgrepMetavariableTypeClause, lang: Language) -> Self {
+        Self {
+            metavariable: clause.metavariable.clone(),
+            type_name: normalize_type_name(&clause.type_name),
+            lang,
+        }
+    }
+
+    /// `true` when the metavariable is bound to a simple identifier whose
+    /// resolved declared type (simple name) equals the required type. Any
+    /// failure to resolve → `false` (drop the candidate; never over-match).
+    fn matches(
+        &self,
+        root: tree_sitter::Node,
+        source: &str,
+        bindings: &HashMap<String, String>,
+        binding_ranges: &HashMap<String, MetavarRange>,
+    ) -> bool {
+        let Some(text) = bindings.get(&self.metavariable) else {
+            return false;
+        };
+        let name = text.trim();
+        if !is_simple_identifier(name) {
+            return false;
+        }
+        let Some(&(line, col, _, _)) = binding_ranges.get(&self.metavariable) else {
+            return false;
+        };
+        let Some(offset) = position_to_byte_offset(source, line, col) else {
+            return false;
+        };
+        match resolve_declared_type(self.lang, root, source, name, offset) {
+            Some(declared) => normalize_type_name(&declared) == self.type_name,
+            None => false,
+        }
+    }
+}
+
+/// Whether `metavariable-type:` can be **enforced** for `lang`. Only
+/// statically-typed languages whose declarations carry a syntactic type that
+/// [`resolve_declared_type`] knows how to read qualify. Rules that use
+/// `metavariable-type:` on any other language are skipped by the loader rather
+/// than loaded with the constraint dropped (which would over-match).
+fn metavariable_type_enforceable(lang: Language) -> bool {
+    matches!(
+        lang,
+        Language::Java
+            | Language::CSharp
+            | Language::Go
+            | Language::Kotlin
+            // TypeScript is parsed under `Language::JavaScript` (grammar chosen
+            // by file extension). Plain JS has no type annotations, in which
+            // case resolution fails and candidates are dropped (safe under-match).
+            | Language::JavaScript
+    )
+}
+
+/// Normalize a declared/required type to its simple name for comparison:
+/// strip a leading `:` (TypeScript `type_annotation` text), generic arguments
+/// (`List<String>` → `List`), array suffixes (`String[]` → `String`) and any
+/// package/namespace qualifier (`java.sql.Statement` → `Statement`).
+fn normalize_type_name(raw: &str) -> String {
+    let mut s = raw.trim();
+    // TypeScript `type_annotation` nodes include the leading colon.
+    s = s.trim_start_matches(':').trim();
+    // Drop generic type arguments.
+    if let Some(idx) = s.find('<') {
+        s = s[..idx].trim_end();
+    }
+    // Drop array/index suffixes.
+    if let Some(idx) = s.find('[') {
+        s = s[..idx].trim_end();
+    }
+    // Keep only the final path segment of a qualified name.
+    if let Some(idx) = s.rfind(['.', ':']) {
+        s = &s[idx + 1..];
+    }
+    s.trim().to_string()
+}
+
+/// A bound metavariable is type-resolvable only when it binds to a plain
+/// identifier (not a field access, call, literal, or other expression).
+fn is_simple_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(c) if c.is_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
 // ─── Comparison parser ───────────────────────────────────────────────────────
@@ -1125,6 +1258,7 @@ fn match_pattern_in_tree(
             metavariable_comparisons,
             metavariable_patterns,
             metavariable_analyses,
+            metavariable_types,
             focus_metavariables,
         } => {
             // If we have an inside pattern, only search within matching contexts
@@ -1197,6 +1331,13 @@ fn match_pattern_in_tree(
 
             for constraint in metavariable_analyses {
                 results.retain(|r| constraint.matches(&r.bindings));
+            }
+
+            // metavariable-type: keep only candidates whose bound identifier
+            // resolves to the required declared type. Unresolvable → dropped.
+            for constraint in metavariable_types {
+                results
+                    .retain(|r| constraint.matches(root, source, &r.bindings, &r.binding_ranges));
             }
 
             // focus-metavariable: override each result's reported range with the
@@ -1683,6 +1824,249 @@ fn metavariable_key(text: &str) -> Option<String> {
 
 fn is_ellipsis_pattern(text: &str) -> bool {
     matches!(text.trim(), "..." | GO_ELLIPSIS_PLACEHOLDER)
+}
+
+// ─── metavariable-type resolution ────────────────────────────────────────────
+
+/// Convert a 1-based (line, byte-column) position — as stored in a
+/// [`MetavarRange`] — back to a byte offset into `source`. Inverse of
+/// [`byte_offset_to_position`] (columns are byte offsets within the line).
+fn position_to_byte_offset(source: &str, line: usize, col: usize) -> Option<usize> {
+    let mut idx = 0usize;
+    for (current_line, l) in (1usize..).zip(source.split_inclusive('\n')) {
+        if current_line == line {
+            let off = idx + col.saturating_sub(1);
+            return Some(off.min(source.len()));
+        }
+        idx += l.len();
+    }
+    None
+}
+
+/// Tree-sitter node kinds that introduce a lexical scope, used to bound where a
+/// declaration is visible. Union across the supported statically-typed grammars.
+const SCOPE_KINDS: &[&str] = &[
+    // shared / block-like
+    "block",
+    "statement_block",
+    "function_body",
+    "constructor_body",
+    "class_body",
+    "declaration_list",
+    "statements",
+    "switch_block",
+    "program",
+    "source_file",
+    "compilation_unit",
+    // parameter-bearing declarations (so params are visible in their body)
+    "method_declaration",
+    "constructor_declaration",
+    "function_declaration",
+    "local_function_statement",
+    "lambda_expression",
+    // self-scoping statements whose header declares a variable
+    "for_statement",
+    "enhanced_for_statement",
+    "for_each_statement",
+    "catch_clause",
+];
+
+/// Byte range of the nearest enclosing scope for a declaration node. Falls back
+/// to the whole file when no scope ancestor is found.
+fn scope_range_for_decl(node: tree_sitter::Node) -> (usize, usize) {
+    let mut n = node;
+    while let Some(parent) = n.parent() {
+        if SCOPE_KINDS.contains(&parent.kind()) {
+            return (parent.start_byte(), parent.end_byte());
+        }
+        n = parent;
+    }
+    (0, usize::MAX)
+}
+
+/// Text of a type node, or `None` if absent/empty.
+fn type_node_text<'a>(node: Option<tree_sitter::Node>, source: &'a str) -> Option<&'a str> {
+    let n = node?;
+    let text = &source[n.byte_range()];
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// First child of `node` (recursively, breadth-first over direct children) whose
+/// kind is `kind`.
+fn find_child_of_kind<'a>(
+    node: tree_sitter::Node<'a>,
+    kind: &str,
+) -> Option<tree_sitter::Node<'a>> {
+    let mut cursor = node.walk();
+    let found = node.children(&mut cursor).find(|c| c.kind() == kind);
+    found
+}
+
+/// If `node` declares a variable/parameter named `name`, return its declared
+/// type text together with the byte range over which the declaration is in
+/// scope. Purely syntactic, per statically-typed grammar.
+fn decl_type_for<'a>(
+    lang: Language,
+    node: tree_sitter::Node<'a>,
+    source: &'a str,
+    name: &str,
+) -> Option<(&'a str, (usize, usize))> {
+    let name_matches = |n: Option<tree_sitter::Node>| -> bool {
+        n.map(|n| &source[n.byte_range()] == name).unwrap_or(false)
+    };
+
+    match lang {
+        Language::Java => match node.kind() {
+            "formal_parameter" | "spread_parameter" => {
+                if name_matches(node.child_by_field_name("name")) {
+                    let ty = type_node_text(node.child_by_field_name("type"), source)?;
+                    return Some((ty, scope_range_for_decl(node)));
+                }
+                None
+            }
+            "catch_formal_parameter" => {
+                if name_matches(node.child_by_field_name("name")) {
+                    let ct = find_child_of_kind(node, "catch_type")?;
+                    let ty = type_node_text(Some(ct), source)?;
+                    return Some((ty, scope_range_for_decl(node)));
+                }
+                None
+            }
+            "enhanced_for_statement" => {
+                if name_matches(node.child_by_field_name("name")) {
+                    let ty = type_node_text(node.child_by_field_name("type"), source)?;
+                    // Scope is the loop itself (header + body).
+                    return Some((ty, (node.start_byte(), node.end_byte())));
+                }
+                None
+            }
+            "local_variable_declaration" | "field_declaration" => {
+                let ty = type_node_text(node.child_by_field_name("type"), source)?;
+                let mut cursor = node.walk();
+                for declarator in node.children(&mut cursor) {
+                    if declarator.kind() == "variable_declarator"
+                        && name_matches(declarator.child_by_field_name("name"))
+                    {
+                        return Some((ty, scope_range_for_decl(node)));
+                    }
+                }
+                None
+            }
+            _ => None,
+        },
+        Language::CSharp => match node.kind() {
+            "parameter" => {
+                if name_matches(node.child_by_field_name("name")) {
+                    let ty = type_node_text(node.child_by_field_name("type"), source)?;
+                    return Some((ty, scope_range_for_decl(node)));
+                }
+                None
+            }
+            "variable_declaration" => {
+                let ty = type_node_text(node.child_by_field_name("type"), source)?;
+                let mut cursor = node.walk();
+                for declarator in node.children(&mut cursor) {
+                    if declarator.kind() == "variable_declarator"
+                        && name_matches(declarator.child_by_field_name("name"))
+                    {
+                        return Some((ty, scope_range_for_decl(node)));
+                    }
+                }
+                None
+            }
+            _ => None,
+        },
+        Language::Go => match node.kind() {
+            "parameter_declaration" => {
+                if name_matches(node.child_by_field_name("name")) {
+                    let ty = type_node_text(node.child_by_field_name("type"), source)?;
+                    return Some((ty, scope_range_for_decl(node)));
+                }
+                None
+            }
+            "var_spec" | "const_spec" => {
+                if name_matches(node.child_by_field_name("name")) {
+                    let ty = type_node_text(node.child_by_field_name("type"), source)?;
+                    return Some((ty, scope_range_for_decl(node)));
+                }
+                None
+            }
+            _ => None,
+        },
+        Language::Kotlin => match node.kind() {
+            // Function value parameters and `val`/`var` bindings share the
+            // `simple_identifier : user_type` shape (no field names).
+            "parameter" | "variable_declaration" => {
+                let ident = find_child_of_kind(node, "simple_identifier")?;
+                if &source[ident.byte_range()] != name {
+                    return None;
+                }
+                let ty = type_node_text(find_child_of_kind(node, "user_type"), source)?;
+                Some((ty, scope_range_for_decl(node)))
+            }
+            _ => None,
+        },
+        // TypeScript (parsed under Language::JavaScript with the TS grammar).
+        Language::JavaScript => match node.kind() {
+            "required_parameter" | "optional_parameter" => {
+                if name_matches(node.child_by_field_name("pattern")) {
+                    let ty = type_node_text(node.child_by_field_name("type"), source)?;
+                    return Some((ty, scope_range_for_decl(node)));
+                }
+                None
+            }
+            "variable_declarator" => {
+                if name_matches(node.child_by_field_name("name")) {
+                    let ty = type_node_text(node.child_by_field_name("type"), source)?;
+                    return Some((ty, scope_range_for_decl(node)));
+                }
+                None
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Resolve the declared type (raw text) of the identifier `name` used at byte
+/// `offset`, picking the innermost in-scope declaration. `None` when no
+/// syntactic declaration is found.
+fn resolve_declared_type(
+    lang: Language,
+    root: tree_sitter::Node,
+    source: &str,
+    name: &str,
+    offset: usize,
+) -> Option<String> {
+    let mut best: Option<(usize, String)> = None;
+    collect_declared_type(lang, root, source, name, offset, &mut best);
+    best.map(|(_, ty)| ty)
+}
+
+fn collect_declared_type(
+    lang: Language,
+    node: tree_sitter::Node,
+    source: &str,
+    name: &str,
+    offset: usize,
+    best: &mut Option<(usize, String)>,
+) {
+    if let Some((ty, (scope_start, scope_end))) = decl_type_for(lang, node, source, name) {
+        if offset >= scope_start && offset < scope_end {
+            // Prefer the innermost scope (largest start byte).
+            if best
+                .as_ref()
+                .map(|(s, _)| scope_start >= *s)
+                .unwrap_or(true)
+            {
+                *best = Some((scope_start, ty.to_string()));
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_declared_type(lang, child, source, name, offset, best);
+    }
 }
 
 /// Check if the pattern text is the special "..." (match-any-string) string literal.
@@ -2293,6 +2677,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
         let mut metavariable_comparisons = Vec::new();
         let mut metavariable_patterns = Vec::new();
         let mut metavariable_analyses = Vec::new();
+        let mut metavariable_types = Vec::new();
         let mut focus_metavariables: Vec<String> = Vec::new();
 
         for clause in clauses {
@@ -2375,6 +2760,20 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
                 // If from_yaml returns None it already printed a warning; we
                 // continue loading the rest of the rule's clauses.
             }
+            if let Some(ref mt) = clause.metavariable_type {
+                // FAITHFULNESS: a `metavariable-type:` constraint we cannot
+                // enforce must not be silently dropped — that would broaden the
+                // rule into an over-match. For languages without syntactic type
+                // resolution we skip the whole rule instead.
+                if !metavariable_type_enforceable(lang) {
+                    return Err(format!(
+                        "metavariable-type on {} is not enforceable for {} \
+                         (no syntactic type resolution); skipping rule",
+                        mt.metavariable, lang
+                    ));
+                }
+                metavariable_types.push(MetavariableTypeConstraint::from_yaml(mt, lang));
+            }
             if let Some(ref fmv) = clause.focus_metavariable {
                 focus_metavariables.extend(fmv.clone().into_vec());
             }
@@ -2389,6 +2788,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
             metavariable_comparisons,
             metavariable_patterns,
             metavariable_analyses,
+            metavariable_types,
             focus_metavariables,
         });
     }
@@ -2464,6 +2864,7 @@ fn build_matcher(yaml: &SemgrepRuleYaml, lang: Language) -> Result<PatternMatche
             metavariable_comparisons: Vec::new(),
             metavariable_patterns: Vec::new(),
             metavariable_analyses: Vec::new(),
+            metavariable_types: Vec::new(),
             focus_metavariables: Vec::new(),
         });
     }
@@ -5054,6 +5455,117 @@ rules:
         assert!(
             findings.is_empty(),
             "generic lookahead rule must NOT fire when the lookahead is violated"
+        );
+    }
+
+    // ── metavariable-type (search mode) ──────────────────────────────────────
+
+    const METAVAR_TYPE_JAVA_RULE: &str = r#"
+rules:
+  - id: sql-execute-on-statement
+    patterns:
+      - pattern: $X.executeQuery($Q)
+      - metavariable-type:
+          metavariable: $X
+          type: Statement
+    message: executeQuery on a Statement
+    severity: ERROR
+    languages: [java]
+"#;
+
+    /// metavariable-type FIRES when the metavariable's declared type matches.
+    #[test]
+    fn test_metavariable_type_fires_on_matching_type() {
+        let f = make_yaml(METAVAR_TYPE_JAVA_RULE);
+        let rules = parse_semgrep_file(f.path()).expect("rule must load for java");
+        assert_eq!(rules.len(), 1, "one java rule expected");
+
+        let source = "class A { void m(String q) { Statement s; s.executeQuery(q); } }";
+        let tree = parse_file(source, Language::Java).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "must fire when $X is declared as Statement"
+        );
+    }
+
+    /// metavariable-type is SILENT when the declared type differs (a subtype
+    /// with a name that merely *contains* the required type name must not match).
+    #[test]
+    fn test_metavariable_type_silent_on_wrong_type() {
+        let f = make_yaml(METAVAR_TYPE_JAVA_RULE);
+        let rules = parse_semgrep_file(f.path()).expect("rule must load for java");
+
+        let source = "class A { void m(String q) { PreparedStatement p; p.executeQuery(q); } }";
+        let tree = parse_file(source, Language::Java).unwrap();
+        let findings = rules[0].check(source, &tree);
+        assert!(
+            findings.is_empty(),
+            "must not fire when $X is a PreparedStatement, not a Statement"
+        );
+    }
+
+    /// A parameter's declared type is resolvable too (not just locals).
+    #[test]
+    fn test_metavariable_type_resolves_parameter() {
+        let f = make_yaml(METAVAR_TYPE_JAVA_RULE);
+        let rules = parse_semgrep_file(f.path()).expect("rule must load for java");
+
+        let fires = "class A { void m(Statement s, String q) { s.executeQuery(q); } }";
+        let tree = parse_file(fires, Language::Java).unwrap();
+        assert_eq!(
+            rules[0].check(fires, &tree).len(),
+            1,
+            "must fire when the Statement is a method parameter"
+        );
+
+        let silent = "class A { void m(PreparedStatement s, String q) { s.executeQuery(q); } }";
+        let tree = parse_file(silent, Language::Java).unwrap();
+        assert!(
+            rules[0].check(silent, &tree).is_empty(),
+            "must not fire when the parameter is a PreparedStatement"
+        );
+    }
+
+    /// Fully-qualified declared types match by simple name (`java.sql.Statement`
+    /// satisfies `type: Statement`).
+    #[test]
+    fn test_metavariable_type_matches_qualified_name() {
+        let f = make_yaml(METAVAR_TYPE_JAVA_RULE);
+        let rules = parse_semgrep_file(f.path()).expect("rule must load for java");
+
+        let source = "class A { void m(String q) { java.sql.Statement s; s.executeQuery(q); } }";
+        let tree = parse_file(source, Language::Java).unwrap();
+        assert_eq!(
+            rules[0].check(source, &tree).len(),
+            1,
+            "qualified type java.sql.Statement must satisfy type: Statement"
+        );
+    }
+
+    /// A `metavariable-type:` rule on a language with no syntactic type
+    /// resolution (python) is SKIPPED by the loader rather than loaded with the
+    /// constraint dropped (which would over-match).
+    #[test]
+    fn test_metavariable_type_unenforceable_language_skips_rule() {
+        let yaml = r#"
+rules:
+  - id: py-concat
+    patterns:
+      - pattern: $X + $Y
+      - metavariable-type:
+          metavariable: $X
+          type: str
+    message: string concat
+    severity: ERROR
+    languages: [python]
+"#;
+        let f = make_yaml(yaml);
+        let result = parse_semgrep_file(f.path());
+        assert!(
+            result.is_err(),
+            "metavariable-type on python must cause the rule to be skipped, not loaded"
         );
     }
 }

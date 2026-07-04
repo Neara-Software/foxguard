@@ -9,13 +9,13 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 
 | Metric | Value |
 |---|---|
-| Rule files scanned | 2071 |
+| Rule files scanned | 2070 |
 | Files with YAML parse errors | 0 |
-| Total rules | 2145 |
-| Rules loaded OK | 2070 (96.5%) |
+| Total rules | 2144 |
+| Rules loaded OK | 2069 (96.5%) |
 | Rules skipped | 75 (3.5%) |
 
-**Headline load rate: 96.5%** (2070 / 2145 rules).
+**Headline load rate: 96.5%** (2069 / 2144 rules).
 
 ## Skip-reason histogram
 
@@ -23,8 +23,7 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 70 | 93.3% | 3.3% |
-| `taint: pattern-propagators` | 4 | 5.3% | 0.2% |
+| `mode: taint (unsupported shape)` | 74 | 98.7% | 3.5% |
 | `generic mode (languages: [generic])` | 1 | 1.3% | 0.0% |
 
 ## Priority order — operator/feature backlog
@@ -33,10 +32,27 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 
 | Rank | Capability to add | Rules unlocked |
 |---:|---|---:|
-| 1 | `mode: taint (unsupported shape)` | 70 |
-| 2 | `taint: pattern-propagators` | 4 |
+| 1 | `mode: taint (unsupported shape)` | 74 |
 
-Operator/feature gaps account for **74 rules** (3.4% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **74 rules** (3.5% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+
+### Note: `metavariable-type` (search mode)
+
+`metavariable-type:` is now compiled by the SEARCH-mode loader for the
+statically-typed languages whose declarations carry a syntactic type
+(Java, C#, Go, Kotlin, and TypeScript-under-`javascript`). The bound
+metavariable's declared type is resolved from its parameter / local / field
+declaration; when it cannot be resolved (complex expression, or a language
+with no syntactic type) the candidate is dropped rather than matched, and
+rules that use the operator on a non-enforceable language are skipped
+outright (never loaded with the constraint silently dropped).
+
+This unlocks **0** registry rules today: the only two registry rules that use
+`metavariable-type` (`java/.../formatted-sql-string`,
+`python/.../avoid-sqlalchemy-text`) are both `mode: taint`, so the operator is
+exercised by the taint bridge, not the SEARCH-mode compiler. The operator is
+therefore available for user-authored SEARCH-mode rules but does not move the
+registry load rate.
 
 ## Priority order — missing language grammars
 
@@ -63,7 +79,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 | yaml | 100 | 100 | 0 | 100.0% |
 | go | 97 | 87 | 10 | 89.7% |
 | ruby | 92 | 85 | 7 | 92.4% |
-| php | 64 | 57 | 7 | 89.1% |
+| php | 63 | 56 | 7 | 88.9% |
 | solidity | 50 | 49 | 1 | 98.0% |
 | csharp | 48 | 42 | 6 | 87.5% |
 | dockerfile | 39 | 39 | 0 | 100.0% |
@@ -86,10 +102,10 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 ## Top skip reasons per language
 
 - **apex**: `mode: taint (unsupported shape)` (1)
-- **csharp**: `mode: taint (unsupported shape)` (5), `taint: pattern-propagators` (1)
+- **csharp**: `mode: taint (unsupported shape)` (6)
 - **generic**: `generic mode (languages: [generic])` (1)
 - **go**: `mode: taint (unsupported shape)` (10)
-- **java**: `mode: taint (unsupported shape)` (12), `taint: pattern-propagators` (3)
+- **java**: `mode: taint (unsupported shape)` (15)
 - **javascript**: `mode: taint (unsupported shape)` (13)
 - **php**: `mode: taint (unsupported shape)` (7)
 - **python**: `mode: taint (unsupported shape)` (14)

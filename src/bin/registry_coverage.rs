@@ -368,9 +368,10 @@ fn classify_rule(rule: &Yaml) -> Outcome {
     // central they are to the rule's match).
     const UNSUPPORTED_OPERATORS: &[&str] = &[
         // metavariable-pattern / metavariable-comparison / focus-metavariable /
-        // metavariable-analysis are now implemented by the loader — they fall
-        // through to ground_truth below.
-        "metavariable-type",
+        // metavariable-analysis / metavariable-type are now implemented by the
+        // loader — they fall through to ground_truth below. (For the enforceable
+        // statically-typed languages; unenforceable ones are skipped by the
+        // loader itself and surface via ground_truth.)
         "pattern-sources",
         "pattern-sinks",
         "pattern-sanitizers",
