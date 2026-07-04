@@ -3566,11 +3566,11 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
         return None;
     }
 
-    // Solidity / Apex statement patterns carry a trailing `;` (e.g.
+    // Solidity / Apex / PHP statement patterns carry a trailing `;` (e.g.
     // `selfdestruct(...);`, `Database.query($SINK,...);`,
-    // `req.setHeader($X, ...);`). Strip it so the call/member shapes below
-    // recognise them.
-    if matches!(lang, Language::Solidity | Language::Apex) {
+    // `req.setHeader($X, ...);`, `print($...VARS);`). Strip it so the
+    // call/member shapes below recognise them.
+    if matches!(lang, Language::Solidity | Language::Apex | Language::Php) {
         pat = pat.trim_end_matches(';').trim_end();
     }
 
@@ -3763,6 +3763,39 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
             }),
             MatcherRole::Source => None,
         };
+    }
+
+    // ── Paren-less "command" call: `echo $...VARS`, `send_file ...` ──────
+    //
+    // Ruby and PHP allow calling a function/command without parentheses:
+    //   `echo $...VARS`   (PHP echo statement)
+    //   `print $...VARS`  (PHP print intrinsic)
+    //   `send_file ...`   (Ruby command call)
+    // None of the paren-based shapes above recognise these (there is no `(`),
+    // so they fall through and skip the rule. We compile them to the same
+    // `Call { canonical }` matcher the parenthesised call form produces — the
+    // taint engine fires when a tainted value reaches any argument of the
+    // named call, which the Ruby / PHP engines already match (PHP has native
+    // `echo`/`print` Call sinks; the Ruby engine resolves bare command calls
+    // like `system x`).
+    //
+    // Discipline (faithfulness): we only accept a WHOLE-ARGS command call —
+    // the argument list is exactly the `...` ellipsis, a single metavariable
+    // (`$X`), or a PHP variadic metavariable (`$...VARS`). This matches the
+    // existing "call form strips arguments and fires on any tainted arg"
+    // semantics. We deliberately REJECT keyworded / positional-specific
+    // command calls such as `render ..., file: $X` (a comma-separated or
+    // `key:`-tagged arg list), because compiling those to a bare `Call` would
+    // fire on argument positions the original rule never named — an
+    // over-match. Gated to Ruby / PHP, the only supported taint languages
+    // with paren-less call syntax.
+    if matches!(lang, Language::Ruby | Language::Php) {
+        if let Some(callee) = parse_command_call(pat) {
+            return Some(GenericMatcher::Call {
+                canonical: callee.to_string(),
+                description: describe(callee, role),
+            });
+        }
     }
 
     // ── Call form: `root.method(...)` or `func($X)` ─────────────────────
@@ -4378,6 +4411,58 @@ fn parse_receiver_dot_metavar(callee: &str) -> Option<&str> {
         return None;
     }
     Some(receiver)
+}
+
+/// If `pat` is a paren-less "command" call — a plain-identifier callee
+/// followed by whitespace and a WHOLE-ARGS argument list — return the callee
+/// identifier. Used to compile Ruby / PHP paren-less calls (`echo $...VARS`,
+/// `send_file ...`) to a [`GenericMatcher::Call`].
+///
+/// A "whole-args" argument list is one whose only content is the tainted flow
+/// itself: the `...` ellipsis, a single Semgrep metavariable (`$X`), or a PHP
+/// variadic metavariable (`$...VARS`). This mirrors the parenthesised call
+/// form, which strips arguments and fires on any tainted argument.
+///
+/// Returns `None` for:
+/// - a callee that is not a bare identifier (`$X ...`, `a.b ...`),
+/// - an empty argument list (a bare identifier — handled elsewhere),
+/// - a keyworded / positional-specific argument list (`..., file: $X`,
+///   `$X, $Y`) — compiling those to a bare `Call` would over-match argument
+///   positions the rule never named.
+///
+/// Examples:
+/// - `echo $...VARS`      → `Some("echo")`
+/// - `send_file ...`      → `Some("send_file")`
+/// - `redirect_to $URL`   → `Some("redirect_to")`
+/// - `render ..., file: $X` → `None` (keyworded arg list — would over-match)
+/// - `$X + $Y`            → `None` (callee is not an identifier)
+fn parse_command_call(pat: &str) -> Option<&str> {
+    let sp = pat.find([' ', '\t'])?;
+    let callee = &pat[..sp];
+    if !is_identifier(callee) {
+        return None;
+    }
+    let args = pat[sp..].trim();
+    if args.is_empty() || !is_whole_args_list(args) {
+        return None;
+    }
+    Some(callee)
+}
+
+/// True when `args` is a "whole-args" command-call argument list: the `...`
+/// ellipsis, a single Semgrep metavariable (`$X`), or a PHP variadic
+/// metavariable (`$...VARS`). See [`parse_command_call`].
+fn is_whole_args_list(args: &str) -> bool {
+    if args == "..." {
+        return true;
+    }
+    // PHP variadic metavariable `$...NAME`.
+    if let Some(rest) = args.strip_prefix("$...") {
+        return !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    }
+    // A single metavariable `$X` (no trailing tokens — `is_metavariable`
+    // already rejects embedded whitespace, commas, colons, and operators).
+    is_metavariable(args)
 }
 
 /// True when `s` is a Semgrep metavariable: `$` followed by one or more
@@ -9239,6 +9324,178 @@ pattern-sinks:
             matches!(&g.sinks[0], GenericMatcher::MethodName { method, .. } if method == "execute"),
             "a general receiver regex must fall through to MethodName, got {:?}",
             g.sinks[0]
+        );
+    }
+
+    // ── Paren-less "command" call → Call (PHP `echo`/`print`, Ruby command) ──
+
+    #[test]
+    fn command_call_whole_args_helpers() {
+        // Accepted whole-args argument lists.
+        assert!(is_whole_args_list("..."));
+        assert!(is_whole_args_list("$X"));
+        assert!(is_whole_args_list("$...VARS"));
+        // Rejected: keyworded / positional-specific / empty.
+        assert!(!is_whole_args_list("..., file: $X"));
+        assert!(!is_whole_args_list("$X, $Y"));
+        assert!(!is_whole_args_list("$...")); // no name after variadic marker
+        assert!(!is_whole_args_list(""));
+
+        // parse_command_call: identifier callee + whole-args → Some(callee).
+        assert_eq!(parse_command_call("echo $...VARS"), Some("echo"));
+        assert_eq!(parse_command_call("send_file ..."), Some("send_file"));
+        assert_eq!(parse_command_call("redirect_to $URL"), Some("redirect_to"));
+        // Rejected shapes.
+        assert_eq!(parse_command_call("render ..., file: $X"), None);
+        assert_eq!(parse_command_call("$X + $Y"), None); // callee not an identifier
+        assert_eq!(parse_command_call("a.b ..."), None); // dotted callee
+        assert_eq!(parse_command_call("echo"), None); // no args (bare ident)
+    }
+
+    #[test]
+    fn php_echo_and_print_compile_to_call() {
+        // `echo $...VARS;` and `print($...VARS);` (trailing `;` stripped for PHP)
+        // compile to the native `echo` / `print` Call sinks the PHP engine matches.
+        let m = compile_pattern("echo $...VARS;", MatcherRole::Sink, Language::Php).expect("echo");
+        match m {
+            GenericMatcher::Call { canonical, .. } => assert_eq!(canonical, "echo"),
+            other => panic!("expected Call{{echo}}, got {other:?}"),
+        }
+        let m =
+            compile_pattern("print($...VARS);", MatcherRole::Sink, Language::Php).expect("print");
+        match m {
+            GenericMatcher::Call { canonical, .. } => assert_eq!(canonical, "print"),
+            other => panic!("expected Call{{print}}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn command_call_is_gated_to_ruby_and_php() {
+        // Paren-less command calls are only recognised for Ruby / PHP. A stray
+        // `echo $...VARS` in a Python rule must NOT silently become a Call.
+        assert!(compile_pattern("echo $...VARS", MatcherRole::Sink, Language::Python).is_none());
+        assert!(compile_pattern("send_file ...", MatcherRole::Sink, Language::Go).is_none());
+        // Ruby / PHP accept it.
+        assert!(matches!(
+            compile_pattern("send_file ...", MatcherRole::Sink, Language::Ruby),
+            Some(GenericMatcher::Call { .. })
+        ));
+    }
+
+    #[test]
+    fn keyworded_command_call_is_rejected_not_overmatched() {
+        // `render ..., file: $X` names a specific keyword arg position; compiling
+        // it to a bare `Call { render }` would fire on argument positions the rule
+        // never named. It must be refused (deferred), not over-matched.
+        assert!(
+            compile_pattern("render ..., file: $X", MatcherRole::Sink, Language::Ruby).is_none()
+        );
+    }
+
+    #[test]
+    fn php_echoed_request_rule_loads_and_fires() {
+        use crate::engine::parser::parse_file;
+
+        // Mirrors the registry rule `php/lang/security/injection/echoed-request`:
+        // a `$_GET`/`$_REQUEST` source flowing into an `echo` reflected-XSS sink.
+        let rule = compiled(
+            r#"
+id: echoed-request
+mode: taint
+languages: [php]
+severity: ERROR
+message: "reflected XSS via echo"
+metadata:
+  cwe: "CWE-79"
+pattern-sources:
+  - pattern: $_REQUEST
+  - pattern: $_GET
+  - pattern: $_POST
+pattern-sinks:
+  - pattern: echo $...VARS;
+pattern-sanitizers:
+  - pattern: htmlentities(...)
+"#,
+        );
+        assert!(
+            rule.spec.sinks.iter().any(
+                |s| matches!(s, GenericMatcher::Call { canonical, .. } if canonical == "echo")
+            ),
+            "echo sink should compile to Call{{echo}}"
+        );
+
+        // Positive: tainted request value flows into echo → finding. (The PHP
+        // engine analyses per-function, so the flow lives inside a function.)
+        let vuln = "<?php\nfunction render() {\n  $x = $_GET['q'];\n  echo $x;\n}\n";
+        let tree = parse_file(vuln, Language::Php).expect("PHP fixture parses");
+        let findings = rule.check(vuln, &tree);
+        assert!(
+            !findings.is_empty(),
+            "expected a finding for $_GET -> echo flow, got none"
+        );
+
+        // Near-miss: a constant echo (no tainted source) must stay silent.
+        let safe = "<?php\nfunction render() {\n  echo \"static content\";\n}\n";
+        let tree = parse_file(safe, Language::Php).expect("PHP fixture parses");
+        assert!(
+            rule.check(safe, &tree).is_empty(),
+            "a constant echo must not fire"
+        );
+
+        // Near-miss: sanitized value must stay silent.
+        let sanitized =
+            "<?php\nfunction render() {\n  $x = htmlentities($_GET['q']);\n  echo $x;\n}\n";
+        let tree = parse_file(sanitized, Language::Php).expect("PHP fixture parses");
+        assert!(
+            rule.check(sanitized, &tree).is_empty(),
+            "an htmlentities()-sanitized value must not fire"
+        );
+    }
+
+    #[test]
+    fn ruby_send_file_rule_loads_and_fires() {
+        use crate::engine::parser::parse_file;
+
+        // Mirrors `ruby/rails/security/brakeman/check-send-file`: a `params[...]`
+        // source flowing into a paren-less `send_file ...` sink.
+        let rule = compiled(
+            r#"
+id: check-send-file
+mode: taint
+languages: [ruby]
+severity: WARNING
+message: "user input into send_file"
+metadata:
+  cwe: "CWE-73"
+pattern-sources:
+  - pattern-either:
+      - pattern: params[...]
+      - pattern: cookies[...]
+pattern-sinks:
+  - pattern: send_file ...
+"#,
+        );
+        assert!(
+            rule.spec.sinks.iter().any(
+                |s| matches!(s, GenericMatcher::Call { canonical, .. } if canonical == "send_file")
+            ),
+            "send_file sink should compile to Call{{send_file}}"
+        );
+
+        // Positive: params[...] flows into send_file → finding.
+        let vuln = "def show\n  path = params[:path]\n  send_file path\nend\n";
+        let tree = parse_file(vuln, Language::Ruby).expect("Ruby fixture parses");
+        assert!(
+            !rule.check(vuln, &tree).is_empty(),
+            "expected a finding for params -> send_file flow, got none"
+        );
+
+        // Near-miss: a constant argument must stay silent.
+        let safe = "def show\n  send_file \"static.txt\"\nend\n";
+        let tree = parse_file(safe, Language::Ruby).expect("Ruby fixture parses");
+        assert!(
+            rule.check(safe, &tree).is_empty(),
+            "a constant send_file argument must not fire"
         );
     }
 }
