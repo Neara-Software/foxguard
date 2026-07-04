@@ -18,7 +18,7 @@ The `queries/` subfolder under `dirty-frag-class/` holds CodeQL `.ql` queries an
 
 ## Engine
 
-`src/engine/parser.rs` parses source into tree-sitter trees with per-language grammars (`tree-sitter-python`, `tree-sitter-go`, ...). `src/engine/scanner.rs` is the parallel scanner driver (rayon, `ignore::WalkBuilder`) that batches AST rules by analysis requirement (`SyntaxTree` vs `FileContext`). The default registry wires built-in taint specs for Python, JavaScript/TypeScript, Go, Kotlin, C, and Java; Semgrep-compatible external taint rules can also use the additional language engines under `src/rules/*_taint.rs`. Design and limits are documented in `docs/taint-tracking.md`. Cross-file taint summaries live in `src/rules/cross_file.rs`.
+`src/engine/parser.rs` parses source into tree-sitter trees with per-language grammars (`tree-sitter-python`, `tree-sitter-go`, ...). `src/engine/scanner.rs` is the parallel scanner driver (rayon, `ignore::WalkBuilder`) that batches AST rules by analysis requirement (`SyntaxTree` vs `FileContext`). The default registry wires built-in taint specs for 14 languages: Python, JavaScript/TypeScript, Go, Java, C, Kotlin, C#, Ruby, PHP, Swift, Bash, Solidity, Scala, and Apex. Cross-file (interprocedural, across-file) taint is supported for Python, JavaScript, Go, Java, C#, Ruby, and PHP (with bounded multi-hop chains for Python); the rest are intra-file. The Semgrep-compatible YAML bridge loads external taint rules against the same per-language engines under `src/rules/*_taint.rs`. Design and limits are documented in `docs/taint-tracking.md`. Cross-file taint summaries live in `src/rules/cross_file.rs`.
 
 ## Integrations
 
