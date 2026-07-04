@@ -1502,6 +1502,12 @@ pub struct SemgrepTaintRule {
     /// post-filter enforces the sink-side insides against each finding's
     /// sink node: a finding is kept only if its sink is inside one of them.
     insides: TaintInsides,
+    /// Compiled `pattern-propagators` (the "argument taints receiver" subset).
+    /// Applied by the Java and C# engines during their per-scope walk. Empty
+    /// for rules with no propagators and for languages whose engine does not
+    /// yet consult propagators (a documented false-negative, never a false
+    /// positive).
+    propagators: Vec<crate::rules::taint_engine::Propagator>,
 }
 
 /// Unified view over the three engine-specific `TaintFinding` types.
@@ -1779,10 +1785,16 @@ impl Rule for SemgrepTaintRule {
             }
             Language::Java => {
                 let spec = to_java_spec(&self.spec);
-                java_taint::analyze_tree(tree.root_node(), source, &spec, None)
-                    .into_iter()
-                    .map(TaintFindingView::from_java)
-                    .collect()
+                java_taint::analyze_tree_with_propagators(
+                    tree.root_node(),
+                    source,
+                    &spec,
+                    None,
+                    &self.propagators,
+                )
+                .into_iter()
+                .map(TaintFindingView::from_java)
+                .collect()
             }
             Language::C => {
                 let spec = to_c_spec(&self.spec);
@@ -1814,10 +1826,16 @@ impl Rule for SemgrepTaintRule {
             }
             Language::CSharp => {
                 let spec = to_csharp_spec(&self.spec);
-                csharp_taint::analyze_tree(tree.root_node(), source, &spec, None)
-                    .into_iter()
-                    .map(TaintFindingView::from_csharp)
-                    .collect()
+                csharp_taint::analyze_tree_with_propagators(
+                    tree.root_node(),
+                    source,
+                    &spec,
+                    None,
+                    &self.propagators,
+                )
+                .into_iter()
+                .map(TaintFindingView::from_csharp)
+                .collect()
             }
             Language::Bash => {
                 let spec = to_bash_spec(&self.spec);
@@ -2136,6 +2154,17 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
     // by one of these regions. A pattern that fails to parse is
     // warned-and-skipped (the rule still stands; the containment is just not
     // enforced — matcher stays broader).
+    // ── Compile `pattern-propagators` ────────────────────────────────────
+    //
+    // We compile only the tractable, high-value "argument taints receiver"
+    // subset (`$TO.method($FROM)` with `from: $FROM` / `to: $TO`), which is
+    // what every registry rule using `pattern-propagators` needs (they all
+    // propagate through `StringBuilder`/`StringBuffer.append`, `.concat`, or an
+    // any-method `$ANY` on a builder). Other propagator shapes are dropped with
+    // a warning — a missing propagator is a false negative, not a false
+    // positive. Applied only by the Java and C# engines today.
+    let propagators = compile_propagators(yaml.get("pattern-propagators"), &id);
+
     let sink_insides = compile_inside_patterns(&sink_inside_strings, lang, &id, "pattern-sinks");
     let source_insides =
         compile_inside_patterns(&source_inside_strings, lang, &id, "pattern-sources");
@@ -2168,7 +2197,189 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
             sink: sink_insides,
             source: source_insides,
         },
+        propagators,
     })
+}
+
+/// Compile a `pattern-propagators:` list into the "argument taints receiver"
+/// [`Propagator`](crate::rules::taint_engine::Propagator) subset.
+///
+/// Each entry is a mapping `{ pattern, from, to, ... }`. We recognize the
+/// method-call shape `<receiver>.<method>(<args>)` where the `to` metavariable
+/// appears in the receiver and the `from` metavariable appears in the argument
+/// list — i.e. an argument taints the receiver. The receiver's declared type
+/// (`(StringBuilder $SB)`) is intentionally dropped (over-approximating, but a
+/// propagator only ever *adds* taint that must still reach a sink). Any entry
+/// that does not match this shape (argument→argument, receiver→argument, or a
+/// non-call form such as `$VAR += $FROM`) is dropped with a warning.
+fn compile_propagators(
+    node: Option<&YamlValue>,
+    rule_id: &str,
+) -> Vec<crate::rules::taint_engine::Propagator> {
+    let Some(node) = node else {
+        return Vec::new();
+    };
+    let Some(seq) = node.as_sequence() else {
+        eprintln!(
+            "Warning: taint rule `{}` `pattern-propagators` must be a list; ignoring",
+            rule_id
+        );
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in seq {
+        let pattern = entry.get("pattern").and_then(YamlValue::as_str);
+        let from = entry.get("from").and_then(YamlValue::as_str);
+        let to = entry.get("to").and_then(YamlValue::as_str);
+        let (Some(pattern), Some(from), Some(to)) = (pattern, from, to) else {
+            eprintln!(
+                "Warning: taint rule `{}` propagator entry is missing `pattern`/`from`/`to`; skipping",
+                rule_id
+            );
+            continue;
+        };
+        match parse_arg_to_receiver_propagator(pattern, from, to) {
+            Some(p) => out.push(p),
+            None => eprintln!(
+                "Warning: taint rule `{}` propagator `{}` (from `{}` to `{}`) is not a supported \
+                 argument→receiver method-call shape; deferred (potential false negative)",
+                rule_id, pattern, from, to
+            ),
+        }
+    }
+    out
+}
+
+/// Parse a propagator pattern of the argument→receiver method-call form
+/// `<receiver>.<method>(<args>)`, returning a
+/// [`Propagator`](crate::rules::taint_engine::Propagator) when the `to`
+/// metavariable is in the receiver and the `from` metavariable is in the
+/// argument list. `method` is `Some(name)` for a concrete method identifier and
+/// `None` for a metavariable method (`$ANY`).
+fn parse_arg_to_receiver_propagator(
+    pattern: &str,
+    from_mv: &str,
+    to_mv: &str,
+) -> Option<crate::rules::taint_engine::Propagator> {
+    let pat = pattern.trim();
+    if !pat.ends_with(')') {
+        return None;
+    }
+    // Find the `(` that opens the outermost (final) argument list by scanning
+    // back from the trailing `)` with paren-depth tracking.
+    let bytes = pat.as_bytes();
+    let mut depth = 0i32;
+    let mut open_idx = None;
+    for i in (0..bytes.len()).rev() {
+        match bytes[i] {
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth == 0 {
+                    open_idx = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let open_idx = open_idx?;
+    let head = pat[..open_idx].trim_end();
+    let args = &pat[open_idx + 1..pat.len() - 1];
+
+    // `head` must be `<receiver>.<method>` with a top-level `.` (a bare
+    // `func($FROM)` call has no receiver and cannot propagate to one).
+    let dot = last_top_level_dot(head)?;
+    let receiver = head[..dot].trim();
+    let method = head[dot + 1..].trim();
+    if receiver.is_empty() || method.is_empty() {
+        return None;
+    }
+
+    // Direction check: `to` in the receiver, `from` in the argument list.
+    if !mentions_metavar(receiver, to_mv) {
+        return None;
+    }
+    if !mentions_metavar(args, from_mv) {
+        return None;
+    }
+
+    let method = if method.starts_with('$') {
+        // Metavariable method (`$ANY`) → match any method name.
+        None
+    } else if is_plain_ident(method) {
+        Some(method.to_string())
+    } else {
+        return None;
+    };
+
+    let description = match &method {
+        Some(m) => format!("`.{m}(...)` argument taints receiver"),
+        None => "method-call argument taints receiver".to_string(),
+    };
+    Some(crate::rules::taint_engine::Propagator {
+        method,
+        description,
+    })
+}
+
+/// Find the byte offset of the last `.` in `s` that is not nested inside any
+/// `()` or `[]` (so the `.` inside a typed-receiver cast like
+/// `(StringBuilder $SB)` is ignored). Returns `None` when there is no
+/// top-level `.`.
+fn last_top_level_dot(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut last = None;
+    for (i, b) in s.bytes().enumerate() {
+        match b {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            b'.' if depth == 0 => last = Some(i),
+            _ => {}
+        }
+    }
+    last
+}
+
+/// True when `mv` (a Semgrep metavariable such as `$X`, `$SB`, or a variadic
+/// `$...TAINTED`) appears in `haystack` as a whole token — i.e. it is not
+/// immediately followed by another identifier character. The trailing-boundary
+/// check prevents `$S` from matching inside `$STR`.
+fn mentions_metavar(haystack: &str, mv: &str) -> bool {
+    let mv = mv.trim();
+    if mv.is_empty() {
+        return false;
+    }
+    let hay = haystack.as_bytes();
+    let mut search_from = 0;
+    while let Some(rel) = haystack[search_from..].find(mv) {
+        let start = search_from + rel;
+        let end = start + mv.len();
+        let boundary_ok = hay.get(end).is_none_or(|b| !is_ident_byte(*b));
+        if boundary_ok {
+            return true;
+        }
+        search_from = start + 1;
+        if search_from >= haystack.len() {
+            break;
+        }
+    }
+    false
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// True when `s` is a plain method identifier (first char a letter or `_`,
+/// remaining chars alphanumeric or `_`).
+fn is_plain_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Compile a list of raw `pattern-not` pattern strings (lifted from a
@@ -5936,6 +6147,225 @@ class Dao {
             findings.is_empty(),
             "executeUpdate should NOT trigger the executeQuery rule, got {:?}",
             findings
+        );
+    }
+
+    // ── pattern-propagators ────────────────────────────────────────────────
+
+    const JAVA_PROPAGATOR_RULE: &str = r#"
+id: java-sqli-propagator
+mode: taint
+languages: [java]
+severity: ERROR
+message: "SQL injection through StringBuilder"
+metadata:
+  cwe: "CWE-89"
+pattern-sources:
+  - pattern: request.getParameter($X)
+pattern-propagators:
+  - pattern: (StringBuilder $SB).append($X)
+    from: $X
+    to: $SB
+pattern-sinks:
+  - pattern: $CONN.executeQuery($X)
+"#;
+
+    // Same rule with the `pattern-propagators` block removed — used to prove the
+    // propagator is what enables the finding (without it the flow is MISSED).
+    const JAVA_NO_PROPAGATOR_RULE: &str = r#"
+id: java-sqli-no-propagator
+mode: taint
+languages: [java]
+severity: ERROR
+message: "SQL injection through StringBuilder"
+pattern-sources:
+  - pattern: request.getParameter($X)
+pattern-sinks:
+  - pattern: $CONN.executeQuery($X)
+"#;
+
+    // Tainted input flows into a StringBuilder via `.append`, which then reaches
+    // the SQL sink — this is only caught because the propagator carries taint
+    // from the append argument to the `sb` receiver.
+    const JAVA_PROPAGATED_FIXTURE: &str = r#"
+class Dao {
+    void query(HttpServletRequest request, Connection conn) throws Exception {
+        String input = request.getParameter("id");
+        StringBuilder sb = new StringBuilder();
+        sb.append(input);
+        conn.executeQuery(sb.toString());
+    }
+}
+"#;
+
+    #[test]
+    fn java_propagator_compiles_to_arg_to_receiver() {
+        let rule = compiled(JAVA_PROPAGATOR_RULE);
+        assert_eq!(rule.propagators.len(), 1, "propagator should compile");
+        assert_eq!(
+            rule.propagators[0].method.as_deref(),
+            Some("append"),
+            "concrete method name should be captured"
+        );
+    }
+
+    #[test]
+    fn java_propagator_enables_stringbuilder_flow() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(JAVA_PROPAGATOR_RULE);
+        let tree =
+            parse_file(JAVA_PROPAGATED_FIXTURE, Language::Java).expect("Java fixture should parse");
+        let findings = rule.check(JAVA_PROPAGATED_FIXTURE, &tree);
+        assert!(
+            !findings.is_empty(),
+            "propagator should carry taint through sb.append() into executeQuery, got none"
+        );
+        assert!(
+            findings[0]
+                .sink_description
+                .as_deref()
+                .is_some_and(|d| d.contains("executeQuery")),
+            "sink should be executeQuery: {:?}",
+            findings[0]
+        );
+    }
+
+    #[test]
+    fn java_without_propagator_misses_stringbuilder_flow() {
+        use crate::engine::parser::parse_file;
+        // Exact same source and sink as the propagator rule, but no
+        // `pattern-propagators`: the taint stops at `sb.append(input)` and never
+        // reaches the sink. This is the before/after that proves the propagator
+        // is load-bearing.
+        let rule = compiled(JAVA_NO_PROPAGATOR_RULE);
+        assert!(rule.propagators.is_empty());
+        let tree =
+            parse_file(JAVA_PROPAGATED_FIXTURE, Language::Java).expect("Java fixture should parse");
+        let findings = rule.check(JAVA_PROPAGATED_FIXTURE, &tree);
+        assert!(
+            findings.is_empty(),
+            "without the propagator the StringBuilder flow must NOT be detected, got {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn java_propagator_clean_append_stays_clean() {
+        use crate::engine::parser::parse_file;
+        // The propagator only fires when the append ARGUMENT is tainted. Here a
+        // literal is appended, so `sb` stays clean and no finding is produced.
+        let rule = compiled(JAVA_PROPAGATOR_RULE);
+        let src = r#"
+class Dao {
+    void query(HttpServletRequest request, Connection conn) throws Exception {
+        String input = request.getParameter("id");
+        StringBuilder sb = new StringBuilder();
+        sb.append("SELECT * FROM t");
+        conn.executeQuery(sb.toString());
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("Java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "appending a literal must not taint the receiver, got {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn csharp_any_method_propagator_enables_flow() {
+        use crate::engine::parser::parse_file;
+        // C# registry shape: `(StringBuilder $B).$ANY(...,(string $X),...)` — the
+        // method is a metavariable, so the propagator matches ANY method call on
+        // the builder whose argument is tainted.
+        let rule = compiled(
+            r#"
+id: csharp-sqli-propagator
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: "SQL injection through StringBuilder"
+pattern-sources:
+  - pattern: tainted
+pattern-propagators:
+  - pattern: (StringBuilder $B).$ANY(...,(string $X),...)
+    from: $X
+    to: $B
+pattern-sinks:
+  - pattern: $CMD.ExecuteReader($X)
+"#,
+        );
+        assert_eq!(rule.propagators.len(), 1);
+        assert_eq!(
+            rule.propagators[0].method, None,
+            "metavariable method should compile to any-method (None)"
+        );
+
+        let src = r#"
+class Dao {
+    void Query(string tainted, SqlCommand cmd) {
+        var sb = new StringBuilder();
+        sb.Append(tainted);
+        cmd.ExecuteReader(sb.ToString());
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "any-method propagator should carry taint through sb.Append() into ExecuteReader, got none"
+        );
+    }
+
+    #[test]
+    fn parse_arg_to_receiver_propagator_covers_registry_shapes() {
+        // The four registry propagator shapes (Java x3 + C# x1) are all
+        // "argument taints receiver".
+        let cases: &[(&str, &str, &str, Option<&str>)] = &[
+            // java/spring tainted-system-command
+            (
+                "(StringBuilder $STRB).append($INPUT)",
+                "$INPUT",
+                "$STRB",
+                Some("append"),
+            ),
+            // java/lang formatted-sql-string (StringBuffer + StringBuilder)
+            ("(StringBuffer $S).append($X)", "$X", "$S", Some("append")),
+            // java/spring tainted-html-string (variadic argument metavar)
+            (
+                "(StringBuilder $SB).append($...TAINTED)",
+                "$...TAINTED",
+                "$SB",
+                Some("append"),
+            ),
+            // csharp/lang csharp-sqli (metavariable method → any method)
+            (
+                "(StringBuilder $B).$ANY(...,(string $X),...)",
+                "$X",
+                "$B",
+                None,
+            ),
+        ];
+        for (pat, from, to, want_method) in cases {
+            let p = parse_arg_to_receiver_propagator(pat, from, to)
+                .unwrap_or_else(|| panic!("`{pat}` should compile as arg→receiver"));
+            assert_eq!(p.method.as_deref(), *want_method, "method for `{pat}`");
+        }
+
+        // Non-call / augmented-assignment shape is NOT compiled (deferred).
+        assert!(
+            parse_arg_to_receiver_propagator("$VAR += $...TAINTED", "$...TAINTED", "$VAR")
+                .is_none(),
+            "augmented assignment is out of the arg→receiver subset"
+        );
+        // `$S` must not loose-match `$STR` inside a receiver cast.
+        assert!(
+            parse_arg_to_receiver_propagator("(StringBuilder $STR).append($X)", "$X", "$S")
+                .is_none(),
+            "`$S` should not match `$STR` (metavariable boundary)"
         );
     }
 

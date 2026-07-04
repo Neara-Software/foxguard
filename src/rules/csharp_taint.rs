@@ -31,7 +31,7 @@
 use crate::rules::common::{walk_tree, AliasTable};
 use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary, ParamSinkFlow};
 use crate::rules::taint_engine::cross_file_taint_finding;
-pub use crate::rules::taint_engine::{NodeMatcher, TaintFinding, TaintSpec};
+pub use crate::rules::taint_engine::{NodeMatcher, Propagator, TaintFinding, TaintSpec};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tree_sitter::Node;
@@ -72,12 +72,26 @@ pub fn analyze_tree(
     root: Node<'_>,
     source: &str,
     spec: &TaintSpec,
+    aliases: Option<&AliasTable>,
+) -> Vec<TaintFinding> {
+    analyze_tree_with_propagators(root, source, spec, aliases, &[])
+}
+
+/// Like [`analyze_tree`] but also applies a list of taint [`Propagator`]s
+/// during each scope's walk. Used by the Semgrep YAML bridge to honor
+/// `pattern-propagators` such as `(StringBuilder $B).$ANY(...,(string $X),...)`;
+/// the built-in C# rules call [`analyze_tree`] with no propagators.
+pub fn analyze_tree_with_propagators(
+    root: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
     _aliases: Option<&AliasTable>,
+    propagators: &[Propagator],
 ) -> Vec<TaintFinding> {
     let mut findings = Vec::new();
     walk_tree(root, source, &mut |node, src| {
         if is_scope_node(node.kind()) {
-            analyze_scope(node, src, spec, &mut findings);
+            analyze_scope(node, src, spec, propagators, &mut findings);
         }
     });
     findings
@@ -420,6 +434,7 @@ fn analyze_scope(
     scope_node: Node<'_>,
     source: &str,
     spec: &TaintSpec,
+    propagators: &[Propagator],
     out: &mut Vec<TaintFinding>,
 ) {
     let body = find_scope_body(scope_node).unwrap_or(scope_node);
@@ -432,11 +447,67 @@ fn analyze_scope(
     collect_param_sources(scope_node, source, spec, &mut state);
 
     // Three passes cover `source -> local -> derived -> sink` chains without
-    // a fixed-point loop.
+    // a fixed-point loop. Propagators run inside the loop so taint that flows
+    // into a receiver via a `sb.Append(x)` mutation reaches downstream sinks.
     for _ in 0..3 {
         propagate_assignments(body, source, spec, &mut state);
+        apply_propagators(body, source, spec, propagators, &mut state);
     }
     find_sinks(body, source, spec, &state, out);
+}
+
+/// Apply "argument taints receiver" [`Propagator`]s for C#: for each
+/// `receiver.Method(args)` `invocation_expression` whose method matches a
+/// propagator and one of whose arguments is tainted, mark the receiver
+/// variable tainted. Confined to a plain-identifier receiver so we never
+/// over-taint a whole member/index chain.
+fn apply_propagators(
+    scope: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
+    propagators: &[Propagator],
+    state: &mut TaintState,
+) {
+    if propagators.is_empty() {
+        return;
+    }
+    let mut pending: Vec<(String, TaintInfo)> = Vec::new();
+    walk_scope_nodes(scope, source, &mut |node, src| {
+        if node.kind() != "invocation_expression" {
+            return;
+        }
+        let Some(func) = node.child_by_field_name("function") else {
+            return;
+        };
+        if func.kind() != "member_access_expression" {
+            return;
+        }
+        let Some(recv) = func.child_by_field_name("expression") else {
+            return;
+        };
+        if recv.kind() != "identifier" {
+            return;
+        }
+        let Some(method) = final_name_segment(func, src) else {
+            return;
+        };
+        let method_matches = propagators
+            .iter()
+            .any(|p| p.method.as_deref().is_none_or(|m| m == method));
+        if !method_matches {
+            return;
+        }
+        let recv_name = node_text(recv, src);
+        if state.info(recv_name).is_some() {
+            return;
+        }
+        if let Some(info) = sink_argument_taint(node, src, spec, state) {
+            pending.push((recv_name.to_string(), bump_hops(info)));
+        }
+    });
+    for (name, info) in pending {
+        state.taint(name, info);
+    }
 }
 
 /// Seed taint state from parameters whose name matches a `ParamName` source.
@@ -1205,7 +1276,7 @@ fn summarize_csharp_method(
                 sanitizers: rule_spec.sanitizers.clone(),
             };
             let mut findings = Vec::new();
-            analyze_scope(method_node, source, &synthetic, &mut findings);
+            analyze_scope(method_node, source, &synthetic, &[], &mut findings);
             if let Some(finding) = findings.first() {
                 params_to_sink.push(ParamSinkFlow {
                     param_index: param_idx,

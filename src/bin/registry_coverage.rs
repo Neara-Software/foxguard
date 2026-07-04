@@ -347,10 +347,10 @@ fn classify_rule(rule: &Yaml) -> Outcome {
             // are dropped with a warning making the matcher broader. The real
             // loader (ground_truth) is the authoritative accept/reject for
             // taint rules now — no static pre-classification needed here.
-            if rule.get("pattern-propagators").is_some() {
-                return Outcome::Skipped("taint: pattern-propagators".to_string());
-            }
-            // Otherwise: ground-truth this against the real loader below.
+            // `pattern-propagators` is now compiled by the loader (the
+            // "argument taints receiver" subset, see semgrep_taint.rs); rules
+            // that use it are ground-truthed like any other taint rule rather
+            // than hard-skipped.
             return ground_truth(rule, "mode: taint (unsupported shape)");
         }
         "search" => {}
