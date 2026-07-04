@@ -219,6 +219,22 @@ enum GenericMatcher {
     /// when a `return` returns a tainted value, not a universal bare-metavar
     /// sink. Sink/sanitizer only. Matched by the Python engine.
     ReturnValue { description: String },
+
+    /// Matches any parameter or local variable whose DECLARED TYPE's final
+    /// segment equals `type_name`. Compiled (Java only) from a Semgrep "typed
+    /// metavariable" source `(HttpServletRequest $REQ)` — "any variable of type
+    /// `HttpServletRequest` is a taint source". A trailing member/method read
+    /// on the typed metavariable (`(HttpServletRequest $REQ).$FUNC(...)`) is a
+    /// droppable narrowing: seeding the typed variable and letting the engine
+    /// propagate through reads on it covers it.
+    ///
+    /// Source only — a declared type is a taint origin, not a destination.
+    /// Only the Java engine consults it (matches `formal_parameter` /
+    /// `local_variable_declaration` types); other engines carry it but no-op it.
+    TypedName {
+        type_name: String,
+        description: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -369,6 +385,13 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
         GenericMatcher::ReturnValue { description } => python_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => python_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -460,6 +483,13 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
         GenericMatcher::ReturnValue { description } => javascript_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => javascript_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -545,6 +575,13 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
         GenericMatcher::ReturnValue { description } => go_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => go_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -628,6 +665,13 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             }
         }
         GenericMatcher::ReturnValue { description } => java_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => java_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
             description: description.clone(),
         },
     }
@@ -722,6 +766,13 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
         GenericMatcher::ReturnValue { description } => c_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => c_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -807,6 +858,13 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
         GenericMatcher::ReturnValue { description } => kotlin_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => kotlin_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -890,6 +948,13 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
             }
         }
         GenericMatcher::ReturnValue { description } => ruby_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => ruby_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
             description: description.clone(),
         },
     }
@@ -986,6 +1051,13 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
         GenericMatcher::ReturnValue { description } => csharp_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => csharp_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1067,6 +1139,13 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
             }
         }
         GenericMatcher::ReturnValue { description } => bash_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => bash_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
             description: description.clone(),
         },
     }
@@ -1158,6 +1237,13 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
         GenericMatcher::ReturnValue { description } => solidity_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => solidity_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1239,6 +1325,13 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
             }
         }
         GenericMatcher::ReturnValue { description } => scala_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => scala_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
             description: description.clone(),
         },
     }
@@ -1324,6 +1417,13 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
         GenericMatcher::ReturnValue { description } => apex_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => apex_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1407,6 +1507,13 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
         GenericMatcher::ReturnValue { description } => swift_taint::NodeMatcher::ReturnValue {
             description: description.clone(),
         },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => swift_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1481,6 +1588,13 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
             }
         }
         GenericMatcher::ReturnValue { description } => php_taint::NodeMatcher::ReturnValue {
+            description: description.clone(),
+        },
+        GenericMatcher::TypedName {
+            type_name,
+            description,
+        } => php_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
             description: description.clone(),
         },
     }
@@ -3829,6 +3943,54 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
         }
     }
 
+    // ── Java typed-metavariable shape: `(Type $MV)` [ .member / .call ] ────
+    //
+    // Semgrep's "typed metavariable" binds `$MV` to a declared type, e.g.
+    //   `(HttpServletRequest $REQ)`            — any variable of that type
+    //   `(HttpServletRequest $REQ).$FUNC(...)` — a read off such a variable
+    //   `(javax.servlet.ServletRequest $R).getParameter(...)`
+    // ~7 Java registry taint rules express their `pattern-sources` this way
+    // ("input from an HttpServletRequest is untrusted"), and several express
+    // their sinks as a call on a typed receiver (`(XPath $XP).evaluate(...)`).
+    //
+    // SOURCE: compile to a `TypedName { type_name }` matcher; the Java engine
+    // seeds every parameter / local of that declared type as tainted. A
+    // trailing `.method(...)` (and any `metavariable-regex` pinning that method)
+    // is a droppable narrowing — seeding the typed variable and propagating
+    // through reads on it covers `(Type $REQ).$FUNC(...)` faithfully, and stays
+    // type-specific (NOT "seed all params"), preserving precision.
+    //
+    // SINK / SANITIZER: the declared type is a droppable constraint, so we strip
+    // the `(Type ...)` annotation to a bare metavariable receiver and re-compile
+    // `$MV.method(...)` through the normal call/member path (yielding a
+    // `MethodName` / `Call` matcher). A bare `(Type $MV)` with no trailing chain
+    // has no expressible sink node shape and is skipped (deferred).
+    //
+    // Gated to Java: this parenthesised-type syntax is Java-specific (Go uses a
+    // different `($X : *pkg.Type)` colon form — see COMPATIBILITY.md).
+    if lang == Language::Java {
+        if let Some((type_text, metavar, remainder)) = parse_typed_metavar(pat) {
+            let type_seg = type_final_segment(type_text);
+            match role {
+                MatcherRole::Source => {
+                    return Some(GenericMatcher::TypedName {
+                        type_name: type_seg.to_string(),
+                        description: format!("untrusted `{type_seg}` typed value"),
+                    });
+                }
+                MatcherRole::Sink | MatcherRole::Sanitizer => {
+                    let rem = remainder.trim();
+                    if rem.is_empty() {
+                        // Bare `(Type $MV)` sink — no node shape to match on.
+                        return None;
+                    }
+                    let rewritten = format!("{metavar}{rem}");
+                    return compile_pattern(&rewritten, role, lang);
+                }
+            }
+        }
+    }
+
     // ── Bash command / command-substitution shapes ───────────────────────
     //
     // Bash taint rules express sources and sinks as shell commands rather than
@@ -4678,6 +4840,70 @@ fn is_whole_args_list(args: &str) -> bool {
 
 /// True when `s` is a Semgrep metavariable: `$` followed by one or more
 /// ASCII uppercase letters or underscores (e.g. `$X`, `$CONN`, `$_`).
+/// Parse a Semgrep "typed metavariable" pattern `(Type $MV)` optionally
+/// followed by a trailing member/call chain. Returns
+/// `(type_text, metavar_text, remainder)`:
+///
+/// - `(HttpServletRequest $REQ)`             -> ("HttpServletRequest", "$REQ", "")
+/// - `(HttpServletRequest $REQ).$FUNC(...)`  -> ("HttpServletRequest", "$REQ", ".$FUNC(...)")
+/// - `(java.sql.Statement $S).execute(...)`  -> ("java.sql.Statement", "$S", ".execute(...)")
+/// - `(javax.servlet.http.Cookie[] $C)`      -> ("javax.servlet.http.Cookie[]", "$C", "")
+///
+/// Only matches when the pattern STARTS with `(<type> <$METAVAR>)` where
+/// `<type>` is a (possibly dotted, array-, or generic-suffixed) type name and
+/// `<$METAVAR>` is a single Semgrep metavariable. The typed group never
+/// contains inner parentheses, so the first `)` closes it.
+fn parse_typed_metavar(pat: &str) -> Option<(&str, &str, &str)> {
+    let pat = pat.trim();
+    let rest = pat.strip_prefix('(')?;
+    let close = rest.find(')')?;
+    let inner = rest[..close].trim();
+    let (ty, mv) = inner.rsplit_once(char::is_whitespace)?;
+    let ty = ty.trim();
+    let mv = mv.trim();
+    if !is_metavariable(mv) || !is_type_name(ty) {
+        return None;
+    }
+    let remainder = &rest[close + 1..];
+    Some((ty, mv, remainder))
+}
+
+/// True when `s` looks like a Java type reference usable as a typed-metavariable
+/// annotation: a (possibly dotted) identifier chain, optionally suffixed with
+/// array brackets (`[]`) and/or a generic argument list (`<...>`).
+fn is_type_name(s: &str) -> bool {
+    let mut base = s.trim();
+    // Drop a trailing generic argument list `<...>`.
+    if base.ends_with('>') {
+        if let Some(lt) = base.find('<') {
+            base = base[..lt].trim_end();
+        }
+    }
+    // Drop any trailing array brackets `[]` (possibly repeated).
+    while let Some(stripped) = base.strip_suffix("[]") {
+        base = stripped.trim_end();
+    }
+    is_dotted_identifier(base)
+}
+
+/// The final `.`-segment of a (possibly fully-qualified) type reference, with
+/// array/generic suffixes stripped: `javax.servlet.http.HttpServletRequest`
+/// and `HttpServletRequest` both yield `HttpServletRequest`; `Cookie[]` yields
+/// `Cookie`. Used to match a Semgrep typed-metavariable annotation against a
+/// declared type by simple name.
+fn type_final_segment(type_text: &str) -> &str {
+    let mut base = type_text.trim();
+    if base.ends_with('>') {
+        if let Some(lt) = base.find('<') {
+            base = base[..lt].trim_end();
+        }
+    }
+    while let Some(stripped) = base.strip_suffix("[]") {
+        base = stripped.trim_end();
+    }
+    base.rsplit('.').next().unwrap_or(base).trim()
+}
+
 fn is_metavariable(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {
@@ -9926,6 +10152,150 @@ pattern-sinks:
         assert!(
             rule.check(safe, &tree).is_empty(),
             "a constant send_file argument must not fire"
+        );
+    }
+
+    // ── Java typed-metavariable source `(HttpServletRequest $REQ)` ──────────
+    //
+    // These exercise the whole `parse_taint_rule -> compiled() -> check()`
+    // path: the typed-metavariable source must LOAD, FIRE when a variable of
+    // the named type flows to a sink, and stay SILENT when the variable is a
+    // different type (type discrimination — the faithfulness requirement).
+
+    /// A `(HttpServletRequest $REQ)` source rule loads and fires on
+    /// `void handler(HttpServletRequest req) { runtime.exec(req.getParameter("x")); }`.
+    #[test]
+    fn typed_metavar_source_loads_and_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: java-typed-source
+mode: taint
+languages: [java]
+severity: ERROR
+message: "Untrusted HttpServletRequest reaches a command sink"
+pattern-sources:
+  - pattern: (HttpServletRequest $REQ)
+pattern-sinks:
+  - pattern: $RUNTIME.exec(...)
+"#,
+        );
+
+        // The source compiled to a type-specific `TypedName`, not an
+        // any-parameter wildcard.
+        assert!(
+            rule.spec.sources.iter().any(|s| matches!(
+                s,
+                GenericMatcher::TypedName { type_name, .. } if type_name == "HttpServletRequest"
+            )),
+            "source should compile to TypedName{{HttpServletRequest}}, got {:?}",
+            rule.spec.sources
+        );
+
+        let fire_src = r#"
+class Handler {
+    void handler(HttpServletRequest req) throws Exception {
+        runtime.exec(req.getParameter("x"));
+    }
+}
+"#;
+        let tree = parse_file(fire_src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(fire_src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a value read off an HttpServletRequest-typed parameter reaching exec() must fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Type discrimination: the same rule stays SILENT when the parameter is a
+    /// different declared type — `(HttpServletRequest $REQ)` must NOT broaden
+    /// into "seed every parameter".
+    #[test]
+    fn typed_metavar_source_discriminates_by_type() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: java-typed-source
+mode: taint
+languages: [java]
+severity: ERROR
+message: "Untrusted HttpServletRequest reaches a command sink"
+pattern-sources:
+  - pattern: (HttpServletRequest $REQ)
+pattern-sinks:
+  - pattern: $RUNTIME.exec(...)
+"#,
+        );
+
+        // Same flow shape, but `req` is a `FooBar`, not an HttpServletRequest.
+        let miss_src = r#"
+class Handler {
+    void handler(FooBar req) throws Exception {
+        runtime.exec(req.getParameter("x"));
+    }
+}
+"#;
+        let tree = parse_file(miss_src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(miss_src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a differently-typed parameter must not be seeded as a source, got {:?}",
+            findings
+        );
+    }
+
+    /// The typed-metavariable-RECEIVER source shape
+    /// `(HttpServletRequest $REQ).$FUNC(...)` also compiles to the same
+    /// `TypedName` matcher (the trailing method read is a droppable narrowing)
+    /// and fires on a local variable of that type.
+    #[test]
+    fn typed_metavar_receiver_source_loads_and_fires_on_local() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: java-typed-receiver-source
+mode: taint
+languages: [java]
+severity: ERROR
+message: "Untrusted HttpServletRequest read reaches a command sink"
+pattern-sources:
+  - patterns:
+      - pattern: (HttpServletRequest $REQ).$FUNC(...)
+pattern-sinks:
+  - pattern: $RUNTIME.exec(...)
+"#,
+        );
+
+        assert!(
+            rule.spec.sources.iter().any(|s| matches!(
+                s,
+                GenericMatcher::TypedName { type_name, .. } if type_name == "HttpServletRequest"
+            )),
+            "receiver-typed source should compile to TypedName{{HttpServletRequest}}, got {:?}",
+            rule.spec.sources
+        );
+
+        // A local declared with the named type is seeded by its declared type.
+        let fire_src = r#"
+class Handler {
+    void handler() throws Exception {
+        HttpServletRequest req = getRequest();
+        runtime.exec(req.getParameter("x"));
+    }
+}
+"#;
+        let tree = parse_file(fire_src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(fire_src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a read off a locally-declared HttpServletRequest reaching exec() must fire, got {:?}",
+            findings
         );
     }
 }

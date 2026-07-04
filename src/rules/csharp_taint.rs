@@ -856,6 +856,10 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 // Sink-only; carried for spec completeness but the C# engine
                 // does not match it as a source.
             }
+            NodeMatcher::TypedName { .. } => {
+                // Java-only typed-metavariable source; the C# engine has no
+                // declared-type seeding, so it is a no-op here.
+            }
         }
     }
     None
@@ -960,7 +964,8 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         | NodeMatcher::MemberAssign { .. }
         | NodeMatcher::BinopFormat { .. }
         | NodeMatcher::ObjectLiteralValue { .. }
-        | NodeMatcher::ReturnValue { .. } => false,
+        | NodeMatcher::ReturnValue { .. }
+        | NodeMatcher::TypedName { .. } => false,
     }
 }
 

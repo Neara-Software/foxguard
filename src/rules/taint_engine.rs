@@ -159,6 +159,29 @@ pub enum NodeMatcher {
     /// Only meaningful as a sink/sanitizer shape for Python; for other engines
     /// the matcher is carried in the spec but never queried.
     ReturnValue { description: String },
+
+    /// Match any parameter or local variable whose DECLARED TYPE's final
+    /// segment equals `type_name` — the Semgrep "typed metavariable" source
+    /// `(HttpServletRequest $REQ)` ("any variable of type
+    /// `HttpServletRequest` is a taint source"). The variable is seeded as
+    /// tainted at scope entry (parameter) or at its declaration (local),
+    /// after which the engine's normal propagation carries the taint through
+    /// reads and method calls on it — so `(HttpServletRequest $REQ).$FUNC(...)`
+    /// reduces to the same matcher (the trailing method read is droppable).
+    ///
+    /// The type is matched by its final `.`-segment so both a bare
+    /// `HttpServletRequest` and a fully-qualified
+    /// `javax.servlet.http.HttpServletRequest` declaration match. This is
+    /// deliberately type-specific (NOT "seed every parameter"): only variables
+    /// of the named type become sources, preserving precision.
+    ///
+    /// Compiled solely for the Java engine by the bridge; other engines carry
+    /// the matcher in the spec but no-op it (their `seed`/`match_source` paths
+    /// never inspect declared types).
+    TypedName {
+        type_name: String,
+        description: String,
+    },
 }
 
 impl NodeMatcher {
@@ -177,6 +200,7 @@ impl NodeMatcher {
             NodeMatcher::BinopFormat { description, .. } => description,
             NodeMatcher::ObjectLiteralValue { description, .. } => description,
             NodeMatcher::ReturnValue { description, .. } => description,
+            NodeMatcher::TypedName { description, .. } => description,
         }
     }
 }
@@ -1048,6 +1072,12 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
         }
         NodeMatcher::ReturnValue { description } => {
             format!("RV|{description}")
+        }
+        NodeMatcher::TypedName {
+            type_name,
+            description,
+        } => {
+            format!("TN|{type_name}|{description}")
         }
     }
 }
