@@ -29,7 +29,7 @@ The taint engine supports:
 Known limitations:
 
 - **Multi-hop interprocedural chains**: only one level of helper-call propagation is supported. A helper that itself calls another helper is not tracked through the deeper hop.
-- **Cross-file**: Cross-file taint is supported for Python (import resolution), JavaScript (require/import/export default), Go (same-package), Java (same-directory, name-based method resolution), and C# (same-directory, name-based method resolution) via two-pass function summary analysis. Kotlin and C are intrafile today. The Java and C# cross-file passes resolve a helper-method call to a summarized method *by method name* within the same directory (a same-package/same-namespace proxy); they do not model type-based instance dispatch, interface/subclass dispatch, overload selection by parameter type, cross-package/namespace (`import`/`using`) resolution, partial classes, or multi-hop chains. See "Supported Java frameworks" below.
+- **Cross-file**: Cross-file taint is supported for Python (import resolution), JavaScript (require/import/export default), Go (same-package), Java (same-directory, name-based method resolution), and C# (same-directory, name-based method resolution) via two-pass function summary analysis. Kotlin and C are intrafile today. Python additionally composes **bounded multi-hop** chains where a cross-file helper itself calls another cross-file helper (`A → f → g → sink`); see "Bounded multi-hop cross-file taint (Python)" below. The other cross-file engines remain single-hop. The Java and C# cross-file passes resolve a helper-method call to a summarized method *by method name* within the same directory (a same-package/same-namespace proxy); they do not model type-based instance dispatch, interface/subclass dispatch, overload selection by parameter type, cross-package/namespace (`import`/`using`) resolution, partial classes, or multi-hop chains. See "Supported Java frameworks" below.
 - **Instance and class methods in interprocedural summaries**: only top-level `function_declaration`s and `const/let/var foo = ...` arrow/function-expression helpers are summarized. `obj.method()` and `self.helper()` calls are not looked up in the summary map.
 - **Argument taint propagation**: helper summaries are computed with only their parameters' taint sources seeded (via `ParamName`). Passing an already-tainted local into a helper does not influence the helper's return summary — pass 1 analyzes helpers with a conservative view of their parameters.
 - **Per-finding sanitization**: Semgrep's `mode: taint` distinguishes "this specific flow was sanitized" from "the value is now clean"; it can still fire on secondary flows that bypassed the sanitizer along a different path. foxguard's v1 collapses both cases into "clean" and does not track per-finding sanitization state.
@@ -101,6 +101,80 @@ Scope and limitations:
 - **Bare identifier callees.** `handler()` looks up `handler` in the summary map. `obj.handler()`, `self.helper()`, and aliased forms of method calls do not. Rationale: method calls need receiver/type information the engine does not model.
 - **Name collisions are last-write-wins.** If two functions in the same file share a simple name (e.g. an outer `def helper` and a nested `def helper` inside another function), one summary will overwrite the other during pass 1. This is a known v1 limitation — fix by making summaries scope-aware when it stops being hypothetical.
 - **Argument-based taint is not threaded through helpers.** A helper's summary is computed using only its own parameter sources (`ParamName` matchers); passing an already-tainted local in as an argument does not retroactively taint the helper's return.
+
+## Bounded multi-hop cross-file taint (Python)
+
+The base cross-file pass ([`FunctionTaintSummary`], `params_to_sink` +
+`params_to_return`) resolves a **single** cross-file hop: a source in file A
+flowing through an imported helper `f()` in file B and into a sink is found.
+Two chained shapes exist:
+
+- **Orchestrator (already handled by the base pass).** File A itself makes both
+  calls: `y = f(x); g(y)` where `f` (file B) is a passthrough
+  (`params_to_return`) and `g` (file C) sinks its argument. `expression_taint`
+  taints `y` from `f`'s return, then `g(y)` fires. This is really two
+  independent single hops glued by a local in A (see the `django_chain`
+  fixture).
+
+- **Nested helper (the genuine multi-hop, added here).** File A calls `f()`
+  (file B), and `f`'s *own body* calls `g()` (file C) which sinks the value:
+  `A → f → g → sink`, where `f` never contains a sink itself. This was missed,
+  because pass-1 summary extraction ran with cross-file resolution *disabled*,
+  so `f`'s summary recorded nothing and A saw an empty summary for `f`.
+
+### How the nested case is composed
+
+After the per-file base summaries are built, the scanner runs a **bounded
+fix-point** that composes them one hop deeper
+([`compose_cross_file_summaries`], driving
+`extract_cross_file_summary_for_function_cf` with cross-file resolution
+*enabled* against the current summary snapshot):
+
+- Each round re-analyzes every function against an immutable snapshot of the
+  previous round's summaries. If `f`'s body calls `g()` cross-file and `g`
+  sinks its argument, `f`'s summary gains that `params_to_sink` entry (and
+  likewise `params_to_return` for passthrough-through-a-helper). New flows are
+  merged in by **union** ([`FunctionTaintSummary::merge_from`]); base flows are
+  never removed.
+- Pass 2 then consumes the composed summaries unchanged, so the caller in file
+  A fires on `f(tainted)`.
+
+### The bound and the cycle guard
+
+- **Hop bound.** Each fix-point round advances the frontier by exactly one hop,
+  so the number of rounds *is* the extra-hop depth. The scanner caps this at
+  `MAX_MULTIHOP_ROUNDS = 5` (in `src/engine/scanner.rs`). A chain deeper than
+  ~5 cross-file hops is not fully composed — a deliberate, documented cap, not
+  an unbounded interprocedural fix-point.
+- **Termination / cycle guard.** Summaries grow monotonically over a finite
+  lattice (`#params × #rules`), and the loop stops early the first round that
+  adds nothing (`changed == false`). Composition only *reads* precomputed
+  summaries — it never recurses into a callee's body across files — so a cyclic
+  or mutually-recursive helper graph (`f → g → f`) cannot loop forever within a
+  round, and the round cap is a hard backstop across rounds.
+- **Sanitizers still break the chain.** During composition a cross-file finding
+  for any rule can surface in any analysis pass, so every pass carries the
+  **union** of all rules' sanitizers (over-approximating sanitization — a
+  false-negative-only direction that never loses a base flow, since those are
+  merged in). A value run through a sanitizer in the middle helper therefore
+  yields no composed sink flow and the chain breaks. Covered by the
+  `python_multihop` (positive) and `python_multihop_sanitized` (negative)
+  fixtures.
+
+### Still not modeled
+
+- **Only Python.** The composition fix-point is wired for the Python engine
+  only. JavaScript and Go carry the same base machinery
+  (`extract_cross_file_summary_for_function_cf` accepts the cross-file context)
+  but the scanner does not yet run the composition rounds for them; Java, C#,
+  Ruby, PHP, and Kotlin keep their own single-hop cross-file passes.
+- **Chains deeper than the hop cap** (`> MAX_MULTIHOP_ROUNDS` extra hops).
+- **Taint through mutable state** — e.g. a value stored into a field/module
+  global in one file and read back in another — is not tracked; only
+  parameter→sink and parameter→return dataflow is summarized.
+- **Method/receiver dispatch across files** (`obj.method()`, instance/interface
+  dispatch) — resolution is still import-name / same-package based, as in the
+  base pass.
 
 ## Sanitizers
 

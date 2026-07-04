@@ -555,6 +555,45 @@ pub(super) fn extract_cross_file_summary_for_function<T, CF>(
 where
     T: TaintLanguageAdapter<CF>,
 {
+    extract_cross_file_summary_for_function_cf::<T, CF>(
+        func_node,
+        func_name,
+        param_names,
+        source,
+        aliases,
+        rule_specs,
+        None,
+    )
+}
+
+/// Like [`extract_cross_file_summary_for_function`] but with an optional
+/// cross-file context.
+///
+/// When `cross_file` is `Some`, calls *inside* the function body to helpers in
+/// **other** files are resolved against the supplied summary map. This lets a
+/// parameter that reaches a sink (or the return value) only *through* a
+/// cross-file helper be recorded in the summary. It is the transitive-summary
+/// composition step used by the scanner's bounded multi-hop fixpoint
+/// (see `docs/taint-tracking.md`, "Bounded multi-hop cross-file taint").
+///
+/// Cross-file findings produced during this walk carry a decorated sink
+/// description but a `rule_id_hint` naming the *resolved* sink rule; they are
+/// attributed via that hint rather than via the local `sink_desc_to_rule` map.
+///
+/// With `cross_file = None` this is byte-for-byte equivalent to the historical
+/// single-file summary extraction (no cross-file findings can be produced).
+pub(super) fn extract_cross_file_summary_for_function_cf<T, CF>(
+    func_node: Node<'_>,
+    func_name: &str,
+    param_names: &[String],
+    source: &str,
+    aliases: Option<&super::common::AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+    cross_file: Option<&CF>,
+) -> Option<FunctionTaintSummary>
+where
+    T: TaintLanguageAdapter<CF>,
+{
     if param_names.is_empty() {
         return None;
     }
@@ -581,6 +620,30 @@ where
 
     let empty_summary = ReturnSummary::new();
 
+    // Cross-file findings (produced by the language engine's cross-file call
+    // handler when `cross_file` is Some) fire in whichever pass runs the walk,
+    // independent of the batched/sanitizer partition above — the partition only
+    // governs *same-file* sink matching. To keep those cross-file findings
+    // sanitizer-correct, the batched and return passes must carry every rule's
+    // sanitizers when composing. This over-approximates sanitization across
+    // rules (a safe, false-negative-only direction), and only affects the
+    // composed summaries: base single-file flows were already captured with the
+    // precise per-rule partition and are merged in by union, so nothing is lost.
+    let composition_sanitizers: Vec<NodeMatcher> = if cross_file.is_some() {
+        let mut merged: Vec<NodeMatcher> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for (_, rule_spec) in rule_specs {
+            for s in &rule_spec.sanitizers {
+                if seen.insert(matcher_fingerprint(s)) {
+                    merged.push(s.clone());
+                }
+            }
+        }
+        merged
+    } else {
+        Vec::new()
+    };
+
     // Pre-build reusable specs outside the per-param loop.
     let placeholder_source = NodeMatcher::ParamName {
         names: vec![],
@@ -589,19 +652,29 @@ where
     let mut return_spec = TaintSpec {
         sources: vec![placeholder_source.clone()],
         sinks: vec![],
-        sanitizers: vec![],
+        sanitizers: composition_sanitizers.clone(),
     };
     let mut batched_spec = TaintSpec {
         sources: vec![placeholder_source.clone()],
         sinks: batched_sinks,
-        sanitizers: vec![],
+        sanitizers: composition_sanitizers.clone(),
     };
     let mut sanitizer_specs: Vec<TaintSpec> = sanitizer_rules
         .iter()
         .map(|(_, rule_spec)| TaintSpec {
             sources: vec![placeholder_source.clone()],
             sinks: rule_spec.sinks.clone(),
-            sanitizers: rule_spec.sanitizers.clone(),
+            // During composition a cross-file finding for *any* rule can fire in
+            // this pass (the cross-file handler is rule-filter-agnostic across
+            // passes), so every pass must carry the full sanitizer union — not
+            // just this rule's own sanitizers — or a value sanitized for rule A
+            // would leak a cross-file finding through rule B's pass. Outside
+            // composition (`cross_file` None) we keep the precise per-rule set.
+            sanitizers: if cross_file.is_some() {
+                composition_sanitizers.clone()
+            } else {
+                rule_spec.sanitizers.clone()
+            },
         })
         .collect();
 
@@ -618,7 +691,7 @@ where
             spec: &return_spec,
             aliases,
             summaries: &empty_summary,
-            cross_file: None,
+            cross_file,
             sink_to_rules: None,
         };
         let mut return_findings = Vec::new();
@@ -638,27 +711,37 @@ where
             }
         }
 
-        let mut seen: HashSet<(usize, &str)> = HashSet::new();
+        let mut seen: HashSet<(usize, String)> = HashSet::new();
 
-        // Batched pass: one call for all no-sanitizer rules.
-        if !batched_spec.sinks.is_empty() {
+        // Batched pass: one call for all no-sanitizer rules. When a cross-file
+        // context is present we run it even with no local sinks, so cross-file
+        // sink findings (driven by the resolved summaries, not by
+        // `batched_spec.sinks`) are still collected.
+        if !batched_spec.sinks.is_empty() || cross_file.is_some() {
             batched_spec.sources[0] = synthetic_source.clone();
             let batched_ctx = AnalysisContext {
                 source,
                 spec: &batched_spec,
                 aliases,
                 summaries: &empty_summary,
-                cross_file: None,
+                cross_file,
                 sink_to_rules: None,
             };
             let mut findings = Vec::new();
             analyze_function_generic::<T, CF>(func_node, &batched_ctx, &mut findings);
             for f in &findings {
-                if let Some(&rule_id) = sink_desc_to_rule.get(f.sink_description.as_str()) {
-                    if seen.insert((param_idx, rule_id)) {
+                // Same-file sinks are attributed via their (undecorated)
+                // description; cross-file findings carry a decorated
+                // description but a `rule_id_hint` naming the resolved rule.
+                let rule_id = match sink_desc_to_rule.get(f.sink_description.as_str()) {
+                    Some(&r) => Some(r.to_string()),
+                    None => f.rule_id_hint.clone(),
+                };
+                if let Some(rule_id) = rule_id {
+                    if seen.insert((param_idx, rule_id.clone())) {
                         params_to_sink.push(ParamSinkFlow {
                             param_index: param_idx,
-                            sink_rule_id: rule_id.to_string(),
+                            sink_rule_id: rule_id,
                             sink_description: f.sink_description.clone(),
                         });
                     }
@@ -674,17 +757,26 @@ where
                 spec: &sanitizer_specs[idx],
                 aliases,
                 summaries: &empty_summary,
-                cross_file: None,
+                cross_file,
                 sink_to_rules: None,
             };
             let mut findings = Vec::new();
             analyze_function_generic::<T, CF>(func_node, &sink_ctx, &mut findings);
-            if !findings.is_empty() && seen.insert((param_idx, rule_id)) {
-                params_to_sink.push(ParamSinkFlow {
-                    param_index: param_idx,
-                    sink_rule_id: rule_id.to_string(),
-                    sink_description: findings[0].sink_description.clone(),
-                });
+            for f in &findings {
+                // A cross-file finding is attributed to its resolved rule (via
+                // the hint); a same-file finding belongs to the sanitizer rule
+                // under test. Dedup keeps one flow per (param, rule).
+                let attributed = f
+                    .rule_id_hint
+                    .clone()
+                    .unwrap_or_else(|| rule_id.to_string());
+                if seen.insert((param_idx, attributed.clone())) {
+                    params_to_sink.push(ParamSinkFlow {
+                        param_index: param_idx,
+                        sink_rule_id: attributed,
+                        sink_description: f.sink_description.clone(),
+                    });
+                }
             }
         }
     }
