@@ -27,10 +27,10 @@
 use super::common::AliasTable;
 use super::taint_engine::{
     analyze_function_generic, attribution_hint_for_sink, build_batched_taint_groups,
-    cross_file_taint_finding, extract_cross_file_summary_for_function, match_call_sink,
-    match_member_assign_sink, match_object_literal_sink, node_text, push_attributed_findings,
-    taint_finding_for_node, walk_body_for_summary_generic, AnalysisContext, TaintLanguageAdapter,
-    TaintState,
+    cross_file_taint_finding, extract_cross_file_summary_for_function,
+    extract_cross_file_summary_for_function_cf, match_call_sink, match_member_assign_sink,
+    match_object_literal_sink, node_text, push_attributed_findings, taint_finding_for_node,
+    walk_body_for_summary_generic, AnalysisContext, TaintLanguageAdapter, TaintState,
 };
 pub use super::taint_engine::{
     BatchedRule, NodeMatcher, ReturnSummary, ReturnTaintSummary, RuleFilter, TaintFinding,
@@ -370,6 +370,61 @@ pub fn extract_cross_file_summaries(
     });
 
     summaries
+}
+
+/// Re-derive a file's cross-file summaries with import resolution enabled,
+/// composing the current summary map one hop deeper.
+///
+/// This is the JS/TS counterpart of
+/// [`python_taint::compose_cross_file_summaries`] and the per-file step of the
+/// scanner's **bounded multi-hop** fixpoint. For each exported function it
+/// re-runs the parameter-as-source summary extraction, but this time calls to
+/// helpers in *other* files are resolved against `summaries` (using this file's
+/// `import_to_path`). A parameter that only reaches a sink or the return value
+/// *through* such a cross-file helper is therefore captured — e.g. `f(p)` whose
+/// body is `return g(p)` where `g` (an imported module) sinks its argument:
+/// `f`'s summary gains that `params_to_sink` entry.
+///
+/// The scanner unions the returned flows into the existing summaries via
+/// [`FunctionTaintSummary::merge_from`] and repeats until a fixpoint (no change)
+/// or the hop bound is reached. `summaries` is a read-only snapshot from the
+/// previous round, so each round adds exactly one hop; monotone growth over a
+/// finite lattice guarantees termination, and the scanner's round cap is a hard
+/// backstop against mutually-recursive helpers.
+pub fn compose_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+    import_to_path: &HashMap<String, PathBuf>,
+    summaries: &CrossFileSummaryMap,
+    allowed_rule_ids: &std::collections::HashSet<String>,
+) -> Vec<FunctionTaintSummary> {
+    let cross_file = CrossFileInfo {
+        import_to_path,
+        summaries,
+        rule_filter: RuleFilter::Any(allowed_rule_ids),
+    };
+
+    let mut out = Vec::new();
+    collect_exported_functions(root, source, &mut |func_name, func_node| {
+        let param_names = collect_param_names(func_node, source);
+
+        if let Some(summary) =
+            extract_cross_file_summary_for_function_cf::<JsTaintAdapter, CrossFileInfo<'_>>(
+                func_node,
+                &func_name,
+                &param_names,
+                source,
+                aliases,
+                rule_specs,
+                Some(&cross_file),
+            )
+        {
+            out.push(summary);
+        }
+    });
+    out
 }
 
 /// Collect parameter names from a function node in declaration order.

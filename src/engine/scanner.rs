@@ -1144,6 +1144,86 @@ fn scan_files(
             }
             prepared_files.insert(path, prepared);
         }
+
+        // ── Bounded multi-hop composition (fixpoint) ──────────────────
+        // Mirror of the Python block above for JavaScript/TypeScript:
+        // compose per-file summaries one hop per round so a chain
+        // A→f→g→sink — where the MIDDLE helper `f` forwards its param into
+        // a cross-file helper `g` that sinks it — is captured. Resolution
+        // uses each file's import map (same as the single-hop JS pass).
+        // Summaries grow monotonically over a finite lattice, so the loop
+        // reaches a fixpoint; MAX_MULTIHOP_ROUNDS is the hard backstop.
+        // See docs/taint-tracking.md, "Bounded multi-hop cross-file taint".
+        if !js_summaries.is_empty() {
+            const MAX_MULTIHOP_ROUNDS: usize = 5;
+            let allowed_rule_ids: std::collections::HashSet<String> =
+                js_rule_specs.iter().map(|(id, _)| id.to_string()).collect();
+            // Resolve each file's import map once (canonicalized to match
+            // the summary-map keys), keyed by the file's canonical path.
+            let import_maps: HashMap<PathBuf, HashMap<String, PathBuf>> = js_files
+                .iter()
+                .filter_map(|(path, _)| {
+                    let prepared = prepared_files.get(path)?;
+                    let mut imports = javascript_taint::resolve_js_imports_to_paths(
+                        &prepared.source,
+                        &prepared.tree,
+                        path,
+                    );
+                    let canonical: HashMap<String, PathBuf> = imports
+                        .drain()
+                        .map(|(k, v)| {
+                            let canon = std::fs::canonicalize(&v).unwrap_or(v);
+                            (k, canon)
+                        })
+                        .collect();
+                    Some((prepared.canonical_path.clone(), canonical))
+                })
+                .collect();
+
+            for _round in 0..MAX_MULTIHOP_ROUNDS {
+                let snapshot = js_summaries.clone();
+                let mut changed = false;
+                for (path, _) in &js_files {
+                    let Some(prepared) = prepared_files.get(path) else {
+                        continue;
+                    };
+                    let canonical = prepared.canonical_path.clone();
+                    let Some(import_to_path) = import_maps.get(&canonical) else {
+                        continue;
+                    };
+                    let composed = javascript_taint::compose_cross_file_summaries(
+                        prepared.tree.root_node(),
+                        &prepared.source,
+                        Some(&prepared.aliases),
+                        &js_rule_specs,
+                        import_to_path,
+                        &snapshot,
+                        &allowed_rule_ids,
+                    );
+                    if composed.is_empty() {
+                        continue;
+                    }
+                    let entry = js_summaries.entry(canonical).or_default();
+                    for new_summary in composed {
+                        match entry.iter_mut().find(|s| s.name == new_summary.name) {
+                            Some(existing) => {
+                                if existing.merge_from(&new_summary) {
+                                    changed = true;
+                                }
+                            }
+                            None => {
+                                entry.push(new_summary);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
         has_js_cross_file = !js_summaries.is_empty();
         cross_file_summaries.extend(js_summaries);
     }
@@ -1199,6 +1279,91 @@ fn scan_files(
             }
             prepared_files.insert(path, prepared);
         }
+
+        // ── Bounded multi-hop composition (fixpoint) ──────────────────
+        // Mirror of the Python block above for Go: compose per-file
+        // summaries one hop per round so a chain A→f→g→sink — where the
+        // MIDDLE helper `f` forwards its param into a same-package helper
+        // `g` that sinks it — is captured. Resolution is same-package
+        // (all .go files in a directory share a package), matching the
+        // single-hop Go pass. Summaries grow monotonically over a finite
+        // lattice, so the loop reaches a fixpoint; MAX_MULTIHOP_ROUNDS is
+        // the hard backstop.
+        // See docs/taint-tracking.md, "Bounded multi-hop cross-file taint".
+        if !go_summaries.is_empty() {
+            const MAX_MULTIHOP_ROUNDS: usize = 5;
+            let allowed_rule_ids: std::collections::HashSet<String> =
+                go_rule_specs.iter().map(|(id, _)| id.to_string()).collect();
+            // Build a directory→canonical-paths index: all .go files in a
+            // directory belong to the same package and resolve each other.
+            let mut dir_index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+            for (path, _) in &go_files {
+                if let Some(prepared) = prepared_files.get(path) {
+                    if let Some(dir) = path.parent() {
+                        dir_index
+                            .entry(dir.to_path_buf())
+                            .or_default()
+                            .push(prepared.canonical_path.clone());
+                    }
+                }
+            }
+
+            for _round in 0..MAX_MULTIHOP_ROUNDS {
+                let snapshot = go_summaries.clone();
+                let mut changed = false;
+                for (path, _) in &go_files {
+                    let Some(prepared) = prepared_files.get(path) else {
+                        continue;
+                    };
+                    let canonical = prepared.canonical_path.clone();
+                    // Same-package siblings (excluding self).
+                    let same_package_paths: Vec<PathBuf> = path
+                        .parent()
+                        .and_then(|dir| dir_index.get(dir))
+                        .map(|siblings| {
+                            siblings
+                                .iter()
+                                .filter(|p| **p != canonical)
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if same_package_paths.is_empty() {
+                        continue;
+                    }
+                    let composed = go_taint::compose_cross_file_summaries(
+                        prepared.tree.root_node(),
+                        &prepared.source,
+                        Some(&prepared.aliases),
+                        &go_rule_specs,
+                        &same_package_paths,
+                        &snapshot,
+                        &allowed_rule_ids,
+                    );
+                    if composed.is_empty() {
+                        continue;
+                    }
+                    let entry = go_summaries.entry(canonical).or_default();
+                    for new_summary in composed {
+                        match entry.iter_mut().find(|s| s.name == new_summary.name) {
+                            Some(existing) => {
+                                if existing.merge_from(&new_summary) {
+                                    changed = true;
+                                }
+                            }
+                            None => {
+                                entry.push(new_summary);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
         has_go_cross_file = !go_summaries.is_empty();
         cross_file_summaries.extend(go_summaries);
     }

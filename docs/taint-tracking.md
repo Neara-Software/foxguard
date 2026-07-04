@@ -12,7 +12,7 @@ The taint engine answers the second, on a narrower footprint. It lets us ship ru
 
 The taint engine supports:
 
-- **Built-in taint rules for eight languages**: Python, JavaScript/TypeScript, Go, Kotlin, C, Java, C#, and Ruby. Each has source/sink specs wired into the scanner (`builtin_taint_specs_for_language`) and a grammar-aware engine (`src/rules/*_taint.rs`) sharing the same user-facing trace surface (`TaintSpec`, `NodeMatcher`, `TaintFinding`, `analyze_tree`). `.ts` and `.tsx` files use dedicated tree-sitter TypeScript/TSX grammars, then run through the JavaScript-compatible rule and taint surface where semantics align.
+- **Built-in taint rules for 14 languages**: Python, JavaScript/TypeScript, Go, Java, C, Kotlin, C#, Ruby, PHP, Swift, Bash, Solidity, Scala, and Apex. Each has source/sink specs wired into the scanner (`builtin_taint_specs_for_language`) and a grammar-aware engine (`src/rules/*_taint.rs`) sharing the same user-facing trace surface (`TaintSpec`, `NodeMatcher`, `TaintFinding`, `analyze_tree`). `.ts` and `.tsx` files use dedicated tree-sitter TypeScript/TSX grammars, then run through the JavaScript-compatible rule and taint surface where semantics align.
 - **Intraprocedural**: each function body is analyzed independently.
 - **Flow-insensitive**: statements are processed in source order. Reassigning a tainted variable to a clean value drops the taint. Branches are not modeled — taint observed in one branch of an `if` persists through the fall-through.
 - **One level of attribute propagation**: `x.y` is tainted when `x` is tainted.
@@ -29,7 +29,7 @@ The taint engine supports:
 Known limitations:
 
 - **Multi-hop interprocedural chains**: only one level of helper-call propagation is supported. A helper that itself calls another helper is not tracked through the deeper hop.
-- **Cross-file**: Cross-file taint is supported for 8 languages via two-pass function summary analysis — Python (import resolution), JavaScript (require/import/export default), Go (same-package), Java, C#, Ruby, PHP, and Kotlin (the latter five resolve helper calls by name within the same directory, a same-package/same-namespace proxy). C and the remaining first-party taint languages are intra-file today. Python additionally composes **bounded multi-hop** chains where a cross-file helper itself calls another cross-file helper (`A → f → g → sink`); see "Bounded multi-hop cross-file taint (Python)" below. The other cross-file engines remain single-hop. The name-based cross-file passes (Java/C#/Ruby/PHP/Kotlin) resolve a helper-method call to a summarized method *by method name* within the same directory; they do not model type-based instance dispatch, interface/subclass dispatch, overload selection by parameter type, cross-package/namespace (`import`/`using`) resolution, partial classes, or multi-hop chains. See "Supported Java frameworks" below.
+- **Cross-file**: Cross-file taint is supported for 8 languages via two-pass function summary analysis — Python (import resolution), JavaScript (require/import/export default), Go (same-package), Java, C#, Ruby, PHP, and Kotlin (the latter five resolve helper calls by name within the same directory, a same-package/same-namespace proxy). C and the remaining first-party taint languages are intra-file today. Python, JavaScript, and Go additionally compose **bounded multi-hop** chains where a cross-file helper itself calls another cross-file helper (`A → f → g → sink`); see "Bounded multi-hop cross-file taint (Python, JavaScript, Go)" below. The other cross-file engines remain single-hop. The name-based cross-file passes (Java/C#/Ruby/PHP/Kotlin) resolve a helper-method call to a summarized method *by method name* within the same directory; they do not model type-based instance dispatch, interface/subclass dispatch, overload selection by parameter type, cross-package/namespace (`import`/`using`) resolution, partial classes, or multi-hop chains. See "Supported Java frameworks" below.
 - **Instance and class methods in interprocedural summaries**: only top-level `function_declaration`s and `const/let/var foo = ...` arrow/function-expression helpers are summarized. `obj.method()` and `self.helper()` calls are not looked up in the summary map.
 - **Argument taint propagation**: helper summaries are computed with only their parameters' taint sources seeded (via `ParamName`). Passing an already-tainted local into a helper does not influence the helper's return summary — pass 1 analyzes helpers with a conservative view of their parameters.
 - **Per-finding sanitization**: Semgrep's `mode: taint` distinguishes "this specific flow was sanitized" from "the value is now clean"; it can still fire on secondary flows that bypassed the sanitizer along a different path. foxguard's v1 collapses both cases into "clean" and does not track per-finding sanitization state.
@@ -102,7 +102,7 @@ Scope and limitations:
 - **Name collisions are last-write-wins.** If two functions in the same file share a simple name (e.g. an outer `def helper` and a nested `def helper` inside another function), one summary will overwrite the other during pass 1. This is a known v1 limitation — fix by making summaries scope-aware when it stops being hypothetical.
 - **Argument-based taint is not threaded through helpers.** A helper's summary is computed using only its own parameter sources (`ParamName` matchers); passing an already-tainted local in as an argument does not retroactively taint the helper's return.
 
-## Bounded multi-hop cross-file taint (Python)
+## Bounded multi-hop cross-file taint (Python, JavaScript, Go)
 
 The base cross-file pass ([`FunctionTaintSummary`], `params_to_sink` +
 `params_to_return`) resolves a **single** cross-file hop: a source in file A
@@ -128,7 +128,14 @@ After the per-file base summaries are built, the scanner runs a **bounded
 fix-point** that composes them one hop deeper
 ([`compose_cross_file_summaries`], driving
 `extract_cross_file_summary_for_function_cf` with cross-file resolution
-*enabled* against the current summary snapshot):
+*enabled* against the current summary snapshot). The identical driver runs for
+**Python**, **JavaScript**, and **Go** — each per-language
+`compose_cross_file_summaries` supplies only the language, its rule specs, and
+the same cross-file resolution context its single-hop pass uses (Python and JS
+resolve callees via the file's **import map**; Go resolves them **same-package**
+across sibling `.go` files in the directory). The composition machinery
+(`extract_cross_file_summary_for_function_cf`, `merge_from`) is engine-agnostic
+and shared verbatim:
 
 - Each round re-analyzes every function against an immutable snapshot of the
   previous round's summaries. If `f`'s body calls `g()` cross-file and `g`
@@ -157,17 +164,25 @@ fix-point** that composes them one hop deeper
   **union** of all rules' sanitizers (over-approximating sanitization — a
   false-negative-only direction that never loses a base flow, since those are
   merged in). A value run through a sanitizer in the middle helper therefore
-  yields no composed sink flow and the chain breaks. Covered by the
-  `python_multihop` (positive) and `python_multihop_sanitized` (negative)
-  fixtures.
+  yields no composed sink flow and the chain breaks. Covered per language by the
+  positive/negative fixture pairs: `python_multihop` /
+  `python_multihop_sanitized` (SQL, `escape_string`), `js_multihop` /
+  `js_multihop_sanitized` (SQL, `mysql.escape()`), and `go_multihop` /
+  `go_multihop_sanitized`. The Go pair uses `go/taint-path-traversal` (sanitized
+  with `filepath.Clean`) rather than SQL because `go/taint-sql-injection` ships
+  no configured sanitizer — so path-traversal is the Go rule that exercises the
+  sanitizer-breaks-chain guarantee cleanly.
 
 ### Still not modeled
 
-- **Only Python.** The composition fix-point is wired for the Python engine
-  only. JavaScript and Go carry the same base machinery
+- **Python, JavaScript, and Go only.** The composition fix-point is wired for
+  the Python, JavaScript, and Go engines (each gated the same way its single-hop
+  cross-file pass is: Python on import resolution, JS on import resolution, Go on
+  same-package, all requiring >1 file of that language). Java, C#, Ruby, PHP, and
+  Kotlin carry the same base machinery
   (`extract_cross_file_summary_for_function_cf` accepts the cross-file context)
-  but the scanner does not yet run the composition rounds for them; Java, C#,
-  Ruby, PHP, and Kotlin keep their own single-hop cross-file passes.
+  but the scanner does not yet run the composition rounds for them; they keep
+  their own single-hop cross-file passes.
 - **Chains deeper than the hop cap** (`> MAX_MULTIHOP_ROUNDS` extra hops).
 - **Taint through mutable state** — e.g. a value stored into a field/module
   global in one file and read back in another — is not tracked; only

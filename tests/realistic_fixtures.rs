@@ -299,11 +299,78 @@ fn realistic_express_chain_multihop() {
     assert_fixture("express_chain", 2, &[("js/taint-sql-injection", 1)]);
 }
 
+/// Bounded multi-hop chain where the MIDDLE helper itself makes the
+/// cross-file call. Three-file JS chain:
+/// routes.js (source) → service.handle() → store.runQuery() (sink), where
+/// `service.handle` forwards its argument to `store.runQuery` in a THIRD file.
+/// Unlike `express_chain` (caller orchestrates both hops), this chain is only
+/// found once `service.handle`'s summary is composed one hop deeper against
+/// `store.runQuery`'s summary (the scanner's bounded multi-hop fixpoint).
+#[test]
+fn realistic_js_multihop_composed() {
+    assert_fixture("js_multihop", 2, &[("js/taint-sql-injection", 1)]);
+}
+
+/// The JS chain above must only resolve on a full-directory scan: scanning any
+/// single file in isolation finds no taint finding (the sink file still trips
+/// the single-file regex heuristic `js/no-sql-injection`, but no `*/taint-*`
+/// rule fires because no source is present in any single file).
+#[test]
+fn realistic_js_multihop_single_file_finds_no_taint() {
+    assert_fixture("js_multihop/routes.js", 0, &[]);
+    assert_fixture("js_multihop/service.js", 0, &[]);
+    assert_fixture("js_multihop/store.js", 1, &[]);
+}
+
+/// Negative multi-hop: identical shape to `js_multihop` but the middle helper
+/// runs the value through `mysql.escape()` (a configured SQL sanitizer) before
+/// forwarding it. The sanitizer collapses the value to clean, so the composed
+/// summary records no sink flow and the chain BREAKS — no taint finding on a
+/// directory scan (only the sink file's regex hit).
+#[test]
+fn realistic_js_multihop_sanitizer_breaks_chain() {
+    assert_fixture("js_multihop_sanitized", 1, &[]);
+}
+
 /// Multi-hop chain fixture (issue #175). Three-file Go chain:
 /// handlers.go (source) → transform.go (passthrough) → store.go (sink).
 #[test]
 fn realistic_gin_chain_multihop() {
     assert_fixture("gin_chain", 2, &[("go/taint-sql-injection", 1)]);
+}
+
+/// Bounded multi-hop chain where the MIDDLE helper itself makes the same-package
+/// cross-file call. Three-file Go chain:
+/// handlers.go (source) → loadFile() → readData() (os.ReadFile sink), where
+/// `loadFile` forwards its argument to `readData` in a THIRD file of the same
+/// package. Only found once `loadFile`'s summary is composed one hop deeper
+/// against `readData`'s summary (the scanner's bounded multi-hop fixpoint). Uses
+/// `go/taint-path-traversal` because that Go rule has a configured sanitizer
+/// (`filepath.Clean`), which the negative variant below uses to break the chain
+/// (`go/taint-sql-injection` has no sanitizer to test that path with).
+#[test]
+fn realistic_go_multihop_composed() {
+    assert_fixture("go_multihop", 1, &[("go/taint-path-traversal", 1)]);
+}
+
+/// The Go chain above must only resolve on a full-directory scan: scanning any
+/// single file in isolation finds no taint finding, since no source is present
+/// in any single file and `name` is only ever a bare parameter.
+#[test]
+fn realistic_go_multihop_single_file_finds_no_taint() {
+    assert_fixture("go_multihop/handlers.go", 0, &[]);
+    assert_fixture("go_multihop/service.go", 0, &[]);
+    assert_fixture("go_multihop/store.go", 0, &[]);
+}
+
+/// Negative multi-hop: identical shape to `go_multihop` but the middle helper
+/// runs the value through `filepath.Clean()` (a configured path-traversal
+/// sanitizer) before forwarding it. The sanitizer collapses the value to clean,
+/// so the composed summary records no sink flow and the chain BREAKS — no
+/// finding at all on a directory scan.
+#[test]
+fn realistic_go_multihop_sanitizer_breaks_chain() {
+    assert_fixture("go_multihop_sanitized", 0, &[]);
 }
 
 #[test]
