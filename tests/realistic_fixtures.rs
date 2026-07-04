@@ -259,6 +259,39 @@ fn realistic_django_chain_multihop() {
     assert_fixture("django_chain", 2, &[("py/taint-sql-injection", 1)]);
 }
 
+/// Bounded multi-hop chain where the MIDDLE helper itself makes the
+/// cross-file call. Three-file Python chain:
+/// views.py (source) → service.handle() → db.run_query() (sink), where
+/// `service.handle` forwards its argument to `db.run_query` in a THIRD file.
+/// Unlike `django_chain` (caller orchestrates both hops), this chain is only
+/// found once `service.handle`'s summary is composed one hop deeper against
+/// `db.run_query`'s summary (the scanner's bounded multi-hop fixpoint).
+#[test]
+fn realistic_python_multihop_composed() {
+    assert_fixture("python_multihop", 2, &[("py/taint-sql-injection", 1)]);
+}
+
+/// The chain above must only resolve on a full-directory scan: scanning any
+/// single file in isolation finds no taint finding (the sink file still trips
+/// the single-file regex heuristic `py/no-sql-injection`, but no `*/taint-*`
+/// rule fires because no source is present in any single file).
+#[test]
+fn realistic_python_multihop_single_file_finds_no_taint() {
+    assert_fixture("python_multihop/views.py", 0, &[]);
+    assert_fixture("python_multihop/service.py", 0, &[]);
+    assert_fixture("python_multihop/db.py", 1, &[]);
+}
+
+/// Negative multi-hop: identical shape to `python_multihop` but the middle
+/// helper runs the value through `escape_string()` (a configured SQL
+/// sanitizer) before forwarding it. The sanitizer collapses the value to
+/// clean, so the composed summary records no sink flow and the chain BREAKS —
+/// no taint finding on a directory scan (only the sink file's regex hit).
+#[test]
+fn realistic_python_multihop_sanitizer_breaks_chain() {
+    assert_fixture("python_multihop_sanitized", 1, &[]);
+}
+
 /// Multi-hop chain fixture (issue #175). Three-file JS chain:
 /// routes.js (source) → transform.js (passthrough) → services.js (sink).
 #[test]

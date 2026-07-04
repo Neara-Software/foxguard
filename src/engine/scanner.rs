@@ -1003,6 +1003,88 @@ fn scan_files(
                 }
                 prepared_files.insert(path, prepared);
             }
+
+            // ── Bounded multi-hop composition (fixpoint) ──────────────────
+            // The per-file summaries above resolve a SINGLE cross-file hop.
+            // Compose them so a helper `f` whose own body calls another file's
+            // helper `g` (the chain A→f→g→sink) is captured: re-analyze each
+            // function with cross-file resolution enabled against the current
+            // summary snapshot, unioning any newly-discovered param→sink /
+            // param→return flows. Each round adds exactly one hop; the loop
+            // stops at a fixpoint (no change) and is hard-capped at
+            // MAX_MULTIHOP_ROUNDS rounds — the cycle guard that keeps
+            // mutually-recursive helpers from looping forever. Summaries grow
+            // monotonically over a finite lattice, so termination is guaranteed.
+            // See docs/taint-tracking.md, "Bounded multi-hop cross-file taint".
+            if !summaries.is_empty() {
+                const MAX_MULTIHOP_ROUNDS: usize = 5;
+                let allowed_rule_ids: std::collections::HashSet<String> =
+                    rule_specs.iter().map(|(id, _)| id.to_string()).collect();
+                // Resolve each file's import map once (canonicalized to match
+                // the summary-map keys), keyed by the file's canonical path.
+                let import_maps: HashMap<PathBuf, HashMap<String, PathBuf>> = python_files
+                    .iter()
+                    .filter_map(|(path, _)| {
+                        let prepared = prepared_files.get(path)?;
+                        let mut imports =
+                            resolve_imports_to_paths(&prepared.source, &prepared.tree, path);
+                        let canonical: HashMap<String, PathBuf> = imports
+                            .drain()
+                            .map(|(k, v)| {
+                                let canon = std::fs::canonicalize(&v).unwrap_or(v);
+                                (k, canon)
+                            })
+                            .collect();
+                        Some((prepared.canonical_path.clone(), canonical))
+                    })
+                    .collect();
+
+                for _round in 0..MAX_MULTIHOP_ROUNDS {
+                    // Read from an immutable snapshot so each round advances the
+                    // frontier by exactly one hop regardless of file order.
+                    let snapshot = summaries.clone();
+                    let mut changed = false;
+                    for (path, _) in &python_files {
+                        let Some(prepared) = prepared_files.get(path) else {
+                            continue;
+                        };
+                        let canonical = prepared.canonical_path.clone();
+                        let Some(import_to_path) = import_maps.get(&canonical) else {
+                            continue;
+                        };
+                        let composed = python_taint::compose_cross_file_summaries(
+                            prepared.tree.root_node(),
+                            &prepared.source,
+                            Some(&prepared.aliases),
+                            &rule_specs,
+                            import_to_path,
+                            &snapshot,
+                            &allowed_rule_ids,
+                        );
+                        if composed.is_empty() {
+                            continue;
+                        }
+                        let entry = summaries.entry(canonical).or_default();
+                        for new_summary in composed {
+                            match entry.iter_mut().find(|s| s.name == new_summary.name) {
+                                Some(existing) => {
+                                    if existing.merge_from(&new_summary) {
+                                        changed = true;
+                                    }
+                                }
+                                None => {
+                                    entry.push(new_summary);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                    if !changed {
+                        break;
+                    }
+                }
+            }
+
             let has_summaries = !summaries.is_empty();
             (summaries, has_summaries)
         } else {
