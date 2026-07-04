@@ -12,10 +12,10 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 | Rule files scanned | 2071 |
 | Files with YAML parse errors | 0 |
 | Total rules | 2145 |
-| Rules loaded OK | 2070 (96.5%) |
-| Rules skipped | 75 (3.5%) |
+| Rules loaded OK | 2075 (96.7%) |
+| Rules skipped | 70 (3.3%) |
 
-**Headline load rate: 96.5%** (2070 / 2145 rules).
+**Headline load rate: 96.7%** (2075 / 2145 rules).
 
 ## Skip-reason histogram
 
@@ -23,9 +23,8 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 70 | 93.3% | 3.3% |
-| `taint: pattern-propagators` | 4 | 5.3% | 0.2% |
-| `generic mode (languages: [generic])` | 1 | 1.3% | 0.0% |
+| `mode: taint (unsupported shape)` | 69 | 98.6% | 3.2% |
+| `generic mode (languages: [generic])` | 1 | 1.4% | 0.0% |
 
 ## Priority order — operator/feature backlog
 
@@ -33,10 +32,9 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 
 | Rank | Capability to add | Rules unlocked |
 |---:|---|---:|
-| 1 | `mode: taint (unsupported shape)` | 70 |
-| 2 | `taint: pattern-propagators` | 4 |
+| 1 | `mode: taint (unsupported shape)` | 69 |
 
-Operator/feature gaps account for **74 rules** (3.4% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **69 rules** (3.2% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
 
 ## Priority order — missing language grammars
 
@@ -58,7 +56,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 | hcl | 359 | 359 | 0 | 100.0% |
 | javascript | 243 | 230 | 13 | 94.7% |
 | regex | 237 | 237 | 0 | 100.0% |
-| java | 131 | 116 | 15 | 88.5% |
+| java | 131 | 121 | 10 | 92.4% |
 | generic | 103 | 102 | 1 | 99.0% |
 | yaml | 100 | 100 | 0 | 100.0% |
 | go | 97 | 87 | 10 | 89.7% |
@@ -86,10 +84,10 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 ## Top skip reasons per language
 
 - **apex**: `mode: taint (unsupported shape)` (1)
-- **csharp**: `mode: taint (unsupported shape)` (5), `taint: pattern-propagators` (1)
+- **csharp**: `mode: taint (unsupported shape)` (6)
 - **generic**: `generic mode (languages: [generic])` (1)
 - **go**: `mode: taint (unsupported shape)` (10)
-- **java**: `mode: taint (unsupported shape)` (12), `taint: pattern-propagators` (3)
+- **java**: `mode: taint (unsupported shape)` (10)
 - **javascript**: `mode: taint (unsupported shape)` (13)
 - **php**: `mode: taint (unsupported shape)` (7)
 - **python**: `mode: taint (unsupported shape)` (14)

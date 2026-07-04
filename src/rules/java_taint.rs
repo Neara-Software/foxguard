@@ -609,11 +609,25 @@ fn collect_param_sources(
             .iter()
             .find(|annotation| text.contains(&format!("@{annotation}")));
 
+        // Typed-metavariable source `(HttpServletRequest $REQ)`: seed the
+        // parameter when its DECLARED TYPE matches, regardless of name.
+        let typed_desc = formal_parameter_type(node, source)
+            .and_then(|ty| typed_source_description(spec, ty).map(|d| (d, name)));
+
         if let Some(annotation) = matched_annotation {
             state.taint(
                 name.to_string(),
                 TaintInfo {
                     description: format!("@{annotation} parameter '{name}'"),
+                    line: node.start_position().row + 1,
+                    hops: 0,
+                },
+            );
+        } else if let Some((description, name)) = typed_desc {
+            state.taint(
+                name.to_string(),
+                TaintInfo {
+                    description,
                     line: node.start_position().row + 1,
                     hops: 0,
                 },
@@ -643,7 +657,27 @@ fn propagate_assignments(scope: Node<'_>, source: &str, spec: &TaintSpec, state:
             };
             match expression_taint(value, src, spec, state) {
                 Some(info) => state.taint(name, bump_hops(info)),
-                None => state.clear(&name),
+                None => {
+                    // Typed-metavariable source `(HttpServletRequest $REQ)`
+                    // applied to a local: `HttpServletRequest req = ...;`
+                    // seeds `req` by its DECLARED TYPE even when the
+                    // initializer is not itself tainted. Re-applied every
+                    // propagation pass, so it survives the clean-reassignment
+                    // clear above.
+                    match local_declarator_type(node, src)
+                        .and_then(|ty| typed_source_description(spec, ty))
+                    {
+                        Some(description) => state.taint(
+                            name,
+                            TaintInfo {
+                                description,
+                                line: node.start_position().row + 1,
+                                hops: 0,
+                            },
+                        ),
+                        None => state.clear(&name),
+                    }
+                }
             }
         }
 
@@ -997,6 +1031,56 @@ fn formal_parameter_name<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str>
         }
     }
     last_identifier
+}
+
+/// The declared type text of a `formal_parameter` / `spread_parameter`, e.g.
+/// `HttpServletRequest`, `javax.servlet.http.HttpServletRequest`, `String[]`.
+fn formal_parameter_type<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
+    node.child_by_field_name("type")
+        .map(|ty| node_text(ty, source))
+}
+
+/// The declared type text of the `local_variable_declaration` that owns a
+/// `variable_declarator`, or `None` when the declarator is not a local (e.g.
+/// a field). Used to seed typed-metavariable sources on locals.
+fn local_declarator_type<'a>(declarator: Node<'a>, source: &'a str) -> Option<&'a str> {
+    let parent = declarator.parent()?;
+    if parent.kind() != "local_variable_declaration" {
+        return None;
+    }
+    parent
+        .child_by_field_name("type")
+        .map(|ty| node_text(ty, source))
+}
+
+/// If `decl_type` matches a `TypedName` source in `spec` (by final `.`-segment,
+/// so both `HttpServletRequest` and `javax.servlet.http.HttpServletRequest`
+/// match `HttpServletRequest`), return that source's description.
+fn typed_source_description(spec: &TaintSpec, decl_type: &str) -> Option<String> {
+    let seg = type_final_segment(decl_type);
+    spec.sources.iter().find_map(|matcher| match matcher {
+        NodeMatcher::TypedName {
+            type_name,
+            description,
+        } if type_name == seg => Some(description.clone()),
+        _ => None,
+    })
+}
+
+/// The final `.`-segment of a declared type, with array/generic suffixes
+/// stripped: `javax.servlet.http.HttpServletRequest` and `HttpServletRequest`
+/// both yield `HttpServletRequest`; `Cookie[]` yields `Cookie`.
+fn type_final_segment(type_text: &str) -> &str {
+    let mut base = type_text.trim();
+    if base.ends_with('>') {
+        if let Some(lt) = base.find('<') {
+            base = base[..lt].trim_end();
+        }
+    }
+    while let Some(stripped) = base.strip_suffix("[]") {
+        base = stripped.trim_end();
+    }
+    base.rsplit('.').next().unwrap_or(base).trim()
 }
 
 fn node_text<'a>(node: Node<'_>, source: &'a str) -> &'a str {

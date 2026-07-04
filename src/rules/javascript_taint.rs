@@ -1932,7 +1932,10 @@ fn match_source(
             | NodeMatcher::MemberAssign { .. }
             | NodeMatcher::BinopFormat { .. }
             | NodeMatcher::ObjectLiteralValue { .. }
-            | NodeMatcher::ReturnValue { .. } => {
+            | NodeMatcher::ReturnValue { .. }
+            // Java-only typed-metavariable source; JS has no declared-type
+            // seeding, so it is a no-op here.
+            | NodeMatcher::TypedName { .. } => {
                 // Sink-only matchers; BinopFormat sinks are carried in the spec
                 // but the JS engine does not yet match them as a source (no-op).
             }

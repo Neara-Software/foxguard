@@ -887,7 +887,10 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             | NodeMatcher::MemberAssign { .. }
             | NodeMatcher::BinopFormat { .. }
             | NodeMatcher::ObjectLiteralValue { .. }
-            | NodeMatcher::ReturnValue { .. } => {
+            | NodeMatcher::ReturnValue { .. }
+            // Java-only typed-metavariable source; Ruby has no declared-type
+            // seeding, so it is a no-op here.
+            | NodeMatcher::TypedName { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the Ruby engine (no-op).
             }

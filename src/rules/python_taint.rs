@@ -1439,7 +1439,10 @@ fn match_source(
             | NodeMatcher::MemberAssign { .. }
             | NodeMatcher::BinopFormat { .. }
             | NodeMatcher::ObjectLiteralValue { .. }
-            | NodeMatcher::ReturnValue { .. } => {
+            | NodeMatcher::ReturnValue { .. }
+            // Java-only typed-metavariable source; Python has no declared-type
+            // seeding, so it is a no-op here.
+            | NodeMatcher::TypedName { .. } => {
                 // Sink-only matchers; MemberAssign is JS-specific; BinopFormat is
                 // matched on binop/format nodes, not here.
             }

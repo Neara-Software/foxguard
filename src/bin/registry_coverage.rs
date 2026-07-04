@@ -489,6 +489,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut root: Option<PathBuf> = None;
     let mut out = PathBuf::from("docs/parity/registry-coverage.md");
+    // `--list-skips <lang>` prints one `id\treason` line per skipped rule in the
+    // given language bucket to stderr — a debugging aid for attributing skips to
+    // specific registry rules (measurement only; does not affect the report).
+    let mut list_skips: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -497,6 +501,10 @@ fn main() {
                 if let Some(p) = args.get(i) {
                     out = cli_path(p);
                 }
+            }
+            "--list-skips" => {
+                i += 1;
+                list_skips = args.get(i).map(|s| s.to_lowercase());
             }
             other => root = Some(cli_path(other)),
         }
@@ -565,6 +573,12 @@ fn main() {
                     Outcome::Loaded => Outcome::Skipped("loader rejected (other)".to_string()),
                 },
             };
+            if let (Some(want), Outcome::Skipped(reason)) = (&list_skips, &outcome) {
+                if bucket.eq_ignore_ascii_case(want) {
+                    let id = rule.get("id").and_then(Yaml::as_str).unwrap_or("<no-id>");
+                    eprintln!("SKIP\t{bucket}\t{id}\t{reason}");
+                }
+            }
             stats.record(&bucket, &outcome);
         }
     }
