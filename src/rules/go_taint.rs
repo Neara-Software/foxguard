@@ -37,9 +37,10 @@
 use super::common::AliasTable;
 use super::taint_engine::{
     analyze_function_generic, attribution_hint_for_sink, build_batched_taint_groups,
-    cross_file_taint_finding, extract_cross_file_summary_for_function, match_binop_format_sink,
-    match_call_sink, node_text, push_attributed_findings, summarize_function_return_generic,
-    taint_finding_for_node, AnalysisContext, TaintLanguageAdapter, TaintState,
+    cross_file_taint_finding, extract_cross_file_summary_for_function,
+    extract_cross_file_summary_for_function_cf, match_binop_format_sink, match_call_sink,
+    node_text, push_attributed_findings, summarize_function_return_generic, taint_finding_for_node,
+    AnalysisContext, TaintLanguageAdapter, TaintState,
 };
 pub use super::taint_engine::{
     BatchedRule, NodeMatcher, ReturnSummary, ReturnTaintSummary, RuleFilter, TaintFinding,
@@ -390,6 +391,65 @@ pub fn extract_cross_file_summaries(
     });
 
     summaries
+}
+
+/// Re-derive a file's cross-file summaries with same-package call resolution
+/// enabled, composing the current summary map one hop deeper.
+///
+/// This is the Go counterpart of [`python_taint::compose_cross_file_summaries`]
+/// and the per-file step of the scanner's **bounded multi-hop** fixpoint. For
+/// each function it re-runs the parameter-as-source summary extraction, but this
+/// time calls to helpers in *other* files of the same package are resolved
+/// against `summaries` (using this file's `same_package_paths`). A parameter
+/// that only reaches a sink or the return value *through* such a same-package
+/// helper is therefore captured — e.g. `f(p)` whose body is `return g(p)` where
+/// `g` (another file in the package) sinks its argument: `f`'s summary gains
+/// that `params_to_sink` entry.
+///
+/// The scanner unions the returned flows into the existing summaries via
+/// [`FunctionTaintSummary::merge_from`] and repeats until a fixpoint (no change)
+/// or the hop bound is reached. `summaries` is a read-only snapshot from the
+/// previous round, so each round adds exactly one hop; monotone growth over a
+/// finite lattice guarantees termination, and the scanner's round cap is a hard
+/// backstop against mutually-recursive helpers.
+pub fn compose_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+    same_package_paths: &[PathBuf],
+    summaries: &CrossFileSummaryMap,
+    allowed_rule_ids: &std::collections::HashSet<String>,
+) -> Vec<FunctionTaintSummary> {
+    let cross_file = CrossFileInfo {
+        same_package_paths,
+        summaries,
+        rule_filter: RuleFilter::Any(allowed_rule_ids),
+    };
+
+    let mut out = Vec::new();
+    collect_function_defs(root, &mut |func_node| {
+        let Some(name_node) = func_node.child_by_field_name("name") else {
+            return;
+        };
+        let func_name = node_text(name_node, source).to_string();
+        let param_names = collect_param_names(func_node, source);
+
+        if let Some(summary) =
+            extract_cross_file_summary_for_function_cf::<GoTaintAdapter, CrossFileInfo<'_>>(
+                func_node,
+                &func_name,
+                &param_names,
+                source,
+                aliases,
+                rule_specs,
+                Some(&cross_file),
+            )
+        {
+            out.push(summary);
+        }
+    });
+    out
 }
 
 // ─── Internals ────────────────────────────────────────────────────────────
