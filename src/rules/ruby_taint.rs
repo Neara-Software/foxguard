@@ -898,7 +898,11 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             // source shape, so the Ruby engine does not seed string literals.
             | NodeMatcher::LiteralString { .. }
             // PHP-only loose-equality comparison sink; no-op in the Ruby engine.
-            | NodeMatcher::LooseEquality { .. } => {
+            | NodeMatcher::LooseEquality { .. }
+            // PHP-only tainted class-name / subscript-key sinks; no-op in the
+            // Ruby engine.
+            | NodeMatcher::TaintedCallee { .. }
+            | NodeMatcher::TaintedSubscriptKey { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the Ruby engine (no-op).
             }

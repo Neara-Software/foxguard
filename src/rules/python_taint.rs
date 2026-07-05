@@ -1681,7 +1681,11 @@ fn match_source(
             // Java-only typed-assignment sink; no-op in source position here.
             | NodeMatcher::TypedAssignTarget { .. }
             // PHP-only loose-equality comparison sink; no-op in the Python engine.
-            | NodeMatcher::LooseEquality { .. } => {
+            | NodeMatcher::LooseEquality { .. }
+            // PHP-only tainted class-name / subscript-key sinks; no-op in the
+            // Python engine.
+            | NodeMatcher::TaintedCallee { .. }
+            | NodeMatcher::TaintedSubscriptKey { .. } => {
                 // Sink-only matchers; MemberAssign is JS-specific.
             }
         }

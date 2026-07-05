@@ -866,9 +866,13 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 // source shape, so the C# engine carries it but does not seed
                 // string literals (no-op).
             }
-            NodeMatcher::LooseEquality { .. } => {
-                // PHP-only loose-equality comparison sink; a sink-only matcher,
-                // never a source, and the C# engine does not match it (no-op).
+            NodeMatcher::LooseEquality { .. }
+            | NodeMatcher::TaintedCallee { .. }
+            | NodeMatcher::TaintedSubscriptKey { .. } => {
+                // PHP-only sink matchers (loose-equality comparison, tainted
+                // class-name instantiation, tainted subscript-key session write);
+                // sink-only, never a source, and the C# engine does not match
+                // them (no-op).
             }
         }
     }
@@ -978,6 +982,9 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         | NodeMatcher::TypedName { .. }
         | NodeMatcher::TypedAssignTarget { .. }
         | NodeMatcher::LooseEquality { .. }
+        // PHP-only tainted class-name / subscript-key sinks — not call matchers.
+        | NodeMatcher::TaintedCallee { .. }
+        | NodeMatcher::TaintedSubscriptKey { .. }
         // Ellipsis-string source `"..."` — not a call matcher.
         | NodeMatcher::LiteralString { .. } => false,
     }
