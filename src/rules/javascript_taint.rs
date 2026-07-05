@@ -2055,7 +2055,10 @@ fn match_source(
             // PHP-only tainted class-name / subscript-key sinks; no-op in the
             // JS engine.
             | NodeMatcher::TaintedCallee { .. }
-            | NodeMatcher::TaintedSubscriptKey { .. } => {
+            | NodeMatcher::TaintedSubscriptKey { .. }
+            // Focus-on-call-argument source is seeded only by the C# engine;
+            // no-op in source position here.
+            | NodeMatcher::CallArgSource { .. } => {
                 // Sink-only matchers; BinopFormat sinks are carried in the spec
                 // but the JS engine does not yet match them as a source (no-op).
             }

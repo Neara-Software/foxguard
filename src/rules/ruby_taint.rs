@@ -902,7 +902,10 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             // PHP-only tainted class-name / subscript-key sinks; no-op in the
             // Ruby engine.
             | NodeMatcher::TaintedCallee { .. }
-            | NodeMatcher::TaintedSubscriptKey { .. } => {
+            | NodeMatcher::TaintedSubscriptKey { .. }
+            // Focus-on-call-argument source is seeded only by the C# engine;
+            // no-op in source position here.
+            | NodeMatcher::CallArgSource { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the Ruby engine (no-op).
             }

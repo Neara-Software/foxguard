@@ -1722,7 +1722,10 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             // handled in `handle_tainted_callee` / `handle_subscript_key_sink`,
             // no-op in source position.
             | NodeMatcher::TaintedCallee { .. }
-            | NodeMatcher::TaintedSubscriptKey { .. } => {
+            | NodeMatcher::TaintedSubscriptKey { .. }
+            // Focus-on-call-argument source is seeded only by the C# engine;
+            // no-op in source position here.
+            | NodeMatcher::CallArgSource { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the PHP engine (no-op).
             }
