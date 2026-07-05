@@ -1898,10 +1898,16 @@ impl Rule for SemgrepTaintRule {
             }
             Language::Go => {
                 let spec = to_go_spec(&self.spec);
-                go_taint::analyze_tree(tree.root_node(), source, &spec, ctx.go_aliases)
-                    .into_iter()
-                    .map(TaintFindingView::from_go)
-                    .collect()
+                go_taint::analyze_tree_labeled(
+                    tree.root_node(),
+                    source,
+                    &spec,
+                    ctx.go_aliases,
+                    self.label_policy.as_ref(),
+                )
+                .into_iter()
+                .map(TaintFindingView::from_go)
+                .collect()
             }
             Language::Java => {
                 let spec = to_java_spec(&self.spec);
@@ -2142,18 +2148,25 @@ fn is_single_label_token(s: &str) -> bool {
 /// Scan a `mode: taint` rule's sources / propagators / sinks for taint-labels
 /// usage and classify it (see [`LabelDetect`]).
 ///
-/// Recognizes ONLY the `CONCAT`-family shape shared by `formatted-sql-string`,
-/// `tainted-html-string`, and `tainted-system-command`:
+/// Recognizes the **single-primary-label** shapes — both the positive
+/// `CONCAT`-family (Java `formatted-sql-string`, `tainted-system-command`) and
+/// the **negation tier** (Go `open-redirect`, `tainted-url-host`):
 /// - every primary (no-`requires`) labeled source emits the SAME label `L1`;
-/// - one or more sources/propagators carry `label: L2, requires: L1` (the
-///   conditional relabel);
-/// - every sink carries `requires: L2` (single positive label), and no sink is
-///   left ungated.
+/// - zero or more sources/propagators carry `label: L2, requires: L1` (a
+///   conditional relabel, e.g. `INPUT → CONCAT` or `INPUT → CLEAN`); the
+///   `requires:` on a relabel entry must be a single positive label token;
+/// - every sink carries a boolean `requires:` expression (`label`, `not X`,
+///   `A and B`, `A or B`, parenthesized) that references only *producible*
+///   labels (the primary or a relabel `to`), and no sink is left ungated. All
+///   sinks must share the same `requires:` (one gating expression per rule).
 ///
-/// Any deviation (negation/conjunction in `requires:`, multiple primary labels,
-/// a sink that emits a label or is ungated, a source/propagator with `requires:`
-/// but no `label:`) yields [`LabelDetect::Unsupported`], keeping the rule's safe
-/// pre-labels skip rather than loading an over-matching approximation.
+/// Any deviation — **multiple distinct primary labels** (the TS/JS
+/// `react-href-var` / `raw-html-format` rules), a per-sink requires that differs
+/// across sinks (the Go gRPC rule's two sinks), a requires referencing a label
+/// no source can produce, a sink that emits a label or is ungated, or a
+/// source/propagator with `requires:` but no `label:` — yields
+/// [`LabelDetect::Unsupported`], keeping the rule's safe pre-labels skip rather
+/// than loading an over-matching approximation.
 fn detect_label_policy(yaml: &YamlValue) -> LabelDetect {
     let empty: Vec<YamlValue> = Vec::new();
     let seq = |key: &str| -> Vec<YamlValue> {
@@ -2168,7 +2181,7 @@ fn detect_label_policy(yaml: &YamlValue) -> LabelDetect {
 
     let mut any_labels = false;
     let mut primary_labels: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    // (requires_label, emitted_label) for each conditional-relabel entry.
+    // (from_label, to_label) for each conditional-relabel entry.
     let mut relabels: Vec<(String, String)> = Vec::new();
 
     for entry in sources.iter().chain(propagators.iter()) {
@@ -2179,23 +2192,30 @@ fn detect_label_policy(yaml: &YamlValue) -> LabelDetect {
         }
         match (label, requires) {
             (Some(l), None) => {
+                if !is_single_label_token(l) {
+                    return LabelDetect::Unsupported;
+                }
                 primary_labels.insert(l.trim().to_string());
             }
             (Some(l), Some(r)) => {
+                // A relabel entry's `requires:` must be a single positive label
+                // (the trigger); its `label:` is the emitted label.
                 if !is_single_label_token(r) || !is_single_label_token(l) {
                     return LabelDetect::Unsupported;
                 }
                 relabels.push((r.trim().to_string(), l.trim().to_string()));
             }
             // A source/propagator that `requires:` a label but emits none is not
-            // part of the CONCAT-family shape.
+            // a shape we model.
             (None, Some(_)) => return LabelDetect::Unsupported,
             (None, None) => {}
         }
     }
 
-    let mut sink_requires: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut sink_ungated = false;
+    // Every sink must be gated, and all sinks must share ONE `requires:`
+    // expression (a rule with two differently-gated sinks — e.g. the Go gRPC
+    // rule — is not modeled by a single-policy sink gate).
+    let mut sink_requires_str: Option<String> = None;
     for entry in &sinks {
         // A sink that itself EMITS a label is outside this slice.
         if entry.get("label").is_some() {
@@ -2204,12 +2224,14 @@ fn detect_label_policy(yaml: &YamlValue) -> LabelDetect {
         match entry.get("requires").and_then(YamlValue::as_str) {
             Some(r) => {
                 any_labels = true;
-                if !is_single_label_token(r) {
-                    return LabelDetect::Unsupported;
+                let r = r.trim().to_string();
+                match &sink_requires_str {
+                    None => sink_requires_str = Some(r),
+                    Some(existing) if *existing == r => {}
+                    Some(_) => return LabelDetect::Unsupported,
                 }
-                sink_requires.insert(r.trim().to_string());
             }
-            None => sink_ungated = true,
+            None => return LabelDetect::Unsupported,
         }
     }
 
@@ -2217,29 +2239,148 @@ fn detect_label_policy(yaml: &YamlValue) -> LabelDetect {
         return LabelDetect::None;
     }
 
-    // Validate the CONCAT-family shape: exactly one primary label and at least
-    // one conditional relabel.
+    // Exactly one primary label.
     let (Some(l1), 1) = (primary_labels.iter().next().cloned(), primary_labels.len()) else {
         return LabelDetect::Unsupported;
     };
-    let Some((_, l2)) = relabels.first().cloned() else {
+
+    // Parse the shared sink `requires:` into a boolean AST.
+    let Some(req_str) = sink_requires_str else {
         return LabelDetect::Unsupported;
     };
-    if !relabels.iter().all(|(r, e)| r == &l1 && e == &l2) {
+    let Some(sink_requires) = parse_requires_expr(&req_str) else {
         return LabelDetect::Unsupported;
+    };
+
+    // The set of labels ANY flow can carry: the primary plus every relabel's
+    // emitted label.
+    let mut producible: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    producible.insert(l1.clone());
+    for (_, to) in &relabels {
+        producible.insert(to.clone());
     }
-    // Every sink must gate on exactly L2; a mix of gated/ungated sinks (or a
-    // different required label) is not the shape we model.
-    if sink_ungated || sink_requires.len() != 1 || !sink_requires.contains(&l2) {
+
+    // A relabel's trigger (`from`) must itself be producible (the primary or an
+    // earlier relabel's output); otherwise it could never fire.
+    for (from, _to) in &relabels {
+        if !producible.contains(from) {
+            return LabelDetect::Unsupported;
+        }
+    }
+
+    // Every label the sink `requires:` references must be producible; a
+    // reference to a label no source/relabel can emit means we cannot evaluate
+    // the gate faithfully, so refuse rather than approximate.
+    let mut referenced = std::collections::BTreeSet::new();
+    sink_requires.referenced_labels(&mut referenced);
+    if !referenced.iter().all(|l| producible.contains(l)) {
         return LabelDetect::Unsupported;
     }
 
+    let relabels = relabels
+        .into_iter()
+        .map(|(from, to)| crate::rules::taint_engine::Relabel { from, to })
+        .collect();
+
     LabelDetect::Policy(crate::rules::taint_engine::LabelPolicy {
-        source_label: l1.clone(),
-        relabel_from: l1,
-        relabel_to: l2.clone(),
-        sink_requires: l2,
+        source_label: l1,
+        relabels,
+        sink_requires,
     })
+}
+
+/// Parse a Semgrep `requires:` string into a [`RequiresExpr`] AST. Supports a
+/// bare label, `not X`, `A and B`, `A or B`, and parenthesization (the full
+/// grammar the registry's labeled rules use). Returns `None` on any malformed
+/// or unsupported input (which the caller maps to [`LabelDetect::Unsupported`]).
+///
+/// Precedence follows Semgrep / boolean convention: `or` binds loosest, then
+/// `and`, then `not`, then atoms/parentheses.
+fn parse_requires_expr(s: &str) -> Option<crate::rules::taint_engine::RequiresExpr> {
+    let spaced = s.replace('(', " ( ").replace(')', " ) ");
+    let toks: Vec<&str> = spaced.split_whitespace().collect();
+    if toks.is_empty() {
+        return None;
+    }
+    let mut pos = 0usize;
+    let expr = parse_requires_or(&toks, &mut pos)?;
+    // Reject trailing tokens (unbalanced / garbage input).
+    if pos != toks.len() {
+        return None;
+    }
+    Some(expr)
+}
+
+fn parse_requires_or(
+    toks: &[&str],
+    pos: &mut usize,
+) -> Option<crate::rules::taint_engine::RequiresExpr> {
+    use crate::rules::taint_engine::RequiresExpr;
+    let mut left = parse_requires_and(toks, pos)?;
+    while toks.get(*pos).is_some_and(|t| t.eq_ignore_ascii_case("or")) {
+        *pos += 1;
+        let right = parse_requires_and(toks, pos)?;
+        left = RequiresExpr::Or(Box::new(left), Box::new(right));
+    }
+    Some(left)
+}
+
+fn parse_requires_and(
+    toks: &[&str],
+    pos: &mut usize,
+) -> Option<crate::rules::taint_engine::RequiresExpr> {
+    use crate::rules::taint_engine::RequiresExpr;
+    let mut left = parse_requires_not(toks, pos)?;
+    while toks
+        .get(*pos)
+        .is_some_and(|t| t.eq_ignore_ascii_case("and"))
+    {
+        *pos += 1;
+        let right = parse_requires_not(toks, pos)?;
+        left = RequiresExpr::And(Box::new(left), Box::new(right));
+    }
+    Some(left)
+}
+
+fn parse_requires_not(
+    toks: &[&str],
+    pos: &mut usize,
+) -> Option<crate::rules::taint_engine::RequiresExpr> {
+    use crate::rules::taint_engine::RequiresExpr;
+    if toks
+        .get(*pos)
+        .is_some_and(|t| t.eq_ignore_ascii_case("not"))
+    {
+        *pos += 1;
+        let inner = parse_requires_not(toks, pos)?;
+        return Some(RequiresExpr::Not(Box::new(inner)));
+    }
+    parse_requires_atom(toks, pos)
+}
+
+fn parse_requires_atom(
+    toks: &[&str],
+    pos: &mut usize,
+) -> Option<crate::rules::taint_engine::RequiresExpr> {
+    use crate::rules::taint_engine::RequiresExpr;
+    let tok = *toks.get(*pos)?;
+    if tok == "(" {
+        *pos += 1;
+        let inner = parse_requires_or(toks, pos)?;
+        if toks.get(*pos).copied() != Some(")") {
+            return None;
+        }
+        *pos += 1;
+        return Some(inner);
+    }
+    // A bare label token. `is_single_label_token` rejects the reserved
+    // `and`/`or`/`not` keywords and any punctuation, so a malformed expression
+    // fails to parse here.
+    if is_single_label_token(tok) {
+        *pos += 1;
+        return Some(RequiresExpr::Label(tok.to_string()));
+    }
+    None
 }
 
 pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
@@ -2357,7 +2498,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
     // unlabeled rule is unchanged and an unsupported labeled rule keeps its safe
     // skip (labeled entries stay multi-key and drop) instead of over-matching.
     let label_policy = match detect_label_policy(yaml) {
-        LabelDetect::Policy(p) if lang == Language::Java => Some(p),
+        LabelDetect::Policy(p) if matches!(lang, Language::Java | Language::Go) => Some(p),
         _ => None,
     };
     let labels_enabled = label_policy.is_some();
@@ -10946,13 +11087,11 @@ class C {
         );
     }
 
-    #[test]
-    fn taint_labels_negation_requires_stays_skipped() {
-        // The deferred `not`/`and`/`or` tier: a `requires:` with a boolean
-        // operator must NOT be faked into a positive-label load. The rule keeps
-        // its safe pre-labels skip (labeled entries stay multi-key and drop),
-        // never an over-matching approximation.
-        let yaml = r#"
+    /// A Java `INPUT and not CLEAN` rule (the negation tier). The shared
+    /// relabel + boolean-`requires:` sink gate handles this faithfully: `CLEAN`
+    /// is emitted when an `INPUT` value flows through a `$X + $INPUT` concat, and
+    /// the sink fires only when `INPUT` is present AND `CLEAN` is not.
+    const JAVA_NEGATION_RULE: &str = r#"
 id: labels-negation
 mode: taint
 languages: [java]
@@ -10973,10 +11112,60 @@ pattern-sinks:
           regex: execute
     requires: INPUT and not CLEAN
 "#;
-        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+
+    #[test]
+    fn taint_labels_negation_requires_loads() {
+        // The `not`/`and`/`or` tier now compiles to a boolean `requires:` AST
+        // instead of being skipped as an over-match risk.
+        let rule = compiled(JAVA_NEGATION_RULE);
         assert!(
-            matches!(parse_taint_rule(&v), TaintRuleParse::Skip(_)),
-            "a `requires:` with `and`/`not` must stay skipped, not load an over-match"
+            rule.label_policy.is_some(),
+            "an `INPUT and not CLEAN` rule must compile a LabelPolicy"
+        );
+    }
+
+    #[test]
+    fn taint_labels_java_negation_direct_fires() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(JAVA_NEGATION_RULE);
+        // Tainted request read reaches the sink WITHOUT a concat: carries only
+        // INPUT (never CLEAN), so `INPUT and not CLEAN` fires.
+        let src = r#"
+class C {
+    void run(HttpServletRequest req, java.sql.Statement stmt) throws Exception {
+        stmt.execute(req.getParameter("x"));
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "un-concatenated tainted input must fire (INPUT and not CLEAN), got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn taint_labels_java_negation_concat_suppressed() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(JAVA_NEGATION_RULE);
+        // The SAME tainted read flows through a `$X + $INPUT` concat first, so it
+        // acquires CLEAN — `not CLEAN` must reject it. This is the discrimination
+        // the negation tier exists for.
+        let src = r#"
+class C {
+    void run(HttpServletRequest req, java.sql.Statement stmt) throws Exception {
+        String q = "prefix" + req.getParameter("y");
+        stmt.execute(q);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a CLEAN-relabeled (concatenated) value must NOT fire (not CLEAN), got {findings:?}"
         );
     }
 
@@ -11000,6 +11189,150 @@ pattern-sinks:
         assert!(
             rule.label_policy.is_none(),
             "an unlabeled rule must have no LabelPolicy"
+        );
+    }
+
+    // ── Taint-labels negation tier — Go `INPUT and not CLEAN` ───────────────
+    //
+    // A faithful reduction of the registry `open-redirect` / `tainted-url-host`
+    // shape: an `INPUT`-labeled source, a `CLEAN` relabel source
+    // `requires: INPUT` (a string-building concat), and a
+    // `requires: INPUT and not CLEAN` redirect sink. The HARD faithfulness gate:
+    // input reaching the sink directly FIRES; the same input that went through
+    // the CLEAN relabel (concatenated behind a fixed URL prefix) does NOT.
+
+    const GO_OPEN_REDIRECT_RULE: &str = r#"
+id: labels-go-open-redirect
+mode: taint
+languages: [go]
+severity: WARNING
+message: "open redirect"
+metadata:
+  cwe: "CWE-601"
+pattern-sources:
+  - pattern: getInput(...)
+    label: INPUT
+  - pattern: '"$U" + $X'
+    label: CLEAN
+    requires: INPUT
+pattern-sinks:
+  - pattern: redirect(...)
+    requires: INPUT and not CLEAN
+"#;
+
+    #[test]
+    fn taint_labels_go_negation_policy_compiles() {
+        let rule = compiled(GO_OPEN_REDIRECT_RULE);
+        let policy = rule
+            .label_policy
+            .as_ref()
+            .expect("Go negation rule must compile a LabelPolicy");
+        assert_eq!(policy.source_label, "INPUT");
+        assert_eq!(policy.relabels.len(), 1);
+        assert_eq!(policy.relabels[0].from, "INPUT");
+        assert_eq!(policy.relabels[0].to, "CLEAN");
+        // The sink `requires:` is the boolean `INPUT and not CLEAN`.
+        use crate::rules::taint_engine::RequiresExpr;
+        let mut only_input = std::collections::BTreeSet::new();
+        only_input.insert("INPUT".to_string());
+        assert!(policy.sink_requires.eval(&only_input), "INPUT alone fires");
+        let mut input_clean = only_input.clone();
+        input_clean.insert("CLEAN".to_string());
+        assert!(
+            !policy.sink_requires.eval(&input_clean),
+            "INPUT+CLEAN is suppressed by `not CLEAN`"
+        );
+        assert!(matches!(policy.sink_requires, RequiresExpr::And(_, _)));
+    }
+
+    #[test]
+    fn taint_labels_go_negation_direct_fires() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_OPEN_REDIRECT_RULE);
+        // Tainted input reaches the redirect sink directly: carries only INPUT
+        // (never CLEAN), so `INPUT and not CLEAN` fires.
+        let src = r#"
+package main
+func handler() {
+    x := getInput()
+    redirect(x)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "un-sanitized tainted input into redirect must fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn taint_labels_go_negation_relabeled_suppressed() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_OPEN_REDIRECT_RULE);
+        // The SAME tainted input is concatenated behind a fixed URL prefix first,
+        // acquiring CLEAN — `not CLEAN` must reject it. This is the negation-tier
+        // discrimination: over-firing here would be the forbidden behavior.
+        let src = r#"
+package main
+func handler() {
+    x := getInput()
+    u := "https://safe.example.com/" + x
+    redirect(u)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a CLEAN-relabeled (concatenated) value must NOT fire (not CLEAN), got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn taint_labels_go_negation_inline_concat_suppressed() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_OPEN_REDIRECT_RULE);
+        // Inline concat at the sink (no intermediate variable) must also be
+        // suppressed — the relabel is computed on the sink argument expression.
+        let src = r#"
+package main
+func handler() {
+    redirect("https://safe.example.com/" + getInput())
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "inline concat behind a URL prefix must NOT fire (not CLEAN), got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn taint_labels_go_multiple_primary_labels_unsupported() {
+        // The JS/TS `raw-html-format` shape (two distinct primary source labels)
+        // is NOT modeled by the single-primary policy and must stay skipped.
+        let yaml = r#"
+id: labels-two-primaries
+mode: taint
+languages: [go]
+severity: WARNING
+message: m
+pattern-sources:
+  - pattern: express(...)
+    label: EXPRESS
+  - pattern: expressts(...)
+    label: EXPRESSTS
+pattern-sinks:
+  - pattern: sink(...)
+    requires: EXPRESS or EXPRESSTS
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        assert!(
+            matches!(parse_taint_rule(&v), TaintRuleParse::Skip(_)),
+            "two distinct primary labels must stay skipped, not over-match"
         );
     }
 }

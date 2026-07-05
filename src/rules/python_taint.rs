@@ -132,6 +132,7 @@ pub fn analyze_tree_with_cross_file<'a>(
         summaries: &empty_summary,
         cross_file: None,
         sink_to_rules: None,
+        label_policy: None,
     };
     collect_function_defs(root, &mut |func_node| {
         let (name, ret_taint) = summarize_function_return(func_node, &pass1_ctx);
@@ -148,6 +149,7 @@ pub fn analyze_tree_with_cross_file<'a>(
         summaries: &summaries,
         cross_file,
         sink_to_rules: None,
+        label_policy: None,
     };
     let mut findings = Vec::new();
     collect_function_defs(root, &mut |func_node| {
@@ -202,6 +204,7 @@ pub fn analyze_tree_batched<'a>(
             summaries: &empty_summary,
             cross_file: None,
             sink_to_rules: None,
+            label_policy: None,
         };
         let mut summaries = ReturnSummary::new();
         collect_function_defs(root, &mut |func_node| {
@@ -226,6 +229,7 @@ pub fn analyze_tree_batched<'a>(
             summaries: &summaries,
             cross_file: cross_file_for_group.as_ref(),
             sink_to_rules: Some(&group.sink_to_rules),
+            label_policy: None,
         };
         let mut group_findings: Vec<TaintFinding> = Vec::new();
         collect_function_defs(root, &mut |func_node| {

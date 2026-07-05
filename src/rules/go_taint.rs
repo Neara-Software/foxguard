@@ -40,7 +40,7 @@ use super::taint_engine::{
     cross_file_taint_finding, extract_cross_file_summary_for_function,
     extract_cross_file_summary_for_function_cf, match_binop_format_sink, match_call_sink,
     node_text, push_attributed_findings, summarize_function_return_generic, taint_finding_for_node,
-    AnalysisContext, TaintLanguageAdapter, TaintState,
+    AnalysisContext, LabelPolicy, TaintLanguageAdapter, TaintState,
 };
 pub use super::taint_engine::{
     BatchedRule, NodeMatcher, ReturnSummary, ReturnTaintSummary, RuleFilter, TaintFinding,
@@ -48,6 +48,7 @@ pub use super::taint_engine::{
 };
 use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary};
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use tree_sitter::{Node, Tree};
 
@@ -80,6 +81,10 @@ pub struct CrossFileInfo<'a> {
 /// Type alias for the Go-specific analysis context.
 type GoCtx<'a> = AnalysisContext<'a, CrossFileInfo<'a>>;
 
+/// A tainted value's `(description, source line, optional taint-labels set)`.
+/// The label component is `Some` only under an active taint-labels policy.
+type LabeledTaint = (String, usize, Option<BTreeSet<String>>);
+
 /// Run the taint engine over every function/method body inside `root`
 /// and return one `TaintFinding` per source→sink flow.
 ///
@@ -93,6 +98,57 @@ pub fn analyze_tree(
     aliases: Option<&AliasTable>,
 ) -> Vec<TaintFinding> {
     analyze_tree_with_cross_file(root, source, spec, aliases, None)
+}
+
+/// Like [`analyze_tree`] but honoring a taint-**labels** [`LabelPolicy`]
+/// (Semgrep advanced taint mode). With `policy = None` this is byte-for-byte the
+/// historical unlabeled behavior. With `policy = Some(..)`, primary sources emit
+/// the policy's source label, values passing through string-building nodes are
+/// conditionally relabeled, and a sink fires only when the reaching value's
+/// label set satisfies the policy's boolean `requires:` — enabling the Go
+/// `INPUT and not CLEAN` negation-tier rules (open-redirect, tainted-url-host).
+pub fn analyze_tree_labeled<'a>(
+    root: Node<'_>,
+    source: &'a str,
+    spec: &'a TaintSpec,
+    aliases: Option<&'a AliasTable>,
+    policy: Option<&'a LabelPolicy>,
+) -> Vec<TaintFinding> {
+    let empty_summary = ReturnSummary::new();
+    let mut summaries = ReturnSummary::new();
+    let pass1_ctx = AnalysisContext {
+        source,
+        spec,
+        aliases,
+        summaries: &empty_summary,
+        cross_file: None,
+        sink_to_rules: None,
+        label_policy: policy,
+    };
+    collect_function_defs(root, &mut |func_node| {
+        let (name, ret_taint) = summarize_function_return(func_node, &pass1_ctx);
+        if let Some(name) = name {
+            summaries.insert(
+                function_summary_key(&name, collect_param_names(func_node, source).len()),
+                ret_taint,
+            );
+        }
+    });
+
+    let ctx = AnalysisContext {
+        source,
+        spec,
+        aliases,
+        summaries: &summaries,
+        cross_file: None,
+        sink_to_rules: None,
+        label_policy: policy,
+    };
+    let mut findings = Vec::new();
+    collect_function_defs(root, &mut |func_node| {
+        analyze_function(func_node, &ctx, &mut findings);
+    });
+    findings
 }
 
 /// Like [`analyze_tree`] but with optional cross-file taint summaries.
@@ -117,6 +173,7 @@ pub fn analyze_tree_with_cross_file<'a>(
         summaries: &empty_summary,
         cross_file: None,
         sink_to_rules: None,
+        label_policy: None,
     };
     collect_function_defs(root, &mut |func_node| {
         let (name, ret_taint) = summarize_function_return(func_node, &pass1_ctx);
@@ -135,6 +192,7 @@ pub fn analyze_tree_with_cross_file<'a>(
         summaries: &summaries,
         cross_file,
         sink_to_rules: None,
+        label_policy: None,
     };
     let mut findings = Vec::new();
     collect_function_defs(root, &mut |func_node| {
@@ -192,6 +250,7 @@ pub fn analyze_tree_batched<'a>(
             summaries: &empty_summary,
             cross_file: None,
             sink_to_rules: None,
+            label_policy: None,
         };
         let mut summaries = ReturnSummary::new();
         collect_function_defs(root, &mut |func_node| {
@@ -219,6 +278,7 @@ pub fn analyze_tree_batched<'a>(
             summaries: &summaries,
             cross_file: cross_file_for_group.as_ref(),
             sink_to_rules: Some(&group.sink_to_rules),
+            label_policy: None,
         };
         let mut group_findings: Vec<TaintFinding> = Vec::new();
         collect_function_defs(root, &mut |func_node| {
@@ -554,7 +614,7 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for GoTaintAdapter {
 
     fn seed_params(func_node: Node<'_>, ctx: &GoCtx<'_>, state: &mut TaintState) {
         if let Some(params) = func_node.child_by_field_name("parameters") {
-            seed_param_sources(params, ctx.source, ctx.spec, state);
+            seed_param_sources(params, ctx.source, ctx.spec, ctx.label_policy, state);
         }
     }
 }
@@ -582,7 +642,13 @@ fn analyze_function(func_node: Node<'_>, ctx: &GoCtx<'_>, findings: &mut Vec<Tai
     analyze_function_generic::<GoTaintAdapter, _>(func_node, ctx, findings);
 }
 
-fn seed_param_sources(params: Node<'_>, source: &str, spec: &TaintSpec, state: &mut TaintState) {
+fn seed_param_sources(
+    params: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
+    policy: Option<&LabelPolicy>,
+    state: &mut TaintState,
+) {
     let mut cursor = params.walk();
     for child in params.children(&mut cursor) {
         if !matches!(
@@ -606,13 +672,29 @@ fn seed_param_sources(params: Node<'_>, source: &str, spec: &TaintSpec, state: &
                         || crate::rules::taint_engine::param_names_are_wildcard(names)
                     {
                         let line = inner.start_position().row + 1;
-                        state.taint(param_name.to_string(), description.clone(), line);
+                        state.taint_labeled(
+                            param_name.to_string(),
+                            description.clone(),
+                            line,
+                            source_labels(policy),
+                        );
                         break;
                     }
                 }
             }
         }
     }
+}
+
+/// The label set a freshly-seeded primary source carries under `policy`:
+/// `Some({source_label})` when a policy is active, else `None` (the historical
+/// unlabeled behavior — no label gating).
+fn source_labels(policy: Option<&LabelPolicy>) -> Option<BTreeSet<String>> {
+    policy.map(|p| {
+        let mut set = BTreeSet::new();
+        set.insert(p.source_label.clone());
+        set
+    })
 }
 
 /// Collect identifiers from an `expression_list` that are plain
@@ -730,14 +812,22 @@ fn apply_multi_assign_semantics(
     state: &mut TaintState,
 ) {
     if lhs_names.len() == rhs_exprs.len() {
-        // Collect (desc, line) first to avoid borrow conflicts.
-        let descs: Vec<Option<(String, usize)>> = rhs_exprs
+        // Collect (desc, line, labels) first to avoid borrow conflicts. The
+        // label set is computed only when a taint-labels policy is active
+        // (`labels_for_rhs` returns `None` otherwise), so unlabeled rules are
+        // byte-for-byte unchanged.
+        let descs: Vec<Option<LabeledTaint>> = rhs_exprs
             .iter()
-            .map(|rhs| expression_taint(*rhs, ctx, state))
+            .map(|rhs| {
+                expression_taint(*rhs, ctx, state)
+                    .map(|(d, line)| (d, line, labels_for_rhs(*rhs, ctx, state)))
+            })
             .collect();
         for (name, desc) in lhs_names.iter().zip(descs) {
             match desc {
-                Some((d, line)) => state.taint((*name).to_string(), d, line),
+                Some((d, line, labels)) => {
+                    state.taint_labeled((*name).to_string(), d, line, labels)
+                }
                 None => state.clear(name),
             }
         }
@@ -746,17 +836,17 @@ fn apply_multi_assign_semantics(
 
     // Conservative broadcast: if *any* RHS expression is tainted, taint
     // every LHS name; otherwise clear them all.
-    let mut broadcast: Option<(String, usize)> = None;
+    let mut broadcast: Option<LabeledTaint> = None;
     for rhs in rhs_exprs {
-        if let Some(result) = expression_taint(*rhs, ctx, state) {
-            broadcast = Some(result);
+        if let Some((d, line)) = expression_taint(*rhs, ctx, state) {
+            broadcast = Some((d, line, labels_for_rhs(*rhs, ctx, state)));
             break;
         }
     }
     match broadcast {
-        Some((desc, line)) => {
+        Some((desc, line, labels)) => {
             for name in lhs_names {
-                state.taint((*name).to_string(), desc.clone(), line);
+                state.taint_labeled((*name).to_string(), desc.clone(), line, labels.clone());
             }
         }
         None => {
@@ -765,6 +855,14 @@ fn apply_multi_assign_semantics(
             }
         }
     }
+}
+
+/// Compute the taint-**labels** set carried by a tainted RHS expression, or
+/// `None` when no policy is active (the unlabeled path). Thin wrapper over
+/// [`expression_labels`] gated on `ctx.label_policy`.
+fn labels_for_rhs(rhs: Node<'_>, ctx: &GoCtx<'_>, state: &TaintState) -> Option<BTreeSet<String>> {
+    let policy = ctx.label_policy?;
+    expression_labels(rhs, ctx, state, policy)
 }
 
 /// Resolve a `call_expression`'s callee into a canonical text. Handles
@@ -796,6 +894,13 @@ fn handle_call(
         let mut cursor = args.walk();
         for arg in args.named_children(&mut cursor) {
             if let Some((source_desc, src_line)) = expression_taint(arg, ctx, state) {
+                // Taint-labels gating: under an active policy the sink fires only
+                // when this argument's reaching label set satisfies the boolean
+                // `requires:` (e.g. `INPUT and not CLEAN`). A value that flowed
+                // through a relabel (acquiring `CLEAN`) is correctly rejected.
+                if !sink_labels_satisfied(arg, ctx, state) {
+                    continue;
+                }
                 let rule_hint = attribution_hint_for_sink(&sink);
                 findings.push(taint_finding_for_node(
                     node,
@@ -849,6 +954,11 @@ fn handle_binop_format_sink(
         return;
     }
     if let Some((source_desc, src_line)) = expression_taint(node, ctx, state) {
+        // Taint-labels gating (see `handle_call`): a policy's boolean
+        // `requires:` must be satisfied by the concat's reaching label set.
+        if !sink_labels_satisfied(node, ctx, state) {
+            return;
+        }
         let rule_hint = attribution_hint_for_sink(&sink);
         findings.push(taint_finding_for_node(
             node,
@@ -952,6 +1062,9 @@ fn handle_cross_file_call(
         }
         let arg = arg_nodes[flow.param_index];
         if let Some((source_desc, src_line)) = expression_taint(arg, ctx, state) {
+            if !sink_labels_satisfied(arg, ctx, state) {
+                continue;
+            }
             findings.push(cross_file_taint_finding(
                 node,
                 source_desc,
@@ -1205,6 +1318,182 @@ fn expression_taint(
     }
 
     None
+}
+
+// ─── Taint-labels helpers (Semgrep advanced taint, negation tier) ──────────
+
+/// Compute the taint-**labels** set carried by `expr`, assuming it is a tainted
+/// value under the active `policy`. Returns `None` when the label set cannot be
+/// concretely determined (e.g. taint that arrives only via a cross-file/summary
+/// hop) — the safe direction, since an empty/absent label set makes a negated
+/// `requires:` (`INPUT and not CLEAN`) fail rather than over-fire.
+///
+/// Mirrors [`expression_taint`]'s structural propagation but on the label
+/// dimension: a direct source carries `{source_label}`; a stored variable
+/// carries whatever labels it was assigned; a value flowing through a
+/// string-building node (a `"literal" + $X` concat or an `fmt.Sprintf`-family
+/// call) acquires each applicable relabel's `to` label.
+fn expression_labels(
+    expr: Node<'_>,
+    ctx: &GoCtx<'_>,
+    state: &TaintState,
+    policy: &LabelPolicy,
+) -> Option<BTreeSet<String>> {
+    let base = expression_labels_core(expr, ctx, state, policy)?;
+    Some(go_relabel_through(expr, ctx, base, policy))
+}
+
+fn primary_label_set(policy: &LabelPolicy) -> BTreeSet<String> {
+    let mut set = BTreeSet::new();
+    set.insert(policy.source_label.clone());
+    set
+}
+
+fn expression_labels_core(
+    expr: Node<'_>,
+    ctx: &GoCtx<'_>,
+    state: &TaintState,
+    policy: &LabelPolicy,
+) -> Option<BTreeSet<String>> {
+    // Direct source match → the primary label.
+    if match_source(expr, ctx.source, ctx.spec, ctx.aliases).is_some() {
+        return Some(primary_label_set(policy));
+    }
+
+    // Tainted identifier → its stored label set (defaulting to the primary
+    // label if it was tainted without an explicit set).
+    if expr.kind() == "identifier" {
+        let name = node_text(expr, ctx.source);
+        return state.info(name).map(|info| {
+            info.labels
+                .clone()
+                .unwrap_or_else(|| primary_label_set(policy))
+        });
+    }
+
+    // Selector / index / type-assertion: propagate the operand's labels.
+    if matches!(
+        expr.kind(),
+        "selector_expression" | "index_expression" | "type_assertion_expression"
+    ) {
+        if let Some(operand) = expr.child_by_field_name("operand") {
+            return expression_labels(operand, ctx, state, policy);
+        }
+    }
+
+    // Binary concat / parenthesized / unary: first labeled operand wins (the
+    // relabel is applied by the wrapper on the way out).
+    if matches!(
+        expr.kind(),
+        "binary_expression" | "parenthesized_expression" | "unary_expression"
+    ) {
+        let mut cursor = expr.walk();
+        for child in expr.named_children(&mut cursor) {
+            if let Some(labels) = expression_labels(child, ctx, state, policy) {
+                return Some(labels);
+            }
+        }
+    }
+
+    // Call: sanitizers collapse to clean; otherwise the first labeled argument
+    // (or a tainted receiver) carries through. Cross-file / summary-tainted
+    // call results are intentionally left unlabeled (return `None` → safe
+    // no-fire under a negated `requires:`).
+    if expr.kind() == "call_expression" {
+        if is_sanitizer_call(expr, ctx.source, ctx.spec, ctx.aliases) {
+            return None;
+        }
+        if let Some(args) = expr.child_by_field_name("arguments") {
+            let mut cursor = args.walk();
+            for arg in args.named_children(&mut cursor) {
+                if let Some(labels) = expression_labels(arg, ctx, state, policy) {
+                    return Some(labels);
+                }
+            }
+        }
+        if let Some(func) = expr.child_by_field_name("function") {
+            if func.kind() == "selector_expression" {
+                if let Some(operand) = func.child_by_field_name("operand") {
+                    if let Some(labels) = expression_labels(operand, ctx, state, policy) {
+                        return Some(labels);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Apply the policy's string-building relabels to `labels` when `expr` is a Go
+/// string-building node: a `+` concatenation with a string-literal operand
+/// (the `"$URLSTR" + $INPUT` shape) or an `fmt.Sprintf`/`Fprintf`/`Printf`
+/// call (the `fmt.Sprintf("$URLSTR", $INPUT, ...)` shape). For each relabel
+/// whose `from` label is present, its `to` label is added. Idempotent.
+///
+/// NOTE: Semgrep additionally constrains the literal with a URL-shaped
+/// `metavariable-regex`; we intentionally drop that constraint. Relabeling on
+/// *any* string-literal concat over-approximates the CLEAN set, which only ever
+/// SUPPRESSES a `not CLEAN` sink — a false-negative (safe) direction, never a
+/// false positive.
+fn go_relabel_through(
+    expr: Node<'_>,
+    ctx: &GoCtx<'_>,
+    mut labels: BTreeSet<String>,
+    policy: &LabelPolicy,
+) -> BTreeSet<String> {
+    if policy.relabels.is_empty() || !go_is_string_building_node(expr, ctx) {
+        return labels;
+    }
+    let additions: Vec<String> = policy
+        .relabels
+        .iter()
+        .filter(|r| labels.contains(&r.from))
+        .map(|r| r.to.clone())
+        .collect();
+    for a in additions {
+        labels.insert(a);
+    }
+    labels
+}
+
+/// True when `expr` is a Go string-building node for relabel purposes: a `+`
+/// concat with a string-literal operand, or a call to an `fmt` format helper
+/// that builds a string.
+fn go_is_string_building_node(expr: Node<'_>, ctx: &GoCtx<'_>) -> bool {
+    match expr.kind() {
+        "binary_expression" => {
+            go_binop_is_concat(expr, ctx.source)
+                && go_binop_has_string_literal_operand(expr, ctx.source)
+        }
+        "call_expression" => {
+            let Some(callee) = callee_text(expr, ctx.source) else {
+                return false;
+            };
+            let resolved: Cow<'_, str> = match ctx.aliases {
+                Some(a) => a.resolve(callee.as_ref()),
+                None => Cow::Borrowed(callee.as_ref()),
+            };
+            matches!(
+                resolved.as_ref(),
+                "fmt.Sprintf" | "fmt.Fprintf" | "fmt.Printf" | "fmt.Sprint" | "fmt.Sprintln"
+            )
+        }
+        _ => false,
+    }
+}
+
+/// Evaluate whether a sink argument's reaching taint satisfies the active
+/// policy's boolean `requires:`. With no policy this is always `true` (the
+/// historical "any tainted arg fires" behavior). With a policy the argument's
+/// label set is computed and the `requires:` expression evaluated — so a value
+/// that acquired `CLEAN` fails `INPUT and not CLEAN` and does not fire.
+fn sink_labels_satisfied(arg: Node<'_>, ctx: &GoCtx<'_>, state: &TaintState) -> bool {
+    let Some(policy) = ctx.label_policy else {
+        return true;
+    };
+    let labels = expression_labels(arg, ctx, state, policy).unwrap_or_default();
+    policy.sink_requires.eval(&labels)
 }
 
 fn is_sanitizer_call(

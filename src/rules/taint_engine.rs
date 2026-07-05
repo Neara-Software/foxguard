@@ -5,7 +5,7 @@
 //! unaffected.
 
 use crate::rules::cross_file::{FunctionTaintSummary, ParamSinkFlow};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use tree_sitter::Node;
 
 // ─── Core types ──────────────────────────────────────────────────────────
@@ -260,38 +260,98 @@ pub struct Propagator {
     pub description: String,
 }
 
-/// A bounded taint-**labels** policy for the tractable Java `CONCAT`-family
-/// rules (single positive label; NO `not`/`and`/`or`).
+/// A boolean expression over taint **labels** — the parsed form of a Semgrep
+/// `requires:` string (advanced taint mode). Supports a bare label, `not X`,
+/// `A and B`, `A or B`, and parenthesization, which is the full grammar the
+/// registry's negation-tier rules use (`INPUT and not CLEAN`,
+/// `TAINTED and not CONCAT and not CLEAN`,
+/// `(EXPRESS and not CLEAN) or (EXPRESSTS and not CLEAN)`).
 ///
-/// See `docs/parity/taint-labels-design.md`. Semgrep's advanced taint mode lets
-/// a source emit a named **label** and gates sinks (and label-emitting
-/// sources/propagators) on a `requires:` boolean over labels. This struct models
-/// only the smallest self-contained slice — the shape shared by
-/// `formatted-sql-string`, `tainted-html-string`, and `tainted-system-command`:
+/// Evaluated against the set of labels a taint flow *carries* at the sink: a
+/// finding fires only when [`RequiresExpr::eval`] returns `true`. The `not`
+/// arm is what makes a sanitizer-relabel (a value that acquired `CLEAN`)
+/// suppress the sink while an un-sanitized value (carrying only the primary
+/// label) still fires — the whole point of the negation tier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequiresExpr {
+    /// A bare label token — true iff the flow carries it.
+    Label(String),
+    /// `not X` — true iff `X` is *not* carried.
+    Not(Box<RequiresExpr>),
+    /// `A and B`.
+    And(Box<RequiresExpr>, Box<RequiresExpr>),
+    /// `A or B`.
+    Or(Box<RequiresExpr>, Box<RequiresExpr>),
+}
+
+impl RequiresExpr {
+    /// Evaluate this `requires:` expression against a flow's label set.
+    pub fn eval(&self, labels: &BTreeSet<String>) -> bool {
+        match self {
+            RequiresExpr::Label(l) => labels.contains(l),
+            RequiresExpr::Not(inner) => !inner.eval(labels),
+            RequiresExpr::And(a, b) => a.eval(labels) && b.eval(labels),
+            RequiresExpr::Or(a, b) => a.eval(labels) || b.eval(labels),
+        }
+    }
+
+    /// Collect every label token referenced anywhere in the expression.
+    pub fn referenced_labels(&self, out: &mut BTreeSet<String>) {
+        match self {
+            RequiresExpr::Label(l) => {
+                out.insert(l.clone());
+            }
+            RequiresExpr::Not(inner) => inner.referenced_labels(out),
+            RequiresExpr::And(a, b) | RequiresExpr::Or(a, b) => {
+                a.referenced_labels(out);
+                b.referenced_labels(out);
+            }
+        }
+    }
+}
+
+/// A conditional relabel: when a value already carrying label `from` flows
+/// through a string-building node (`+` / `+=` / `String.format` / `.concat` /
+/// `StringBuilder.append` / `fmt.Sprintf`-family / …), it additionally acquires
+/// label `to`. Compiled from a Semgrep source/propagator entry of the shape
+/// `label: <to>, requires: <from>` (e.g. `label: CONCAT, requires: INPUT` or the
+/// Go open-redirect `label: CLEAN, requires: INPUT`).
+#[derive(Debug, Clone)]
+pub struct Relabel {
+    pub from: String,
+    pub to: String,
+}
+
+/// A bounded taint-**labels** policy (Semgrep advanced taint mode).
 ///
-/// - every primary source emits `source_label` (e.g. `INPUT`);
-/// - a value carrying `relabel_from` that flows through a string-building node
-///   (`+` / `+=` / `String.format` / `String.join` / `.concat` /
-///   `StringBuilder.append` / `new StringBuilder(...)`) additionally acquires
-///   `relabel_to` (e.g. `INPUT` → `CONCAT`) — the conditional-relabel mechanic
-///   compiled from a source/propagator with `label: L2, requires: L1`;
-/// - a sink fires ONLY when the reaching value carries `sink_requires`
-///   (e.g. `CONCAT`).
+/// See `docs/parity/taint-labels-design.md`. A source emits a named **label**;
+/// sinks gate on a `requires:` boolean over labels. This models the tractable
+/// single-primary-label shapes:
 ///
-/// The `not`/`and`/`or` `requires:` tier (Go/TS/JS rules) is deliberately NOT
-/// modeled here; rules needing it stay skipped (see the bridge's
-/// `detect_label_policy`). Only the Java engine consults this policy.
+/// - every primary (unconditional) source emits `source_label` (e.g. `INPUT`);
+/// - each [`Relabel`] adds a label to a value that carries its `from` label and
+///   flows through a string-building node (the conditional-relabel mechanic
+///   compiled from a source/propagator `label: L2, requires: L1` — e.g.
+///   `INPUT → CONCAT` for the Java family, `INPUT → CLEAN` for the Go
+///   open-redirect / tainted-url-host family);
+/// - a sink fires ONLY when the reaching value's label set satisfies the
+///   boolean [`RequiresExpr`] `sink_requires` — a single positive label
+///   (`CONCAT`) for the Java family, or a negation (`INPUT and not CLEAN`) for
+///   the Go family.
+///
+/// Consumed by the Java and Go engines. Shapes needing *multiple distinct
+/// primary source labels* (the TS/JS `react-href-var` / `raw-html-format`
+/// rules) are still refused by `detect_label_policy` and stay skipped.
 #[derive(Debug, Clone)]
 pub struct LabelPolicy {
     /// Label emitted by every primary (unconditional) source.
     pub source_label: String,
-    /// Trigger label for the string-building conditional relabel.
-    pub relabel_from: String,
-    /// Label added to a value that carries `relabel_from` and flows through a
-    /// string-building node.
-    pub relabel_to: String,
-    /// Sink gating label: a sink fires only when the reaching value carries it.
-    pub sink_requires: String,
+    /// Conditional string-building relabels (e.g. `INPUT → CONCAT`,
+    /// `INPUT → CLEAN`). Usually one entry.
+    pub relabels: Vec<Relabel>,
+    /// Boolean gating expression: a sink fires only when the reaching value's
+    /// label set satisfies it.
+    pub sink_requires: RequiresExpr,
 }
 
 /// A single source→sink flow reported by the engine.
@@ -373,6 +433,12 @@ pub(super) struct MatchedSink {
 pub(super) struct TaintInfo {
     pub description: String,
     pub line: usize,
+    /// Optional taint-**labels** set carried by this value (Semgrep advanced
+    /// taint mode). `None` = the historical unlabeled/boolean behavior (every
+    /// engine path and rule that does not activate a [`LabelPolicy`] is
+    /// unchanged). `Some(set)` is populated only when a policy is active; a sink
+    /// then fires only when the set satisfies the policy's `sink_requires`.
+    pub labels: Option<BTreeSet<String>>,
 }
 
 #[derive(Default)]
@@ -381,8 +447,35 @@ pub(super) struct TaintState {
 }
 
 impl TaintState {
+    /// Taint `name` with the historical unlabeled behavior (`labels = None`).
     pub fn taint(&mut self, name: String, description: String, line: usize) {
-        self.tainted.insert(name, TaintInfo { description, line });
+        self.tainted.insert(
+            name,
+            TaintInfo {
+                description,
+                line,
+                labels: None,
+            },
+        );
+    }
+
+    /// Taint `name` carrying an explicit taint-labels set (Semgrep advanced
+    /// taint mode). Used only on the label-aware engine paths.
+    pub fn taint_labeled(
+        &mut self,
+        name: String,
+        description: String,
+        line: usize,
+        labels: Option<BTreeSet<String>>,
+    ) {
+        self.tainted.insert(
+            name,
+            TaintInfo {
+                description,
+                line,
+                labels,
+            },
+        );
     }
 
     pub fn clear(&mut self, name: &str) {
@@ -412,6 +505,12 @@ pub(super) struct AnalysisContext<'a, CF> {
     /// single `TaintSpec`, this map attributes each matched sink back to
     /// its owning rule id. `None` in single-rule mode.
     pub sink_to_rules: Option<&'a HashMap<String, Vec<String>>>,
+    /// Active taint-**labels** policy (Semgrep advanced taint mode). `None`
+    /// (the default for every existing path) is the historical unlabeled
+    /// behavior. `Some(..)` enables label-aware source seeding, string-building
+    /// relabels, and boolean `requires:` sink gating in engines that consult it
+    /// (currently Go via the Semgrep bridge).
+    pub label_policy: Option<&'a LabelPolicy>,
 }
 
 // ─── Language adapter trait ──────────────────────────────────────────────
@@ -584,6 +683,7 @@ where
             summaries: &empty_summary,
             cross_file: None,
             sink_to_rules: None,
+            label_policy: None,
         };
         if summarize_function_generic::<T, CF>(func_node, &param_ctx).is_some() {
             summary.params_to_return.push(param_idx);
@@ -751,6 +851,7 @@ where
             summaries: &empty_summary,
             cross_file,
             sink_to_rules: None,
+            label_policy: None,
         };
         let mut return_findings = Vec::new();
         let mut return_state = TaintState::default();
@@ -784,6 +885,7 @@ where
                 summaries: &empty_summary,
                 cross_file,
                 sink_to_rules: None,
+                label_policy: None,
             };
             let mut findings = Vec::new();
             analyze_function_generic::<T, CF>(func_node, &batched_ctx, &mut findings);
@@ -817,6 +919,7 @@ where
                 summaries: &empty_summary,
                 cross_file,
                 sink_to_rules: None,
+                label_policy: None,
             };
             let mut findings = Vec::new();
             analyze_function_generic::<T, CF>(func_node, &sink_ctx, &mut findings);

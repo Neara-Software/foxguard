@@ -1,19 +1,53 @@
 # Taint-labels (`label:` / `requires:`) feasibility assessment
 
-> **Update (2026-07-04): the Java `CONCAT` family is now IMPLEMENTED** (the
+> **Update (2026-07-05): the negation tier (`not`/`and`/`or` in `requires:`) is
+> now IMPLEMENTED in the engine.** `LabelPolicy` is generalized to a single
+> primary `source_label`, a list of conditional string-building `Relabel`s
+> (`from → to`, e.g. `INPUT → CLEAN`), and a boolean `RequiresExpr` sink gate
+> (`Label` / `Not` / `And` / `Or`, parenthesized) parsed by `parse_requires_expr`
+> in the bridge. `detect_label_policy` now recognizes the single-primary-label
+> negation shape (`INPUT and not CLEAN`) in addition to the positive `CONCAT`
+> family, and refuses (keeps skipping) shapes with *multiple distinct primary
+> labels* (the TS/JS `react-href-var` / `raw-html-format` rules) or *per-sink
+> differing requires* (the Go gRPC rule's two sinks). Both the **Java** engine
+> (already label-aware) and the **Go** engine (labels newly threaded onto the
+> shared `TaintInfo`/`AnalysisContext`) evaluate the boolean gate. The HARD
+> faithfulness gate is proven end-to-end through the real `parse_taint_rule` →
+> `check` path: `INPUT and not CLEAN` **fires** on `input → redirect(input)` and
+> **does NOT fire** on `input → clean(input) → redirect(cleaned)` (the value that
+> flowed through a `"url" + input` / `fmt.Sprintf` relabel acquires `CLEAN` and
+> is suppressed) — for both Go and Java fixtures. Over-firing (ignoring
+> `not CLEAN`) never happens: the relabel over-approximates `CLEAN` (we drop the
+> URL-shaped `metavariable-regex` on the relabel literal), which only ever
+> *suppresses* a `not CLEAN` sink — the safe, false-negative direction.
+>
+> **Registry load-rate delta from the negation tier: 0 rules.** The two Go
+> registry rules (`open-redirect`, `tainted-url-host`) reach the label machinery
+> but remain skipped for an **independent source-compat gap**: their source
+> `($REQUEST : *http.Request).$ANYTHING` is a Go typed-metavariable receiver with
+> a metavariable field pinned by `metavariable-regex`. The Go engine has no
+> typed-metavariable source support and refuses to broaden the source by dropping
+> the type/regex (which would seed *any* `.Host`/`.URL` read as user input — an
+> over-match at the gated sink), so the source compiles to no matcher →
+> `has no valid pattern-sources`. Un-skipping those two rules needs Go
+> typed-source + metavariable-regex-field compilation (a separate matcher-compat
+> feature with Go type tracking), not more label algebra. The TS/JS multi-primary
+> rules stay deferred (multiple distinct primary source labels are not modeled by
+> the single-primary policy). The gRPC rule stays deferred (two differently-gated
+> sinks).
+>
+> **Update (2026-07-04): the Java `CONCAT` family is IMPLEMENTED** (the
 > single-positive-label slice recommended below). `formatted-sql-string` and
 > `tainted-system-command` now load and match faithfully — a tainted value that
 > flows through a string concatenation/format into the sink fires, while the
 > same value reaching the sink WITHOUT a concat (e.g. a parameterized query)
 > does not (the `requires: CONCAT` discrimination). Mechanism: a per-value label
 > set on the Java engine's `TaintInfo`, a `LabelPolicy` compiled by
-> `detect_label_policy` in the bridge (single positive label only — `not`/`and`/
-> `or` still skip via `Unsupported`), a string-building conditional relabel
+> `detect_label_policy` in the bridge, a string-building conditional relabel
 > (`requires INPUT → emit CONCAT`), and a sink label gate. `tainted-html-string`
 > still skips: its `ResponseEntity` focus-metavariable sink shape does not
-> compile to a matcher (a sink-compat gap, independent of labels). The
-> `not`/`and`/`or` `requires:` tier (Go/TS/JS) remains deferred. The rest of this
-> note is the original assessment.
+> compile to a matcher (a sink-compat gap, independent of labels). The rest of
+> this note is the original assessment.
 
 Status: **assessment-only — nothing implemented.** The faithfully-loadable
 subset is empty; every registry rule that uses taint-labels needs the full

@@ -75,6 +75,7 @@ pub fn analyze_tree(
         summaries: &empty_summary,
         cross_file: None,
         sink_to_rules: None,
+        label_policy: None,
     };
     let mut findings = Vec::new();
     collect_method_defs(root, &mut |method_node| {
@@ -1043,6 +1044,7 @@ pub fn extract_cross_file_findings(
         summaries: &empty_summary,
         cross_file: None,
         sink_to_rules: None,
+        label_policy: None,
     };
 
     let mut out = Vec::new();

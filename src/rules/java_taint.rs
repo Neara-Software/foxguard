@@ -34,7 +34,9 @@ struct TaintInfo {
     /// taint mode). `None` = the historical unlabeled/boolean behavior (every
     /// existing engine path and rule is unchanged). `Some(set)` is populated
     /// only when a [`LabelPolicy`] is active for the rule under analysis; the
-    /// sink then fires only when the set contains the policy's required label.
+    /// sink then fires only when the set satisfies the policy's boolean
+    /// `requires:` (a single positive label like `CONCAT`, or a negation like
+    /// `INPUT and not CLEAN`).
     labels: Option<BTreeSet<String>>,
 }
 
@@ -940,11 +942,8 @@ fn find_sinks(
             // and is correctly rejected — the precision that taint-labels exist
             // for (see `docs/parity/taint-labels-design.md`).
             if let Some(p) = policy {
-                let satisfied = info
-                    .labels
-                    .as_ref()
-                    .is_some_and(|ls| ls.contains(&p.sink_requires));
-                if !satisfied {
+                let labels = info.labels.clone().unwrap_or_default();
+                if !p.sink_requires.eval(&labels) {
                     return;
                 }
             }
@@ -961,10 +960,10 @@ fn expression_taint(
     state: &TaintState,
 ) -> Option<TaintInfo> {
     let info = expression_taint_core(node, source, spec, policy, state)?;
-    // Conditional relabel: a value that carries the policy's `relabel_from`
-    // label and flows through a string-building node (`+`, `String.format`,
-    // `.concat`, `.append`, `new StringBuilder(...)`) additionally acquires the
-    // `relabel_to` label. This is the `CONCAT`-family relabel mechanic; with no
+    // Conditional relabel: for each policy `Relabel`, a value that carries its
+    // `from` label and flows through a string-building node (`+`,
+    // `String.format`, `.concat`, `.append`, `new StringBuilder(...)`)
+    // additionally acquires the `to` label (e.g. `INPUT → CONCAT`). With no
     // policy it is a no-op.
     Some(relabel_through(node, source, info, policy))
 }
@@ -1034,18 +1033,22 @@ fn source_labels(policy: Option<&LabelPolicy>) -> Option<BTreeSet<String>> {
     })
 }
 
-/// Add the policy's `relabel_to` label to `info` when it already carries
-/// `relabel_from`. No-op without a policy or without the trigger label.
+/// For each of the policy's [`Relabel`](crate::rules::taint_engine::Relabel)s,
+/// add its `to` label to `info` when `info` already carries the `from` label.
+/// No-op without a policy or without a matching trigger label.
 fn apply_relabel(mut info: TaintInfo, policy: Option<&LabelPolicy>) -> TaintInfo {
     if let Some(p) = policy {
-        let has_trigger = info
-            .labels
-            .as_ref()
-            .is_some_and(|ls| ls.contains(&p.relabel_from));
-        if has_trigger {
-            info.labels
-                .get_or_insert_with(BTreeSet::new)
-                .insert(p.relabel_to.clone());
+        let additions: Vec<String> = p
+            .relabels
+            .iter()
+            .filter(|r| info.labels.as_ref().is_some_and(|ls| ls.contains(&r.from)))
+            .map(|r| r.to.clone())
+            .collect();
+        if !additions.is_empty() {
+            let set = info.labels.get_or_insert_with(BTreeSet::new);
+            for a in additions {
+                set.insert(a);
+            }
         }
     }
     info
