@@ -4800,6 +4800,35 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
         };
     }
 
+    // ── Python string-construction SOURCE: `$X + $Y`, `$X % $Y`, `f"..."`,
+    //    `$X.format(...)` (sqlalchemy `avoid-sqlalchemy-text`, `twiml-injection`) ─
+    //
+    // A handful of Python taint rules treat a *dynamically constructed* string as
+    // their taint origin — the assembled SQL / markup is itself the untrusted
+    // thing, regardless of whether a tracked source flowed into it:
+    //   `"a" + user` / `user + "b"`   (concatenation with a string literal)
+    //   `user % x`                    (old-style `%` formatting)
+    //   `f"...{user}..."`             (f-string interpolation)
+    //   `"...".format(user)`          (str.format)
+    // Each alternative carries a `metavariable-type: string` narrowing which we
+    // drop; in its place we require a concrete string LITERAL operand / an
+    // f-string / a literal `.format` receiver, which is STRICTER than Semgrep's
+    // type check (we never seed pure numeric arithmetic or non-string values), so
+    // the compiled source stays FP-safe. We reuse the existing `BinopFormat`
+    // matcher — carried by every engine's `NodeMatcher`, so no new variant — and
+    // the Python engine's `match_source` recognises the construction node and
+    // seeds it. Gated to Python + source role so no other language's rules change
+    // behaviour (their string-construction sources stay deferred, as before).
+    if lang == Language::Python {
+        if let MatcherRole::Source = role {
+            if is_python_string_construction_source(pat) {
+                return Some(GenericMatcher::BinopFormat {
+                    description: describe(pat, role),
+                });
+            }
+        }
+    }
+
     // ── BinopFormat form: string-building sinks ──────────────────────────
     //
     // Semgrep SQL/command-string sinks express tainted concatenation as a
@@ -5377,6 +5406,60 @@ fn is_binop_operand(o: &str) -> bool {
     false
 }
 
+/// True when `pat` is a Python string-CONSTRUCTION source shape: an f-string,
+/// a `+`/`%` concatenation with a string-ish operand, or a `.format(...)` call
+/// whose receiver is a metavariable or string literal. This is the SOURCE-side
+/// recogniser for rules (`avoid-sqlalchemy-text`, `twiml-injection`) that treat
+/// a dynamically assembled string as their taint origin. Requiring a concrete
+/// literal / f-string keeps it stricter than Semgrep's `metavariable-type:
+/// string` narrowing (never seeds numeric arithmetic), so it stays FP-safe.
+fn is_python_string_construction_source(pat: &str) -> bool {
+    let p = pat.trim();
+    // f-string literal: `f"..."` / `f'...'` (with or without interpolation).
+    if p.starts_with("f\"") || p.starts_with("f'") {
+        return true;
+    }
+    // Binary `+` / `%` concatenation with string-ish operands (reuses the
+    // sink-side recogniser, which already requires ≥2 concatenation operands).
+    if is_binop_format_pattern(p) {
+        return true;
+    }
+    // `$X.format(...)` / `"...".format(...)`: a `.format` call whose receiver is
+    // a metavariable or a string literal.
+    if let Some(recv) = parse_format_call_receiver(p) {
+        if is_metavariable(recv) || is_quoted_string_literal(recv) {
+            return true;
+        }
+    }
+    false
+}
+
+/// If `pat` is a `<recv>.format(...)` call expression, return the receiver text
+/// (`<recv>`). Returns `None` for any other shape. Used by
+/// [`is_python_string_construction_source`].
+fn parse_format_call_receiver(pat: &str) -> Option<&str> {
+    let p = pat.trim();
+    if !p.ends_with(')') {
+        return None;
+    }
+    let open = p.find('(')?;
+    let head = p[..open].trim_end();
+    let dot = head.rfind('.')?;
+    if head[dot + 1..].trim() != "format" {
+        return None;
+    }
+    Some(head[..dot].trim())
+}
+
+/// True when `s` is a (possibly f-prefixed) single-quoted or double-quoted
+/// string literal.
+fn is_quoted_string_literal(s: &str) -> bool {
+    let s = s.trim();
+    let body = s.strip_prefix('f').unwrap_or(s);
+    (body.starts_with('"') && body.ends_with('"') && body.len() >= 2)
+        || (body.starts_with('\'') && body.ends_with('\'') && body.len() >= 2)
+}
+
 /// If `callee` has the shape `$METAVAR.plain_method` — exactly one
 /// `$`-prefixed metavariable segment followed by a plain identifier — return
 /// the method name. Returns `None` for all other shapes.
@@ -5923,7 +6006,17 @@ mod tests {
 
     #[test]
     fn weird_shapes_rejected() {
-        assert!(compile("$X + $Y", MatcherRole::Source).is_none());
+        // `$X + $Y` is NOT a sink source shape, but IS a valid Python
+        // string-CONSTRUCTION source (`avoid-sqlalchemy-text`) — it compiles to
+        // the reused `BinopFormat` matcher. See
+        // `avoid_sqlalchemy_text_*` for the end-to-end faithfulness tests.
+        assert!(matches!(
+            compile("$X + $Y", MatcherRole::Source),
+            Some(GenericMatcher::BinopFormat { .. })
+        ));
+        // As a SINK, a bare `$X + $Y` is still not an expressible shape here
+        // (BinopFormat sinks require a recognised string-literal/format operand
+        // shape, handled separately).
         assert!(compile("a.b.c(d", MatcherRole::Sink).is_none());
         assert!(compile("", MatcherRole::Source).is_none());
     }
@@ -12161,6 +12254,203 @@ function make(payload) {
         assert!(
             rule.check(clean, &tree).is_empty(),
             "a non-literal secret (process.env read) must NOT fire"
+        );
+    }
+
+    // ── Python string-construction SOURCE (`avoid-sqlalchemy-text`) ──────────
+    //
+    // The whole `parse_taint_rule -> compiled() -> check()` path: a dynamically
+    // constructed string (concat / f-string / `.format` / `%`) flowing into
+    // `sqlalchemy.text(...)` fires; a plain string literal or a bare variable
+    // reaching `text(...)` stays silent (the faithfulness requirement — the
+    // source is the CONSTRUCTION, not any value).
+
+    /// The real registry `avoid-sqlalchemy-text` rule shape (five
+    /// string-construction source alternatives + a `sqlalchemy.text(...)` sink).
+    const AVOID_SQLALCHEMY_TEXT_RULE: &str = r#"
+id: avoid-sqlalchemy-text
+mode: taint
+languages: [python]
+severity: ERROR
+message: "sqlalchemy.text is vulnerable to SQL injection"
+pattern-sinks:
+  - pattern: |
+      sqlalchemy.text(...)
+pattern-sources:
+  - patterns:
+      - pattern: |
+          $X + $Y
+      - metavariable-type:
+          metavariable: $X
+          type: string
+  - patterns:
+      - pattern: |
+          $X + $Y
+      - metavariable-type:
+          metavariable: $Y
+          type: string
+  - patterns:
+      - pattern: |
+          f"..."
+  - patterns:
+      - pattern: |
+          $X.format(...)
+      - metavariable-type:
+          metavariable: $X
+          type: string
+  - patterns:
+      - pattern: |
+          $X % $Y
+      - metavariable-type:
+          metavariable: $X
+          type: string
+"#;
+
+    #[test]
+    fn avoid_sqlalchemy_text_loads_with_construction_sources() {
+        let rule = compiled(AVOID_SQLALCHEMY_TEXT_RULE);
+        // The five source alternatives all compile to the `BinopFormat`
+        // string-construction source (reused, no new NodeMatcher variant).
+        let n_binop = rule
+            .spec
+            .sources
+            .iter()
+            .filter(|s| matches!(s, GenericMatcher::BinopFormat { .. }))
+            .count();
+        assert!(
+            n_binop >= 4,
+            "expected the string-construction sources to compile to BinopFormat, got {:?}",
+            rule.spec.sources
+        );
+        assert!(
+            rule.spec.sinks.iter().any(|s| matches!(
+                s,
+                GenericMatcher::Call { canonical, .. } if canonical == "sqlalchemy.text"
+            )),
+            "sink should compile to Call{{sqlalchemy.text}}, got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    #[test]
+    fn avoid_sqlalchemy_text_fires_on_each_construction_shape() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(AVOID_SQLALCHEMY_TEXT_RULE);
+
+        // Each `sqlalchemy.text(...)` call receives a value that is a constructed
+        // string (via an intermediate variable — exercises assignment
+        // propagation).
+        let src = r#"
+import sqlalchemy
+
+def concat_prefix(param):
+    s = "foo" + param
+    return sqlalchemy.text(s)
+
+def concat_suffix(param):
+    s = param + "bar"
+    return sqlalchemy.text(s)
+
+def fstring(param):
+    s = f"foo{param}bar"
+    return sqlalchemy.text(s)
+
+def dot_format(param):
+    s = "foo{}bar".format(param)
+    return sqlalchemy.text(s)
+
+def percent(param):
+    s = "foo %s bar" % param
+    return sqlalchemy.text(s)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            5,
+            "each of the five constructed-string flows into text(...) must fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn avoid_sqlalchemy_text_fires_on_inline_construction() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(AVOID_SQLALCHEMY_TEXT_RULE);
+        // Construction directly in the sink argument (no intermediate variable).
+        let src = r#"
+import sqlalchemy
+
+def h(param):
+    return sqlalchemy.text("SELECT * FROM t WHERE x = " + param)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "an inline `\"...\" + param` construction reaching text(...) must fire, got {findings:?}"
+        );
+    }
+
+    /// The realistic `from sqlalchemy import text` import — the bare `text(...)`
+    /// callee only resolves to the `sqlalchemy.text` sink through the alias
+    /// table, so this exercises the full aliased-sink path.
+    #[test]
+    fn avoid_sqlalchemy_text_fires_through_import_alias() {
+        use crate::engine::parser::parse_file;
+        use crate::rules::python_aliases::from_tree as py_aliases_from_tree;
+        let rule = compiled(AVOID_SQLALCHEMY_TEXT_RULE);
+        let src = r#"
+from sqlalchemy import text
+
+def h(param):
+    s = "foo" + param
+    return text(s)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture parses");
+        let aliases = py_aliases_from_tree(src, &tree);
+        let ctx = FileContext {
+            python_aliases: Some(&aliases),
+            ..FileContext::default()
+        };
+        let findings = rule.check_with_context(src, &tree, &ctx);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a constructed string into `text(...)` (imported from sqlalchemy) must fire, got {findings:?}"
+        );
+    }
+
+    /// Faithfulness near-miss: a PLAIN string literal or a BARE variable reaching
+    /// `text(...)` must NOT fire — the source is the CONSTRUCTION, not any value
+    /// (over-firing here would be the forbidden broadening).
+    #[test]
+    fn avoid_sqlalchemy_text_silent_on_plain_literal_and_bare_var() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(AVOID_SQLALCHEMY_TEXT_RULE);
+        let src = r#"
+import sqlalchemy
+
+def plain_literal():
+    s = "SELECT 1"
+    return sqlalchemy.text(s)
+
+def plain_inline():
+    return sqlalchemy.text("SELECT 1")
+
+def bare_var(param):
+    # `param` is not a constructed string — not seeded by this rule.
+    return sqlalchemy.text(param)
+
+def numeric(a, b):
+    n = a + b
+    return sqlalchemy.text(n)
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "plain literals / bare variables / numeric sums reaching text(...) must NOT fire, got {findings:?}"
         );
     }
 }

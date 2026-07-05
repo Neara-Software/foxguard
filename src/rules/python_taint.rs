@@ -902,6 +902,50 @@ fn binop_is_concat(node: Node<'_>, source: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// True when `node` is a Python string-CONSTRUCTION expression — the SOURCE
+/// shape for the string-building taint rules (`avoid-sqlalchemy-text`,
+/// `twiml-injection`): the dynamically assembled string is the taint origin.
+///
+/// Recognises:
+///   - an interpolated f-string (`f"...{x}..."`),
+///   - a `+`/`%` binop whose chain contains a string literal
+///     (`"a" + x`, `x % y`), and
+///   - a `"...".format(...)` call on a string-literal receiver.
+///
+/// Requiring a concrete string literal / f-string keeps this FP-safe: a plain
+/// string literal, numeric arithmetic, or a bare variable is NOT a source.
+fn node_is_python_string_construction(node: Node<'_>, source: &str) -> bool {
+    match node.kind() {
+        "string" => python_string_is_fstring(node),
+        "binary_operator" => {
+            binop_is_concat(node, source) && binop_has_string_literal_operand(node, source)
+        }
+        "call" => call_is_str_format(node, source),
+        _ => false,
+    }
+}
+
+/// True when `node` is a `"...".format(...)` call — a `.format` method call
+/// whose receiver is a string (or concatenated-string) literal.
+fn call_is_str_format(node: Node<'_>, source: &str) -> bool {
+    let Some(func) = node.child_by_field_name("function") else {
+        return false;
+    };
+    if func.kind() != "attribute" {
+        return false;
+    }
+    let Some(attr) = func.child_by_field_name("attribute") else {
+        return false;
+    };
+    if node_text(attr, source) != "format" {
+        return false;
+    }
+    let Some(obj) = func.child_by_field_name("object") else {
+        return false;
+    };
+    matches!(obj.kind(), "string" | "concatenated_string")
+}
+
 /// True when the `string` node is an f-string (carries an `interpolation`).
 fn python_string_is_fstring(node: Node<'_>) -> bool {
     let mut cursor = node.walk();
@@ -1506,12 +1550,27 @@ fn match_source(
                     return Some(description.clone());
                 }
             }
+            NodeMatcher::BinopFormat { description } => {
+                // String-construction SOURCE (`avoid-sqlalchemy-text`,
+                // `twiml-injection`): a dynamically assembled string is itself
+                // the taint origin. Fires on
+                //   - `"a" + x` / `x % y` : a `+`/`%` binop with a string-literal
+                //     operand,
+                //   - `f"...{x}..."`      : an interpolated f-string,
+                //   - `"...".format(x)`   : a `.format(...)` call on a string
+                //     literal.
+                // Requiring a concrete literal / f-string keeps this from seeding
+                // plain numeric arithmetic or non-string values (FP-safe), and
+                // means a plain string literal (`"foo"`) is NOT a source.
+                if node_is_python_string_construction(node, source) {
+                    return Some(description.clone());
+                }
+            }
             NodeMatcher::MethodName { .. }
             | NodeMatcher::CallRegex { .. }
             | NodeMatcher::MethodNameRegex { .. }
             | NodeMatcher::ReceiverCall { .. }
             | NodeMatcher::MemberAssign { .. }
-            | NodeMatcher::BinopFormat { .. }
             | NodeMatcher::ObjectLiteralValue { .. }
             | NodeMatcher::ReturnValue { .. }
             // Java-only typed-metavariable source; Python has no declared-type
@@ -1519,8 +1578,7 @@ fn match_source(
             | NodeMatcher::TypedName { .. }
             // Java-only typed-assignment sink; no-op in source position here.
             | NodeMatcher::TypedAssignTarget { .. } => {
-                // Sink-only matchers; MemberAssign is JS-specific; BinopFormat is
-                // matched on binop/format nodes, not here.
+                // Sink-only matchers; MemberAssign is JS-specific.
             }
         }
     }
