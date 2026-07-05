@@ -5296,9 +5296,14 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
     // `MethodName` / `Call` matcher). A bare `(Type $MV)` with no trailing chain
     // has no expressible sink node shape and is skipped (deferred).
     //
-    // Gated to Java: this parenthesised-type syntax is Java-specific (Go uses a
-    // different `($X : *pkg.Type)` colon form — see COMPATIBILITY.md).
-    if lang == Language::Java {
+    // Gated to Java and C#: this parenthesised-type syntax is shared by both
+    // (Go uses a different `($X : *pkg.Type)` colon form — see COMPATIBILITY.md).
+    // C# expresses `csharp-sqli`'s `pattern-sources` as `(string $X)` ("any
+    // variable of declared type `string` is untrusted"), the exact same shape
+    // as Java's `(HttpServletRequest $REQ)`. The C# engine seeds every
+    // parameter / local of the named declared type (see `csharp_taint.rs`),
+    // staying type-specific (a differently-typed variable is NOT seeded).
+    if lang == Language::Java || lang == Language::CSharp {
         if let Some((type_text, metavar, remainder)) = parse_typed_metavar(pat) {
             let type_seg = type_final_segment(type_text);
             match role {
@@ -12152,6 +12157,154 @@ class Handler {
             findings.is_empty(),
             "a differently-typed parameter must not be seeded as a source, got {:?}",
             findings
+        );
+    }
+
+    // ── C# typed-metavariable source `(string $X)` ──────────────────────────
+    //
+    // The direct dual of the Java tests above: C#'s `csharp-sqli` expresses its
+    // `pattern-sources` as `(string $X)` — the same parenthesised `(Type $VAR)`
+    // syntax Java uses. These exercise the whole
+    // `parse_taint_rule -> compiled() -> check()` path: the source must LOAD as a
+    // type-specific `TypedName`, FIRE when a variable of the named type flows to
+    // a sink, and stay SILENT when the variable is a different type (the
+    // faithfulness requirement — `(string $X)` seeds ONLY `string` variables,
+    // not all parameters).
+
+    /// The `csharp-sqli` source shape `(string $X)` compiles to a type-specific
+    /// `TypedName { type_name: "string" }` (NOT an any-parameter wildcard) and
+    /// fires when a `string`-typed parameter reaches an `ExecuteReader` sink.
+    #[test]
+    fn csharp_typed_metavar_source_loads_and_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: csharp-typed-source
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: "Untrusted string reaches a SQL sink"
+pattern-sources:
+  - pattern: (string $X)
+pattern-sinks:
+  - pattern: $CMD.ExecuteReader(...)
+"#,
+        );
+
+        // The source compiled to a type-specific `TypedName`, not a wildcard.
+        assert!(
+            rule.spec.sources.iter().any(|s| matches!(
+                s,
+                GenericMatcher::TypedName { type_name, .. } if type_name == "string"
+            )),
+            "source should compile to TypedName{{string}}, got {:?}",
+            rule.spec.sources
+        );
+
+        let fire_src = r#"
+class Repo {
+    void M(string q, SqlCommand cmd) {
+        cmd.ExecuteReader(q);
+    }
+}
+"#;
+        let tree = parse_file(fire_src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(fire_src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a `string`-typed parameter reaching ExecuteReader() must fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Type discrimination: the same `(string $X)` rule stays SILENT when the
+    /// variable is a different declared type (`int`) — the source must NOT
+    /// broaden into "seed every parameter".
+    #[test]
+    fn csharp_typed_metavar_source_discriminates_by_type() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: csharp-typed-source
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: "Untrusted string reaches a SQL sink"
+pattern-sources:
+  - pattern: (string $X)
+pattern-sinks:
+  - pattern: $CMD.ExecuteReader(...)
+"#,
+        );
+
+        // Same flow shape, but `q` is an `int`, not a `string`.
+        let miss_src = r#"
+class Repo {
+    void M(int q, SqlCommand cmd) {
+        cmd.ExecuteReader(q);
+    }
+}
+"#;
+        let tree = parse_file(miss_src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(miss_src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a differently-typed (int) variable must not be seeded as a source, got {:?}",
+            findings
+        );
+    }
+
+    /// A `string`-typed LOCAL (`string q = ...;`) is seeded by declared type too,
+    /// mirroring the Java local-seeding path, and a differently-typed local
+    /// (`int n = ...;`) stays silent.
+    #[test]
+    fn csharp_typed_metavar_source_seeds_typed_local() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: csharp-typed-source
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: "Untrusted string reaches a SQL sink"
+pattern-sources:
+  - pattern: (string $X)
+pattern-sinks:
+  - pattern: $CMD.ExecuteReader(...)
+"#,
+        );
+
+        let fire_src = r#"
+class Repo {
+    void M(SqlCommand cmd) {
+        string q = Helper();
+        cmd.ExecuteReader(q);
+    }
+}
+"#;
+        let tree = parse_file(fire_src, Language::CSharp).expect("C# fixture should parse");
+        assert_eq!(
+            rule.check(fire_src, &tree).len(),
+            1,
+            "a `string`-typed local reaching ExecuteReader() must fire"
+        );
+
+        let miss_src = r#"
+class Repo {
+    void M(SqlCommand cmd) {
+        int n = Helper();
+        cmd.ExecuteReader(n);
+    }
+}
+"#;
+        let tree = parse_file(miss_src, Language::CSharp).expect("C# fixture should parse");
+        assert!(
+            rule.check(miss_src, &tree).is_empty(),
+            "a differently-typed (int) local must not be seeded as a source"
         );
     }
 

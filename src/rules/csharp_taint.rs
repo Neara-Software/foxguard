@@ -524,17 +524,24 @@ fn collect_param_sources(
 ) {
     let mut bare_names: Vec<&str> = Vec::new();
     let mut wildcard = false;
+    let mut has_typed = false;
     for matcher in &spec.sources {
-        if let NodeMatcher::ParamName { names, .. } = matcher {
-            if crate::rules::taint_engine::param_names_are_wildcard(names) {
-                wildcard = true;
+        match matcher {
+            NodeMatcher::ParamName { names, .. } => {
+                if crate::rules::taint_engine::param_names_are_wildcard(names) {
+                    wildcard = true;
+                }
+                for name in names {
+                    bare_names.push(name.as_str());
+                }
             }
-            for name in names {
-                bare_names.push(name.as_str());
-            }
+            NodeMatcher::TypedName { .. } => has_typed = true,
+            _ => {}
         }
     }
-    if bare_names.is_empty() && !wildcard {
+    // Nothing to seed by name/type — skip the parameter walk. Typed sources
+    // (`(string $X)`) keep the walk alive so declared-type matching can run.
+    if bare_names.is_empty() && !wildcard && !has_typed {
         return;
     }
 
@@ -543,7 +550,22 @@ fn collect_param_sources(
             continue;
         };
         let name = node_text(name_node, source);
-        if wildcard || bare_names.contains(&name) {
+
+        // Typed-metavariable source `(string $X)`: seed the parameter when its
+        // DECLARED TYPE matches (by final `.`-segment), regardless of name. This
+        // stays type-specific — a differently-typed parameter is NOT seeded.
+        if let Some(description) =
+            csharp_parameter_type(param, source).and_then(|ty| typed_source_description(spec, ty))
+        {
+            state.taint(
+                name.to_string(),
+                TaintInfo {
+                    description,
+                    line: param.start_position().row + 1,
+                    hops: 0,
+                },
+            );
+        } else if wildcard || bare_names.contains(&name) {
             state.taint(
                 name.to_string(),
                 TaintInfo {
@@ -576,7 +598,26 @@ fn propagate_assignments(scope: Node<'_>, source: &str, spec: &TaintSpec, state:
             if let Some(value) = variable_declarator_value(node) {
                 match expression_taint(value, src, spec, state) {
                     Some(info) => state.taint(name, bump_hops(info)),
-                    None => state.clear(&name),
+                    None => {
+                        // Typed-metavariable source `(string $X)` applied to a
+                        // local: `string q = ...;` seeds `q` by its DECLARED TYPE
+                        // even when the initializer is not itself tainted.
+                        // Re-applied every propagation pass, so it survives the
+                        // clean-reassignment clear above.
+                        match csharp_local_declarator_type(node, src)
+                            .and_then(|ty| typed_source_description(spec, ty))
+                        {
+                            Some(description) => state.taint(
+                                name,
+                                TaintInfo {
+                                    description,
+                                    line: node.start_position().row + 1,
+                                    hops: 0,
+                                },
+                            ),
+                            None => state.clear(&name),
+                        }
+                    }
                 }
             }
         }
@@ -856,10 +897,17 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 // Sink-only; carried for spec completeness but the C# engine
                 // does not match it as a source.
             }
-            NodeMatcher::TypedName { .. } | NodeMatcher::TypedAssignTarget { .. } => {
-                // Java-only typed-metavariable source / typed-assignment sink;
-                // the C# engine has no declared-type seeding, so it is a no-op
-                // here.
+            NodeMatcher::TypedName { .. } => {
+                // Typed-metavariable source `(string $X)` — NOT matched here as
+                // an *expression* source. It is seeded by declared type onto
+                // parameters (`collect_param_sources`) and locals
+                // (`propagate_assignments`); once a variable of the named type is
+                // in the taint state, its bare-identifier reads resolve through
+                // `state.info(...)` at the top of `expression_taint`.
+            }
+            NodeMatcher::TypedAssignTarget { .. } => {
+                // Java-only typed-assignment sink; a sink-only matcher, never a
+                // source, and the C# engine does not match it (no-op).
             }
             NodeMatcher::LiteralString { .. } => {
                 // Ellipsis-string source `"..."`; no C# registry rule uses this
@@ -1181,6 +1229,63 @@ fn taint_finding_for_node(
 
 fn node_text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
     &source[node.byte_range()]
+}
+
+/// The declared type text of a `parameter` node, e.g. `string`, `SqlCommand`,
+/// `System.Data.SqlClient.SqlCommand`, `List<string>`.
+fn csharp_parameter_type<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
+    node.child_by_field_name("type")
+        .map(|ty| node_text(ty, source))
+}
+
+/// The declared type text of the `variable_declaration` that owns a
+/// `variable_declarator`, or `None` when the declarator has no typed parent.
+/// Used to seed typed-metavariable sources on locals: `string q = ...;`.
+///
+/// A `var`-declared local (`var q = ...;`) has an inferred type node whose text
+/// is the literal `"var"`, which never matches a real type name, so implicit
+/// locals are correctly left unseeded by type (they still pick up taint through
+/// the initializer's own `expression_taint`).
+fn csharp_local_declarator_type<'a>(declarator: Node<'a>, source: &'a str) -> Option<&'a str> {
+    let parent = declarator.parent()?;
+    if parent.kind() != "variable_declaration" {
+        return None;
+    }
+    parent
+        .child_by_field_name("type")
+        .map(|ty| node_text(ty, source))
+}
+
+/// If `decl_type` matches a `TypedName` source in `spec` (by final `.`-segment,
+/// so both `SqlCommand` and `System.Data.SqlClient.SqlCommand` match
+/// `SqlCommand`), return that source's description.
+fn typed_source_description(spec: &TaintSpec, decl_type: &str) -> Option<String> {
+    let seg = csharp_type_final_segment(decl_type);
+    spec.sources.iter().find_map(|matcher| match matcher {
+        NodeMatcher::TypedName {
+            type_name,
+            description,
+        } if type_name == seg => Some(description.clone()),
+        _ => None,
+    })
+}
+
+/// The final `.`-segment of a declared type, with array/generic suffixes
+/// stripped: `System.Data.SqlClient.SqlCommand` and `SqlCommand` both yield
+/// `SqlCommand`; `string[]` yields `string`; `List<string>` yields `List`.
+/// Mirrors `type_final_segment` in the Semgrep bridge so both sides of the
+/// comparison normalize identically.
+fn csharp_type_final_segment(type_text: &str) -> &str {
+    let mut base = type_text.trim();
+    if base.ends_with('>') {
+        if let Some(lt) = base.find('<') {
+            base = base[..lt].trim_end();
+        }
+    }
+    while let Some(stripped) = base.strip_suffix("[]") {
+        base = stripped.trim_end();
+    }
+    base.rsplit('.').next().unwrap_or(base).trim()
 }
 
 // ─── Cross-file (interprocedural across files) taint ─────────────────────
