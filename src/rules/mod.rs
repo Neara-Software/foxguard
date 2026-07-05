@@ -875,7 +875,6 @@ impl RuleRegistry {
         Ok(warnings)
     }
 
-    #[allow(dead_code)]
     pub fn all_rules(&self) -> &[Box<dyn Rule>] {
         &self.rules
     }

@@ -382,7 +382,6 @@ pub struct SemgrepRule {
 // boxing the whole enum would require pervasive indirection. Suppress the lint
 // here — the enum is only heap-allocated as part of a `SemgrepRule` or another
 // `PatternMatcher` arm, so no stack-smashing risk.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum PatternMatcher {
     /// Single pattern

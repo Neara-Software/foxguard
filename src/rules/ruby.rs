@@ -1282,7 +1282,6 @@ mod tests {
         parser.parse(source, None).unwrap()
     }
 
-    #[allow(dead_code)]
     fn dump_tree(node: tree_sitter::Node, src: &str, depth: usize) {
         let indent = "  ".repeat(depth);
         let text = &src[node.byte_range()];

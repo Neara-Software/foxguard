@@ -74,7 +74,6 @@ pub mod deadlines {
     /// Source: NSA CNSA 2.0 FAQ (Dec 2024, v2.1), transition-timeline table:
     /// *"Operating systems: Support and prefer by 2027; exclusive use by
     /// 2033."*
-    #[allow(dead_code)]
     pub const OPERATING_SYSTEMS: &str = "2033";
 
     /// Niche / legacy / custom applications — exclusive use by end of 2033.
@@ -84,12 +83,10 @@ pub mod deadlines {
     /// 2033."* These systems are given the longest runway but must still
     /// complete migration before the NSS-wide 2035 outer limit from
     /// NSM-10.
-    #[allow(dead_code)]
     pub const NICHE_LEGACY: &str = "2033";
 
     /// NSS-wide outer limit from NSM-10. Used as a fallback when a rule
     /// declares CNSA relevance but no more specific class can be assigned.
-    #[allow(dead_code)]
     pub const NSS_WIDE_OUTER_LIMIT: &str = "2035";
 }
 
