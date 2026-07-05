@@ -321,6 +321,19 @@ enum GenericMatcher {
         arg_index: usize,
         description: String,
     },
+
+    /// Seed the enclosing method's FIRST parameter as a taint source — the C#
+    /// signature source `$T $M($INPUT,...) {...}`. See
+    /// [`crate::rules::taint_engine::NodeMatcher::FirstParamSource`]. Compiled
+    /// solely for the C# engine; other engines carry it but no-op it.
+    FirstParamSource { description: String },
+
+    /// Match a call to `method(...)` one of whose arguments is a string
+    /// concatenation (`+`) carrying tainted data — the C# xpath-injection sink
+    /// `$NAV.Compile("..." + $INPUT + "...")`. See
+    /// [`crate::rules::taint_engine::NodeMatcher::CallArgConcat`]. Compiled solely
+    /// for the C# engine; other engines carry it but no-op it.
+    CallArgConcat { method: String, description: String },
 }
 
 #[derive(Clone, Debug)]
@@ -513,6 +526,18 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             arg_index: *arg_index,
             description: description.clone(),
         },
+        GenericMatcher::FirstParamSource { description } => {
+            python_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => python_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -649,6 +674,18 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
             arg_index: *arg_index,
             description: description.clone(),
         },
+        GenericMatcher::FirstParamSource { description } => {
+            javascript_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => javascript_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -776,6 +813,18 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
             arg_index: *arg_index,
             description: description.clone(),
         },
+        GenericMatcher::FirstParamSource { description } => {
+            go_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => go_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -901,6 +950,18 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
         } => java_taint::NodeMatcher::CallArgSource {
             method: method.clone(),
             arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::FirstParamSource { description } => {
+            java_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => java_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -1037,6 +1098,18 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             arg_index: *arg_index,
             description: description.clone(),
         },
+        GenericMatcher::FirstParamSource { description } => {
+            c_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => c_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1164,6 +1237,18 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
             arg_index: *arg_index,
             description: description.clone(),
         },
+        GenericMatcher::FirstParamSource { description } => {
+            kotlin_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => kotlin_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1289,6 +1374,18 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
         } => ruby_taint::NodeMatcher::CallArgSource {
             method: method.clone(),
             arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::FirstParamSource { description } => {
+            ruby_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => ruby_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -1427,6 +1524,18 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
             arg_index: *arg_index,
             description: description.clone(),
         },
+        GenericMatcher::FirstParamSource { description } => {
+            csharp_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => csharp_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1550,6 +1659,18 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
         } => bash_taint::NodeMatcher::CallArgSource {
             method: method.clone(),
             arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::FirstParamSource { description } => {
+            bash_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => bash_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -1686,6 +1807,18 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
             arg_index: *arg_index,
             description: description.clone(),
         },
+        GenericMatcher::FirstParamSource { description } => {
+            solidity_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => solidity_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1809,6 +1942,18 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
         } => scala_taint::NodeMatcher::CallArgSource {
             method: method.clone(),
             arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::FirstParamSource { description } => {
+            scala_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => scala_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -1936,6 +2081,18 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
             arg_index: *arg_index,
             description: description.clone(),
         },
+        GenericMatcher::FirstParamSource { description } => {
+            apex_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => apex_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2061,6 +2218,18 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
             arg_index: *arg_index,
             description: description.clone(),
         },
+        GenericMatcher::FirstParamSource { description } => {
+            swift_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => swift_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2177,6 +2346,18 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
         } => php_taint::NodeMatcher::CallArgSource {
             method: method.clone(),
             arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::FirstParamSource { description } => {
+            php_taint::NodeMatcher::FirstParamSource {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::CallArgConcat {
+            method,
+            description,
+        } => php_taint::NodeMatcher::CallArgConcat {
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -5967,6 +6148,110 @@ fn is_function_signature_source(pat: &str) -> bool {
     pat.contains('(') && pat.contains('$')
 }
 
+/// Which C# method-signature taint-source shape [`parse_csharp_signature_source`]
+/// recognised.
+enum CsharpSignatureSource {
+    /// `$T $M($INPUT,...) {...}` — the method's FIRST parameter is the source.
+    FirstParam,
+    /// `$T $M(...) { ... string $INPUT; ... }` — a local `string` declaration in
+    /// the body is the source.
+    LocalString,
+}
+
+/// Recognise the two C# `xpath-injection` method-signature taint SOURCE shapes:
+///
+/// - `$T $M($INPUT,...) {...}` → [`CsharpSignatureSource::FirstParam`]: a
+///   `$T $M` head, a parameter list whose FIRST token is a metavariable, and a
+///   `{...}` body.
+/// - `$T $M(...) { ... string $INPUT; ... }` → [`CsharpSignatureSource::LocalString`]:
+///   a `$T $M` head, an ellipsis-only (`...`) parameter list, and a body that
+///   declares a `string $VAR;` local.
+///
+/// Returns `None` for anything else (only C#'s `xpath-injection` uses these
+/// shapes, so the recogniser is deliberately narrow).
+fn parse_csharp_signature_source(pat: &str) -> Option<CsharpSignatureSource> {
+    let p = pat.trim();
+    // A `$T $M(...)` signature: two leading metavariables then a param list.
+    if !p.starts_with('$') {
+        return None;
+    }
+    let open = p.find('(')?;
+    // The head (`$T $M`) must be exactly two whitespace-separated metavariables.
+    let head_parts: Vec<&str> = p[..open].split_whitespace().collect();
+    if head_parts.len() != 2 || !head_parts.iter().all(|t| is_metavariable(t)) {
+        return None;
+    }
+    // Parameter list is the span up to the FIRST `)` (params carry no nested
+    // parens in these shapes).
+    let close_rel = p[open..].find(')')?;
+    let params = p[open + 1..open + close_rel].trim();
+    // After the `)` there must be a `{...}` body block.
+    let rest = p[open + close_rel + 1..].trim();
+    if !rest.starts_with('{') {
+        return None;
+    }
+    // Shape 1: first parameter is a metavariable → seed the first parameter.
+    if params.starts_with('$') {
+        return Some(CsharpSignatureSource::FirstParam);
+    }
+    // Shape 2: `(...)` param list + a `string $VAR;` local in the body.
+    if params == "..." && body_declares_string_local(rest) {
+        return Some(CsharpSignatureSource::LocalString);
+    }
+    None
+}
+
+/// True when a C# method body text declares a `string $VAR;` local — a `string `
+/// keyword immediately followed by a metavariable and (eventually) a `;`.
+fn body_declares_string_local(body: &str) -> bool {
+    let mut rest = body;
+    while let Some(idx) = rest.find("string") {
+        let after = &rest[idx + "string".len()..];
+        // Require a word boundary after the keyword and a metavariable next.
+        let trimmed = after.trim_start();
+        if after.len() != trimmed.len() && trimmed.starts_with('$') && after.contains(';') {
+            return true;
+        }
+        rest = &rest[idx + "string".len()..];
+    }
+    false
+}
+
+/// Recognise the C# `xpath-injection` concat-in-call SINK shape
+/// `<Type|var> $EXPR = $NAV.Method("..." + $INPUT + "...");` and return the
+/// method name (`Compile` / `Select` / `Evaluate`).
+///
+/// The RHS of the declaration/assignment must be a call `$RECV.METHOD(ARG)` on a
+/// metavariable receiver whose argument `ARG` is a string CONCATENATION carrying
+/// a metavariable (`"..." + $INPUT + "..."`). The concatenation is required (the
+/// engine enforces it at match time too), so a direct `$NAV.Method($INPUT)` is
+/// NOT recognised as this sink. Returns `None` for any other shape.
+fn parse_csharp_concat_call_sink(pat: &str) -> Option<String> {
+    let p = pat.trim().trim_end_matches(';').trim_end();
+    // Split on the declaration/assignment `=` (`Type $EXPR = ...`).
+    let eq = find_single_assignment(p)?;
+    let rhs = p[eq + 1..].trim();
+    // RHS must be a call on a metavariable receiver: `$RECV.METHOD(...)`.
+    if !rhs.starts_with('$') || !rhs.ends_with(')') {
+        return None;
+    }
+    let open = rhs.find('(')?;
+    let callee = rhs[..open].trim();
+    let dot = callee.rfind('.')?;
+    let recv = callee[..dot].trim();
+    let method = callee[dot + 1..].trim();
+    if !is_metavariable(recv) || !is_identifier(method) {
+        return None;
+    }
+    let args = rhs[open + 1..rhs.len() - 1].trim();
+    // Faithful: the argument must be a string concatenation carrying a
+    // metavariable — a `+`, a quoted literal, and a `$` metavariable operand.
+    if args.contains('+') && args.contains('"') && args.contains('$') {
+        return Some(method.to_string());
+    }
+    None
+}
+
 /// True when `pat` is a Swift "string built dynamically" source pattern:
 ///
 /// - an interpolated string literal `"...\($X)..."` (contains `\(` and `$`);
@@ -6203,6 +6488,57 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
                     }
                     let rewritten = format!("{metavar}{rem}");
                     return compile_pattern(&rewritten, role, lang);
+                }
+            }
+        }
+    }
+
+    // ── C# method-signature SOURCE + concat-in-call SINK (xpath-injection) ───
+    //
+    // The C# `xpath-injection` rule expresses BOTH its sources and its sink in
+    // shapes no generic recognizer handles:
+    //
+    //   pattern-sources:
+    //     - $T $M($INPUT,...) {...}          # the method's FIRST param is a source
+    //     - $T $M(...) { ... string $INPUT; } # a local `string` decl is a source
+    //   pattern-sinks:
+    //     - <Type|var> $EXPR = $NAV.Compile("..." + $INPUT + "...");   (also
+    //       .Select / .Evaluate)
+    //
+    // SOURCE: the first-parameter signature compiles to
+    // [`GenericMatcher::FirstParamSource`] (seed only the first parameter). The
+    // local-`string` signature compiles to the SAME typed-string source
+    // (`TypedName { "string" }`) that `csharp-sqli`'s `(string $X)` already uses —
+    // "a `string` variable is untrusted" — a precedented, type-specific seeding.
+    //
+    // SINK: `$NAV.Method("..." + $INPUT + "...")` compiles to
+    // [`GenericMatcher::CallArgConcat`], keyed by the method name. The engine
+    // fires only when the method matches AND a `+`-concatenation argument carries
+    // taint — a direct `nav.Compile(input)` (no concat) is NOT a match, so the
+    // broad first-parameter source stays precise at the sink. Gated to C#.
+    if lang == Language::CSharp {
+        match role {
+            MatcherRole::Source => {
+                if let Some(kind) = parse_csharp_signature_source(pat) {
+                    return Some(match kind {
+                        CsharpSignatureSource::FirstParam => GenericMatcher::FirstParamSource {
+                            description: "method's first parameter (untrusted input)".to_string(),
+                        },
+                        CsharpSignatureSource::LocalString => GenericMatcher::TypedName {
+                            type_name: "string".to_string(),
+                            description: "local `string` variable (untrusted input)".to_string(),
+                        },
+                    });
+                }
+            }
+            MatcherRole::Sink | MatcherRole::Sanitizer => {
+                if let Some(method) = parse_csharp_concat_call_sink(pat) {
+                    let description =
+                        format!("XPath query built by concatenation into `.{method}(...)`");
+                    return Some(GenericMatcher::CallArgConcat {
+                        method,
+                        description,
+                    });
                 }
             }
         }
@@ -13367,6 +13703,169 @@ class C {
         assert!(
             findings.is_empty(),
             "an unfilled buffer must not be a source, got {:?}",
+            findings
+        );
+    }
+
+    // ── C# xpath-injection: signature SOURCE + concat-in-call SINK ───────────
+    //
+    // The whole `parse_taint_rule -> compiled() -> check()` path for the C#
+    // `xpath-injection` rule: a method's FIRST parameter (or a local `string`)
+    // reaching a `.Compile/.Select/.Evaluate("..." + $INPUT + "...")` CONCAT
+    // sink fires; a literal argument, a no-input call, and a DIRECT tainted
+    // argument with no concatenation all stay silent.
+
+    /// The verbatim registry `xpath-injection` rule (both source shapes, all six
+    /// sink alternatives).
+    fn xpath_injection_rule() -> SemgrepTaintRule {
+        compiled(
+            "
+id: xpath-injection
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: XPath injection
+pattern-sources:
+  - pattern-either:
+    - pattern: $T $M($INPUT,...) {...}
+    - pattern: \"$T $M(...) {\\n  ...\\n  string $INPUT;\\n}\\n\"
+pattern-sinks:
+  - pattern-either:
+    - pattern: XPathExpression $EXPR = $NAV.Compile(\"...\" + $INPUT + \"...\");
+    - pattern: var $EXPR = $NAV.Compile(\"...\" + $INPUT + \"...\");
+    - pattern: XPathNodeIterator $NODE = $NAV.Select(\"...\" + $INPUT + \"...\");
+    - pattern: var $NODE = $NAV.Select(\"...\" + $INPUT + \"...\");
+    - pattern: Object $OBJ = $NAV.Evaluate(\"...\" + $INPUT + \"...\");
+    - pattern: var $OBJ = $NAV.Evaluate(\"...\" + $INPUT + \"...\");
+",
+        )
+    }
+
+    /// GATE 1 — the rule COMPILES to the intended matchers: a first-parameter
+    /// signature source, a typed-`string` local source, and concat-in-call sinks
+    /// for `Compile` / `Select` / `Evaluate`.
+    #[test]
+    fn csharp_xpath_injection_compiles_to_intended_shapes() {
+        let rule = xpath_injection_rule();
+
+        assert!(
+            rule.spec
+                .sources
+                .iter()
+                .any(|s| matches!(s, GenericMatcher::FirstParamSource { .. })),
+            "pattern 1 must compile to FirstParamSource, got {:?}",
+            rule.spec.sources
+        );
+        assert!(
+            rule.spec.sources.iter().any(|s| matches!(
+                s,
+                GenericMatcher::TypedName { type_name, .. } if type_name == "string"
+            )),
+            "pattern 2 must compile to TypedName{{string}}, got {:?}",
+            rule.spec.sources
+        );
+        for method in ["Compile", "Select", "Evaluate"] {
+            assert!(
+                rule.spec.sinks.iter().any(|s| matches!(
+                    s,
+                    GenericMatcher::CallArgConcat { method: m, .. } if m == method
+                )),
+                "sink for `.{method}(...)` must compile to CallArgConcat, got {:?}",
+                rule.spec.sinks
+            );
+        }
+    }
+
+    /// GATE 2 — FIRES on the positive fixture: the `Search(string input)` first
+    /// parameter reaches `nav.Compile("..." + input + "...")`.
+    #[test]
+    fn csharp_xpath_injection_fires_on_concat_of_first_param() {
+        use crate::engine::parser::parse_file;
+        let rule = xpath_injection_rule();
+        let src = r#"
+class Repo {
+    public List<Knowledge> Search(string input) {
+        XPathNavigator nav = XmlDoc.CreateNavigator();
+        XPathExpression expr = nav.Compile(@"//knowledge[tags[contains(text(),'" + input + "')] and sensitivity/text() ='Public']");
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "first-parameter taint reaching a concat .Compile() must fire, got {:?}",
+            findings
+        );
+    }
+
+    /// GATE 3 — SILENT on the negative method in the same fixture: the argument
+    /// is a plain literal (`'keyword'`), so no taint reaches the concat sink.
+    #[test]
+    fn csharp_xpath_injection_silent_on_literal_arg() {
+        use crate::engine::parser::parse_file;
+        let rule = xpath_injection_rule();
+        let src = r#"
+class Repo {
+    public List<Knowledge> Search(string input) {
+        XPathNavigator nav = XmlDoc.CreateNavigator();
+        XPathExpression expr = nav.Compile(@"//knowledge[tags[contains(text(),'keyword')] and sensitivity/text() ='Public']");
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a plain-literal .Compile() argument must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// GATE 4 — SILENT on a direct-literal call with no user input at all.
+    #[test]
+    fn csharp_xpath_injection_silent_on_no_input() {
+        use crate::engine::parser::parse_file;
+        let rule = xpath_injection_rule();
+        let src = r#"
+class Repo {
+    void M() {
+        XPathNavigator nav = XmlDoc.CreateNavigator();
+        XPathExpression expr = nav.Compile("//knowledge[1]");
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a no-input literal .Compile() must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// GATE 5 — concat is REQUIRED: a DIRECT tainted argument with no
+    /// concatenation (`nav.Compile(input)`) does NOT match, even though `input`
+    /// is a seeded first-parameter source. This is the faithfulness anchor — the
+    /// Semgrep pattern is `"..." + $INPUT + "..."` (a concat), not a bare arg.
+    #[test]
+    fn csharp_xpath_injection_silent_on_direct_tainted_no_concat() {
+        use crate::engine::parser::parse_file;
+        let rule = xpath_injection_rule();
+        let src = r#"
+class Repo {
+    void Search(string input) {
+        XPathNavigator nav = XmlDoc.CreateNavigator();
+        XPathExpression expr = nav.Compile(input);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a direct tainted argument with no concatenation must not fire, got {:?}",
             findings
         );
     }

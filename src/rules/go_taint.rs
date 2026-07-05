@@ -1698,7 +1698,11 @@ fn match_source(
             | NodeMatcher::TaintedSubscriptKey { .. }
             // Focus-on-call-argument source is seeded only by the C# engine;
             // no-op in source position here.
-            | NodeMatcher::CallArgSource { .. } => {
+            | NodeMatcher::CallArgSource { .. }
+            // First-parameter signature source / concat-in-call sink are
+            // C#-only; carried in the spec but no-op here.
+            | NodeMatcher::FirstParamSource { .. }
+            | NodeMatcher::CallArgConcat { .. } => {
                 // Sink-only matcher; MemberAssign is JS-specific; BinopFormat is
                 // matched on binary-expression nodes, not as a source.
             }
