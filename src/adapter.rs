@@ -428,6 +428,7 @@ fn scan_args(request: &AdapterRequest, path: String, pq_mode: bool) -> ScanArgs 
         codeql_db: None,
         no_builtins: request.no_builtins,
         changes: change_mode_args(request.change_mode),
+        changed_files_from: None,
         exclude: request.exclude.clone(),
         baseline: resolve_optional_workspace_path(
             request.baseline.as_deref(),

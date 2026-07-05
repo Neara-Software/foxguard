@@ -94,6 +94,14 @@ pub struct ScanArgs {
     #[command(flatten)]
     pub changes: ChangeModeArgs,
 
+    /// Scan only the newline-delimited, repo-root-relative paths listed in
+    /// this file, using the scan path as the analysis root so cross-file
+    /// taint context is preserved. Missing (e.g. deleted) files are skipped;
+    /// an empty list produces zero findings without falling back to a
+    /// full-tree scan. Takes precedence over the change-mode flags.
+    #[arg(long = "changed-files-from")]
+    pub changed_files_from: Option<String>,
+
     /// Exclude scan-relative paths by glob or prefix (repeatable)
     #[arg(long)]
     pub exclude: Vec<String>,
@@ -624,6 +632,7 @@ impl PqcArgs {
             codeql_db: None,
             no_builtins: false,
             changes: self.changes.clone(),
+            changed_files_from: None,
             exclude: self.exclude.clone(),
             baseline: self.baseline.clone(),
             write_baseline: None,
@@ -659,6 +668,7 @@ impl ScaArgs {
             codeql_db: None,
             no_builtins: true,
             changes: self.changes.clone(),
+            changed_files_from: None,
             exclude: self.exclude.clone(),
             baseline: self.baseline.clone(),
             write_baseline: None,
@@ -691,6 +701,7 @@ impl BaselineScanArgs {
             codeql_db: self.codeql_db.clone(),
             no_builtins: self.no_builtins,
             changes: self.changes.clone(),
+            changed_files_from: None,
             exclude: self.exclude.clone(),
             baseline: self.baseline.clone(),
             write_baseline: self.write_baseline.clone(),

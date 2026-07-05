@@ -444,6 +444,7 @@ fn scan_args(arguments: &Value, pq_mode: bool) -> Result<ScanArgs, String> {
         codeql_db: optional_string(arguments, "codeql_db")?,
         no_builtins: optional_bool(arguments, "no_builtins")?,
         changes: change_mode_args(arguments)?,
+        changed_files_from: None,
         exclude: optional_string_array(arguments, "exclude")?,
         baseline: optional_string(arguments, "baseline")?,
         write_baseline: None,
