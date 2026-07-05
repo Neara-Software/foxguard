@@ -1506,7 +1506,9 @@ fn match_source(
             | NodeMatcher::ReturnValue { .. }
             // Java-only typed-metavariable source; Python has no declared-type
             // seeding, so it is a no-op here.
-            | NodeMatcher::TypedName { .. } => {
+            | NodeMatcher::TypedName { .. }
+            // Java-only typed-assignment sink; no-op in source position here.
+            | NodeMatcher::TypedAssignTarget { .. } => {
                 // Sink-only matchers; MemberAssign is JS-specific; BinopFormat is
                 // matched on binop/format nodes, not here.
             }

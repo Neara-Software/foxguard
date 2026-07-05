@@ -1452,7 +1452,9 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             | NodeMatcher::ReturnValue { .. }
             // Java-only typed-metavariable source; PHP has no declared-type
             // seeding, so it is a no-op here.
-            | NodeMatcher::TypedName { .. } => {
+            | NodeMatcher::TypedName { .. }
+            // Java-only typed-assignment sink; no-op in source position here.
+            | NodeMatcher::TypedAssignTarget { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the PHP engine (no-op).
             }

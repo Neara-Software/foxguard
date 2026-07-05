@@ -182,6 +182,31 @@ pub enum NodeMatcher {
         type_name: String,
         description: String,
     },
+
+    /// Match an ASSIGNMENT or DECLARATION SINK whose left-hand side is a
+    /// variable of declared type whose final `.`-segment equals `type_name`
+    /// AND whose right-hand side carries taint — the Semgrep "typed
+    /// assignment" sink `(java.io.File $FILE) = ...` ("a tainted value
+    /// assigned into a variable of type `File` is the sink", e.g. building a
+    /// `File` from an untrusted path is a path-traversal sink).
+    ///
+    /// This is the SINK-position dual of [`NodeMatcher::TypedName`]: rather
+    /// than seeding a typed variable as a source, it fires when a tainted RHS
+    /// is written into a typed LHS. Faithfulness (the whole point): the sink
+    /// fires ONLY when BOTH (a) the assignment target's declared type matches
+    /// `type_name` AND (b) the reaching RHS is tainted — never on a bare
+    /// `x = y`. A literal RHS (`File f = new File("/static")`) and a wrong-type
+    /// LHS (`String s = taintedPath`) are both correctly silent.
+    ///
+    /// The type is matched by its final `.`-segment so both `File` and
+    /// `java.io.File` match. Sink/sanitizer only — a typed write is a
+    /// destination, not a taint origin. Compiled solely for the Java engine
+    /// (`variable_declarator` / `assignment_expression` LHS types); other
+    /// engines carry the matcher in the spec but no-op it.
+    TypedAssignTarget {
+        type_name: String,
+        description: String,
+    },
 }
 
 impl NodeMatcher {
@@ -201,6 +226,7 @@ impl NodeMatcher {
             NodeMatcher::ObjectLiteralValue { description, .. } => description,
             NodeMatcher::ReturnValue { description, .. } => description,
             NodeMatcher::TypedName { description, .. } => description,
+            NodeMatcher::TypedAssignTarget { description, .. } => description,
         }
     }
 }
@@ -1307,6 +1333,12 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
             description,
         } => {
             format!("TN|{type_name}|{description}")
+        }
+        NodeMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => {
+            format!("TAT|{type_name}|{description}")
         }
     }
 }
