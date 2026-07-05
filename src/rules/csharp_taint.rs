@@ -533,6 +533,7 @@ fn collect_param_sources(
     let mut bare_names: Vec<&str> = Vec::new();
     let mut wildcard = false;
     let mut has_typed = false;
+    let mut first_param_desc: Option<&str> = None;
     for matcher in &spec.sources {
         match matcher {
             NodeMatcher::ParamName { names, .. } => {
@@ -544,16 +545,20 @@ fn collect_param_sources(
                 }
             }
             NodeMatcher::TypedName { .. } => has_typed = true,
+            NodeMatcher::FirstParamSource { description } => {
+                first_param_desc = Some(description.as_str());
+            }
             _ => {}
         }
     }
-    // Nothing to seed by name/type — skip the parameter walk. Typed sources
-    // (`(string $X)`) keep the walk alive so declared-type matching can run.
-    if bare_names.is_empty() && !wildcard && !has_typed {
+    // Nothing to seed by name/type/position — skip the parameter walk. Typed
+    // sources (`(string $X)`) and the first-parameter signature source keep the
+    // walk alive so declared-type / positional matching can run.
+    if bare_names.is_empty() && !wildcard && !has_typed && first_param_desc.is_none() {
         return;
     }
 
-    for param in scope_parameter_nodes(scope_node) {
+    for (index, param) in scope_parameter_nodes(scope_node).into_iter().enumerate() {
         let Some(name_node) = param.child_by_field_name("name") else {
             continue;
         };
@@ -582,6 +587,19 @@ fn collect_param_sources(
                     hops: 0,
                 },
             );
+        } else if index == 0 {
+            // First-parameter signature source `$T $M($INPUT,...) {...}`: seed
+            // ONLY the first parameter (index 0), NOT every parameter.
+            if let Some(description) = first_param_desc {
+                state.taint(
+                    name.to_string(),
+                    TaintInfo {
+                        description: description.to_string(),
+                        line: param.start_position().row + 1,
+                        hops: 0,
+                    },
+                );
+            }
         }
     }
 }
@@ -761,6 +779,25 @@ fn find_sinks(
         if !is_call && !is_new {
             return;
         }
+
+        // Concat-in-call sinks (`CallArgConcat`) are enforced first: the call's
+        // final method name must match AND a `+`-concatenation argument must
+        // carry taint. A direct tainted argument (no concat) is NOT a match.
+        for matcher in &spec.sinks {
+            if let NodeMatcher::CallArgConcat {
+                method,
+                description,
+            } = matcher
+            {
+                if call_final_method_is(node, src, method) {
+                    if let Some(info) = concat_arg_taint(node, src, spec, state) {
+                        out.push(taint_finding_for_node(node, info, description.clone()));
+                        return;
+                    }
+                }
+            }
+        }
+
         let Some(sink_desc) = match_sink(node, src, spec) else {
             return;
         };
@@ -768,6 +805,61 @@ fn find_sinks(
             out.push(taint_finding_for_node(node, info, sink_desc));
         }
     });
+}
+
+/// True when `node` is an `invocation_expression` whose final method-name
+/// segment equals `method` (e.g. `nav.Compile(...)` → `Compile`).
+fn call_final_method_is(node: Node<'_>, source: &str, method: &str) -> bool {
+    if node.kind() != "invocation_expression" {
+        return false;
+    }
+    node.child_by_field_name("function")
+        .and_then(|func| final_name_segment(func, source))
+        .is_some_and(|name| name == method)
+}
+
+/// Taint carried by a `+`-concatenation ARGUMENT of a call — the enforcement
+/// half of a [`NodeMatcher::CallArgConcat`] sink. Returns the taint of the first
+/// argument that is a string concatenation (`"..." + tainted + "..."`) AND
+/// carries taint; a bare tainted argument (`nav.Compile(input)`) is skipped, so
+/// the concatenation requirement holds.
+fn concat_arg_taint(
+    node: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
+    state: &TaintState,
+) -> Option<TaintInfo> {
+    let args = call_arguments(node)?;
+    let mut cursor = args.walk();
+    for child in args.children(&mut cursor) {
+        if child.kind() != "argument" {
+            continue;
+        }
+        let mut acursor = child.walk();
+        for expr in child.children(&mut acursor) {
+            if !expr.is_named() {
+                continue;
+            }
+            if is_string_concat(expr, source) {
+                if let Some(info) = expression_taint(expr, source, spec, state) {
+                    return Some(info);
+                }
+            }
+            // Only the argument's single expression is inspected.
+            break;
+        }
+    }
+    None
+}
+
+/// True when `node` is a `binary_expression` whose operator is `+` — a string
+/// concatenation `left + right` (as opposed to a comparison / logical binop).
+fn is_string_concat(node: Node<'_>, source: &str) -> bool {
+    if node.kind() != "binary_expression" {
+        return false;
+    }
+    node.child_by_field_name("operator")
+        .is_some_and(|op| node_text(op, source) == "+")
 }
 
 // ─── Expression taint ────────────────────────────────────────────────────────
@@ -1037,6 +1129,17 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 // resolve through `state.info(...)` at the top of
                 // `expression_taint` (no-op here).
             }
+            NodeMatcher::FirstParamSource { .. } => {
+                // First-parameter signature source `$T $M($INPUT,...) {...}` —
+                // NOT matched here as an *expression* source. It is seeded onto
+                // the first parameter's identifier by `collect_param_sources`;
+                // its bare-identifier reads then resolve through `state.info(...)`
+                // at the top of `expression_taint` (no-op here).
+            }
+            NodeMatcher::CallArgConcat { .. } => {
+                // Concat-in-call sink — sink-only, enforced in `find_sinks`;
+                // never a source (no-op here).
+            }
         }
     }
     None
@@ -1151,6 +1254,12 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         // Focus-on-call-argument source — seeded by `seed_call_arg_sources`,
         // never matched as a call sink/sanitizer.
         | NodeMatcher::CallArgSource { .. }
+        // First-parameter signature source — seeded by `collect_param_sources`,
+        // never matched as a call sink/sanitizer.
+        | NodeMatcher::FirstParamSource { .. }
+        // Concat-in-call sink — enforced directly in `find_sinks`, not through
+        // the generic call-matcher path.
+        | NodeMatcher::CallArgConcat { .. }
         // Ellipsis-string source `"..."` — not a call matcher.
         | NodeMatcher::LiteralString { .. } => false,
     }

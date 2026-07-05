@@ -338,6 +338,37 @@ pub enum NodeMatcher {
         arg_index: usize,
         description: String,
     },
+
+    /// Seed the enclosing method's FIRST parameter as a taint SOURCE — the
+    /// Semgrep C# signature source `$T $M($INPUT,...) {...}` ("a method's first
+    /// parameter is untrusted"; the metavariable `$INPUT` binds the first
+    /// parameter, `...` the rest). This is a *signature* source with NO focus
+    /// metavariable: it is deliberately broad (every method's first parameter),
+    /// and the rule relies on a SPECIFIC sink (see [`NodeMatcher::CallArgConcat`])
+    /// to stay precise.
+    ///
+    /// Faithfulness: seeds ONLY the first parameter — NOT every parameter (that
+    /// would be the wildcard [`NodeMatcher::ParamName`]) and NOT by declared type
+    /// (that is [`NodeMatcher::TypedName`]). A method's second/third parameters
+    /// are left unseeded. Source only. Seeded by the C# engine; other engines
+    /// carry it in the spec but no-op it (only C# registry rules use this shape).
+    FirstParamSource { description: String },
+
+    /// Match a CALL whose final method-name segment equals `method` AND one of
+    /// whose arguments is a string CONCATENATION (`+`) that carries tainted
+    /// data — the Semgrep C# xpath-injection sink
+    /// `$NAV.Compile("..." + $INPUT + "...")` (and the `.Select` / `.Evaluate`
+    /// variants). The concatenation shape is the precision anchor together with
+    /// the method name: a DIRECT tainted argument with no concatenation
+    /// (`nav.Compile(input)`) does NOT match, so seeding a broad signature source
+    /// does not turn every `.Compile(input)` into a finding.
+    ///
+    /// Faithfulness: fires only when (a) the call's final method name equals
+    /// `method`, and (b) an argument is a `+` binary expression carrying taint.
+    /// A tainted non-concatenated argument, an untainted concatenation, and a
+    /// call to a different method are all silent. Sink/sanitizer only. Matched by
+    /// the C# engine; other engines carry it in the spec but no-op it.
+    CallArgConcat { method: String, description: String },
 }
 
 impl NodeMatcher {
@@ -363,6 +394,8 @@ impl NodeMatcher {
             NodeMatcher::TaintedCallee { description } => description,
             NodeMatcher::TaintedSubscriptKey { description, .. } => description,
             NodeMatcher::CallArgSource { description, .. } => description,
+            NodeMatcher::FirstParamSource { description } => description,
+            NodeMatcher::CallArgConcat { description, .. } => description,
         }
     }
 }
@@ -1565,6 +1598,15 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
             description,
         } => {
             format!("CAS|{method}|{arg_index}|{description}")
+        }
+        NodeMatcher::FirstParamSource { description } => {
+            format!("FPS|{description}")
+        }
+        NodeMatcher::CallArgConcat {
+            method,
+            description,
+        } => {
+            format!("CAC|{method}|{description}")
         }
     }
 }
