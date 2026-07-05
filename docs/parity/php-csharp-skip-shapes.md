@@ -267,16 +267,33 @@ captured multi-statement `pattern-inside` region would over-match badly. **Needs
 a typestate/object-configuration primitive** ("a call on an object previously
 configured unsafely"). Deferred.
 
-### `csharp-sqli` — typed-string source + two regex-pinned sink forms + propagator
+### `csharp-sqli` — typed-string source ✅ + two regex-pinned sink forms ✗ (STILL SKIPPED — sink is the blocker)
 Source is `patterns: [pattern: (string $X), pattern-not: "..."]` — a C# **typed
-metavariable** source ("any non-literal string is tainted"). foxguard's
-`TypedName` typed-source is Java/Go-only; C# has no `(Type $MV)` typed-source
-recognizer. (The sinks — `new $PATTERN($CMD,...)` / `$CMD.$PATTERN = $VALUE` with
-`metavariable-regex $PATTERN = ^(SqlCommand|CommandText|…)$` — and the
-`StringBuilder` propagator are closer to expressible, but the rule can't load
-without the source.) **Needs**: C# `(Type $MV)` typed-metavariable source. Also
-note "every string is tainted" is a very broad source that leans on the sink
-regex + sanitizers to stay precise. Deferred.
+metavariable** source ("any non-literal string is tainted"). The C# `(Type $MV)`
+typed-source recognizer (`TypedName`, C#-gated) **landed 2026-07-05** and the
+source now compiles. **But the rule is still skipped** — the SINK is the real
+blocker (verified via `--list-skips csharp`: "pattern-sinks produced no
+expressible matchers"). The sink is a `pattern-either` of two `patterns:` blocks,
+both gated by `metavariable-regex $PATTERN = ^(SqlCommand|CommandText|OleDbCommand|
+OdbcCommand|OracleCommand)$`:
+- **Block 1** `new $PATTERN($CMD,...)` + `focus: $CMD` — constructor-arg sink at
+  position 0, where the **class name** ∈ the enumerated set. Needs: enumerate the
+  regex alternation to concrete constructor sinks (`new SqlCommand(focus arg 0)`,
+  …). foxguard has `new Type(...)`→`Call{canonical}` (C#-gated, from use_weak_rng)
+  but NOT a focus-on-constructor-arg + class-name-regex-enumeration sink.
+- **Block 2** `$CMD.$PATTERN = $VALUE;` + `focus: $VALUE` — assignment-to-property
+  sink where the **property name** ∈ the enumerated set (`CommandText`). Needs a
+  property-assignment sink primitive (focus on RHS, LHS property name pinned).
+
+**Needs** (sink side): (a) constructor-arg sink with class-name enumeration, and
+(b) property-assignment sink with property-name enumeration — the two focus forms
+enumerated from the shared `metavariable-regex`. Both are the same "focus +
+metavariable-regex either-block" family already used for Python
+dangerous-spawn-process, but on an arg/assignment target rather than the call
+name. The `StringBuilder` propagator (`(StringBuilder $B).$ANY(...,(string $X),...)`)
+also drops. Note "every string is tainted" is a very broad source that leans on
+the sink regex + sanitizers to stay precise — so a faithful sink is essential
+(a loose sink here would over-match badly). **Still deferred; next candidate.**
 
 ---
 
@@ -285,7 +302,9 @@ regex + sanitizers to stay precise. Deferred.
 | Primitive | Unlocks | Notes |
 |---|---|---|
 | ~~Focus-arg-of-call **source**~~ ✅ DONE 2026-07-05 | `use_weak_rng_for_keygeneration` (loaded) | `NodeMatcher::CallArgSource{method,arg_index}`; sink via C#-gated `new Type(...)`→`Call{canonical}` |
-| ~~C# `(Type $MV)` typed-metavariable source~~ ✅ DONE 2026-07-05 | `csharp-sqli` (loaded) | `TypedName`, C#-gated |
+| ~~C# `(Type $MV)` typed-metavariable source~~ ✅ DONE 2026-07-05 | (source primitive only — reused by `xpath-injection`) | `TypedName`, C#-gated. NB: `csharp-sqli` itself is **still skipped** — its sink is the blocker (see below) |
+| ~~Signature-param source + concat-in-call sink~~ ✅ DONE 2026-07-05 | `xpath-injection` (loaded) | `FirstParamSource` + `CallArgConcat{method}`, C#-gated; concat-only enforced at sink |
+| Constructor-arg + property-assignment sinks w/ metavariable-regex enumeration | `csharp-sqli` | source already compiles; sink is the only blocker — `new SqlCommand(focus arg)` / `$cmd.CommandText = focus` enumerated from `^(SqlCommand\|CommandText\|…)$` |
 | Typestate / object-configuration sink | 3 C# XXE rules | "call on an object configured unsafely earlier" |
 | **PHP AST `pattern:`/`pattern-inside` search matching** (prerequisite) | `doctrine-orm`, `laravel-sql-injection`, `laravel-api-route`, `laravel-unsafe-validator` | **The real blocker.** PHP patterns are never wrapped in `<?php` by `prepare_pattern_for_grammar`, so they parse as inline text and match nothing (verified: `pattern: system($x)` → 0 findings on `system($x);`; Python identical → 1). Every sink-side `pattern-inside` post-filter (`contains_range`) is a no-op for PHP, so QueryBuilder scoping is unenforceable. The `->`/`::` lexical gap is trivial by comparison. |
 | Arg-position-aware `CallArgSink{method, arg_index}` sink | `laravel-sql-injection` (also needed) | Sink-side dual of `CallArgSource`. Laravel pins the focus to a specific arg position (`whereRaw($SQL,...)`=0, `find($ID,$COLUMNS)`=1); `MethodName` fires on taint in *any* arg and flags the rule's own `where('name',$tainted)` / `selectRaw(…,[$tainted])` negatives. |
