@@ -29,7 +29,7 @@ The taint engine supports:
 Known limitations:
 
 - **Multi-hop interprocedural chains**: only one level of helper-call propagation is supported. A helper that itself calls another helper is not tracked through the deeper hop.
-- **Cross-file**: Cross-file taint is supported for 8 languages via two-pass function summary analysis — Python (import resolution), JavaScript (require/import/export default), Go (same-package), Java, C#, Ruby, PHP, and Kotlin (the latter five resolve helper calls by name within the same directory, a same-package/same-namespace proxy). C and the remaining first-party taint languages are intra-file today. Python, JavaScript, Go, and Java additionally compose **bounded multi-hop** chains where a cross-file helper itself calls another cross-file helper (`A → f → g → sink`); see "Bounded multi-hop cross-file taint (Python, JavaScript, Go, Java)" below. Python/JS/Go share the engine-agnostic composition driver; Java runs its own name-based composition over the same scanner-side fixpoint. The other cross-file engines (C#, Ruby, PHP, Kotlin) remain single-hop. The name-based cross-file passes (Java/C#/Ruby/PHP/Kotlin) resolve a helper-method call to a summarized method *by method name* within the same directory; they do not model type-based instance dispatch, interface/subclass dispatch, overload selection by parameter type, cross-package/namespace (`import`/`using`) resolution, or partial classes. See "Supported Java frameworks" below.
+- **Cross-file**: Cross-file taint is supported for 8 languages via two-pass function summary analysis — Python (import resolution), JavaScript (require/import/export default), Go (same-package), Java, C#, Ruby, PHP, and Kotlin (the latter five resolve helper calls by name within the same directory, a same-package/same-namespace proxy). C and the remaining first-party taint languages are intra-file today. all eight additionally compose **bounded multi-hop** chains where a cross-file helper itself calls another cross-file helper (`A → f → g → sink`); see "Bounded multi-hop cross-file taint" below. Python/JS/Go/PHP share the engine-agnostic composition driver; Java, C#, Ruby, and Kotlin run their own name-based composition over the same scanner-side fixpoint. The name-based cross-file passes (Java/C#/Ruby/PHP/Kotlin) resolve a helper-method call to a summarized method *by method name* within the same directory; they do not model type-based instance dispatch, interface/subclass dispatch, overload selection by parameter type, cross-package/namespace (`import`/`using`) resolution, or partial classes. See "Supported Java frameworks" below.
 - **Instance and class methods in interprocedural summaries**: only top-level `function_declaration`s and `const/let/var foo = ...` arrow/function-expression helpers are summarized. `obj.method()` and `self.helper()` calls are not looked up in the summary map.
 - **Argument taint propagation**: helper summaries are computed with only their parameters' taint sources seeded (via `ParamName`). Passing an already-tainted local into a helper does not influence the helper's return summary — pass 1 analyzes helpers with a conservative view of their parameters.
 - **Per-finding sanitization**: Semgrep's `mode: taint` distinguishes "this specific flow was sanitized" from "the value is now clean"; it can still fire on secondary flows that bypassed the sanitizer along a different path. foxguard's v1 collapses both cases into "clean" and does not track per-finding sanitization state.
@@ -102,7 +102,7 @@ Scope and limitations:
 - **Name collisions are last-write-wins.** If two functions in the same file share a simple name (e.g. an outer `def helper` and a nested `def helper` inside another function), one summary will overwrite the other during pass 1. This is a known v1 limitation — fix by making summaries scope-aware when it stops being hypothetical.
 - **Argument-based taint is not threaded through helpers.** A helper's summary is computed using only its own parameter sources (`ParamName` matchers); passing an already-tainted local in as an argument does not retroactively taint the helper's return.
 
-## Bounded multi-hop cross-file taint (Python, JavaScript, Go, Java)
+## Bounded multi-hop cross-file taint (Python, JavaScript, Go, Java, C#, Ruby, PHP, Kotlin)
 
 The base cross-file pass ([`FunctionTaintSummary`], `params_to_sink` +
 `params_to_return`) resolves a **single** cross-file hop: a source in file A
@@ -137,17 +137,21 @@ across sibling `.go` files in the directory). The composition machinery
 (`extract_cross_file_summary_for_function_cf`, `merge_from`) is engine-agnostic
 and shared verbatim.
 
-**Java** reaches the same result through its OWN machinery. Java does not use
-the shared `TaintLanguageAdapter` / `extract_cross_file_summary_for_function_cf`
-path; it has a bespoke name-based, same-directory summary extractor
-(`java_taint::extract_cross_file_summaries`). Its
-`java_taint::compose_cross_file_summaries` therefore re-implements the per-file
-step directly: for each method it seeds one parameter at a time as a synthetic
-source, propagates intra-file taint, and — for every helper-method call that
-resolves to a **same-directory** sibling summary — records a `params_to_sink`
-entry when a tainted argument lands on a param the sibling already sinks. The
-scanner-side fixpoint (the round loop, snapshot, `merge_from` union, and
-`MAX_MULTIHOP_ROUNDS` cap) is identical to the other languages. One deliberate
+**Java, C#, Ruby, and Kotlin** reach the same result through their OWN
+machinery. These engines do not route cross-file resolution through the shared
+`extract_cross_file_summary_for_function_cf` path; each has a bespoke name-based,
+**same-directory** summary extractor and its own
+`compose_cross_file_summaries` that re-implements the per-file step directly:
+for each function it seeds one parameter at a time as a synthetic source,
+propagates intra-file taint, and — for every helper call that resolves to a
+same-directory sibling summary — records a `params_to_sink` entry when a tainted
+argument lands on a param the sibling already sinks. **PHP** is adapter-based and
+already routes cross-file calls through its adapter, so its
+`compose_cross_file_summaries` reuses the shared
+`extract_cross_file_summary_for_function_cf` driver (like Python/JS/Go) with the
+same-directory `CrossFileInfo` supplied. In every case the scanner-side fixpoint
+(the round loop, snapshot, `merge_from` union, and `MAX_MULTIHOP_ROUNDS` cap) is
+identical across all eight languages. One deliberate
 simplification: Java's base summary already over-approximates
 `params_to_return` (any call carrying a tainted argument is treated as
 returning taint), so composition only needs to add the cross-file
@@ -202,18 +206,29 @@ machinery (`merge_from`) is reused:
   observable guarantee, exercised without a sanitizer call. (The composition
   still unions all rules' sanitizers into every pass, so a custom Java rule that
   *does* declare a sanitizer would break the chain the usual way.)
+- **C#, Ruby, PHP, and Kotlin** are covered by their own positive/negative
+  fixture pairs: `csharp_multihop` / `csharp_multihop_broken` (SQL),
+  `ruby_multihop` / `ruby_multihop_broken` (command injection), `php_multihop` /
+  `php_multihop_broken` (command injection), and `kotlin_multihop` /
+  `kotlin_multihop_broken` (SQL). C#, Ruby, and PHP ship configured sanitizers
+  (so a sanitizer call would break the chain the usual way), but for symmetry
+  their negatives break the chain the same taint-flow-sensitive way Java's does —
+  the middle helper passes a clean constant to the sink helper instead of
+  forwarding its parameter. Kotlin ships **no** configured sanitizers and its
+  tainted-name set is add-only (Kotlin parameters are `val`, never cleared), so
+  the clean-constant break is the *only* mechanism available for Kotlin.
 
 ### Still not modeled
 
-- **Python, JavaScript, Go, and Java only.** The composition fix-point is wired
-  for the Python, JavaScript, Go, and Java engines (each gated the same way its
-  single-hop cross-file pass is: Python on import resolution, JS on import
-  resolution, Go and Java on same-package/same-directory, all requiring >1 file
-  of that language). Python/JS/Go share the engine-agnostic driver; **Java**
-  runs its own name-based `java_taint::compose_cross_file_summaries` (see above)
-  but the same scanner-side fixpoint. C#, Ruby, PHP, and Kotlin carry the base
-  cross-file machinery but the scanner does not yet run the composition rounds
-  for them; they keep their own single-hop cross-file passes.
+- **All eight cross-file engines compose multi-hop.** The composition fix-point
+  is wired for Python, JavaScript, Go, Java, C#, Ruby, PHP, and Kotlin (each
+  gated the same way its single-hop cross-file pass is: Python and JS on import
+  resolution, Go/Java/C#/Ruby/PHP/Kotlin on same-package/same-directory, all
+  requiring >1 file of that language). Python/JS/Go/PHP share the engine-agnostic
+  `extract_cross_file_summary_for_function_cf` driver; **Java, C#, Ruby, and
+  Kotlin** each run their own name-based `compose_cross_file_summaries` over the
+  identical scanner-side fixpoint. C is intra-file only and has no cross-file or
+  multi-hop pass.
 - **Chains deeper than the hop cap** (`> MAX_MULTIHOP_ROUNDS` extra hops).
 - **Taint through mutable state** — e.g. a value stored into a field/module
   global in one file and read back in another — is not tracked; only
@@ -514,11 +529,15 @@ Sources currently covered:
   `... (via cross-file call to <name>)`. Argument count is honored only as a
   positional bound (the flow's parameter index must be a valid argument
   index), not as a strict overload discriminator.
+  - **Bounded multi-hop is modeled**: a cross-file helper that itself forwards
+    its parameter into another same-directory helper which sinks it
+    (`A → f → g → sink`) is composed by the scanner's bounded multi-hop fixpoint
+    (see above).
   - **Not modeled**: `using`/namespace resolution across directories,
     type-based instance dispatch through interfaces or subclasses, overload
     selection by parameter *type* (only positional arity is honored), partial
-    classes split across files, extension methods, and multi-hop chains (a
-    cross-file helper that itself calls another cross-file helper). These need
+    classes split across files, extension methods, and cross-file chains deeper
+    than the hop cap. These need
     a C# type/symbol table the engine does not build. Name-based resolution
     intentionally over-approximates: any same-directory method whose name and
     arity match the call resolves, regardless of the receiver's declared type.

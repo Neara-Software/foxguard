@@ -1566,6 +1566,94 @@ fn scan_files(
             }
             prepared_files.insert(path, prepared);
         }
+        // ── Bounded multi-hop composition (fixpoint) ──────────────────
+        // Mirror of the Java block above for Ruby. Ruby uses its OWN
+        // name-based, same-directory summary machinery (its cross-file
+        // resolution is bespoke, not routed through the shared adapter), so
+        // composition lives in `ruby_taint::compose_cross_file_summaries` — but
+        // the scanner-side fixpoint is identical: compose per-file summaries one
+        // hop per round so a chain A→f→g→sink — where the MIDDLE helper `f`
+        // forwards its param into a same-directory helper `g` that sinks it — is
+        // captured. Resolution is same-directory (all Ruby files in a directory
+        // are a same-package proxy), matching the single-hop Ruby pass.
+        // Summaries grow monotonically over a finite lattice, so the loop
+        // reaches a fixpoint; MAX_MULTIHOP_ROUNDS is the hard backstop.
+        // See docs/taint-tracking.md, "Bounded multi-hop cross-file taint".
+        if !ruby_summaries.is_empty() {
+            const MAX_MULTIHOP_ROUNDS: usize = 5;
+            let allowed_rule_ids: std::collections::HashSet<String> = ruby_rule_specs
+                .iter()
+                .map(|(id, _)| id.to_string())
+                .collect();
+            // Build a directory→canonical-paths index: all Ruby files in a
+            // directory are treated as the same package and resolve each other.
+            let mut dir_index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+            for (path, _) in &ruby_files {
+                if let Some(prepared) = prepared_files.get(path) {
+                    if let Some(dir) = path.parent() {
+                        dir_index
+                            .entry(dir.to_path_buf())
+                            .or_default()
+                            .push(prepared.canonical_path.clone());
+                    }
+                }
+            }
+
+            for _round in 0..MAX_MULTIHOP_ROUNDS {
+                let snapshot = ruby_summaries.clone();
+                let mut changed = false;
+                for (path, _) in &ruby_files {
+                    let Some(prepared) = prepared_files.get(path) else {
+                        continue;
+                    };
+                    let canonical = prepared.canonical_path.clone();
+                    let same_package_paths: Vec<PathBuf> = path
+                        .parent()
+                        .and_then(|dir| dir_index.get(dir))
+                        .map(|siblings| {
+                            siblings
+                                .iter()
+                                .filter(|p| **p != canonical)
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if same_package_paths.is_empty() {
+                        continue;
+                    }
+                    let composed = ruby_taint::compose_cross_file_summaries(
+                        prepared.tree.root_node(),
+                        &prepared.source,
+                        None,
+                        &ruby_rule_specs,
+                        &same_package_paths,
+                        &snapshot,
+                        &allowed_rule_ids,
+                    );
+                    if composed.is_empty() {
+                        continue;
+                    }
+                    let entry = ruby_summaries.entry(canonical).or_default();
+                    for new_summary in composed {
+                        match entry.iter_mut().find(|s| s.name == new_summary.name) {
+                            Some(existing) => {
+                                if existing.merge_from(&new_summary) {
+                                    changed = true;
+                                }
+                            }
+                            None => {
+                                entry.push(new_summary);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
         has_ruby_cross_file = !ruby_summaries.is_empty();
         cross_file_summaries.extend(ruby_summaries);
     }
@@ -1622,6 +1710,94 @@ fn scan_files(
             }
             prepared_files.insert(path, prepared);
         }
+        // ── Bounded multi-hop composition (fixpoint) ──────────────────
+        // Mirror of the Java block above for PHP. PHP's cross-file resolution
+        // is routed through its adapter, so composition lives in
+        // `php_taint::compose_cross_file_summaries` (which reuses the shared
+        // `_cf` summary helper) — but the scanner-side fixpoint is identical:
+        // compose per-file summaries one hop per round so a chain A→f→g→sink —
+        // where the MIDDLE helper `f` forwards its param into a same-directory
+        // helper `g` that sinks it — is captured. Resolution is same-directory
+        // (all PHP files in a directory are a same-package proxy), matching the
+        // single-hop PHP pass. Summaries grow monotonically over a finite
+        // lattice, so the loop reaches a fixpoint; MAX_MULTIHOP_ROUNDS is the
+        // hard backstop.
+        // See docs/taint-tracking.md, "Bounded multi-hop cross-file taint".
+        if !php_summaries.is_empty() {
+            const MAX_MULTIHOP_ROUNDS: usize = 5;
+            let allowed_rule_ids: std::collections::HashSet<String> = php_rule_specs
+                .iter()
+                .map(|(id, _)| id.to_string())
+                .collect();
+            // Build a directory→canonical-paths index: all PHP files in a
+            // directory are treated as the same package and resolve each other.
+            let mut dir_index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+            for (path, _) in &php_files {
+                if let Some(prepared) = prepared_files.get(path) {
+                    if let Some(dir) = path.parent() {
+                        dir_index
+                            .entry(dir.to_path_buf())
+                            .or_default()
+                            .push(prepared.canonical_path.clone());
+                    }
+                }
+            }
+
+            for _round in 0..MAX_MULTIHOP_ROUNDS {
+                let snapshot = php_summaries.clone();
+                let mut changed = false;
+                for (path, _) in &php_files {
+                    let Some(prepared) = prepared_files.get(path) else {
+                        continue;
+                    };
+                    let canonical = prepared.canonical_path.clone();
+                    let same_package_paths: Vec<PathBuf> = path
+                        .parent()
+                        .and_then(|dir| dir_index.get(dir))
+                        .map(|siblings| {
+                            siblings
+                                .iter()
+                                .filter(|p| **p != canonical)
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if same_package_paths.is_empty() {
+                        continue;
+                    }
+                    let composed = php_taint::compose_cross_file_summaries(
+                        prepared.tree.root_node(),
+                        &prepared.source,
+                        None,
+                        &php_rule_specs,
+                        &same_package_paths,
+                        &snapshot,
+                        &allowed_rule_ids,
+                    );
+                    if composed.is_empty() {
+                        continue;
+                    }
+                    let entry = php_summaries.entry(canonical).or_default();
+                    for new_summary in composed {
+                        match entry.iter_mut().find(|s| s.name == new_summary.name) {
+                            Some(existing) => {
+                                if existing.merge_from(&new_summary) {
+                                    changed = true;
+                                }
+                            }
+                            None => {
+                                entry.push(new_summary);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
         has_php_cross_file = !php_summaries.is_empty();
         cross_file_summaries.extend(php_summaries);
     }
@@ -1678,6 +1854,93 @@ fn scan_files(
             }
             prepared_files.insert(path, prepared);
         }
+        // ── Bounded multi-hop composition (fixpoint) ──────────────────
+        // Mirror of the Java block above for C#. C# uses its OWN name-based,
+        // same-directory summary machinery (not the shared adapter path), so
+        // composition lives in `csharp_taint::compose_cross_file_summaries` —
+        // but the scanner-side fixpoint is identical: compose per-file summaries
+        // one hop per round so a chain A→f→g→sink — where the MIDDLE helper `f`
+        // forwards its param into a same-directory helper `g` that sinks it — is
+        // captured. Resolution is same-directory (all C# files in a directory
+        // are a same-namespace proxy), matching the single-hop C# pass.
+        // Summaries grow monotonically over a finite lattice, so the loop
+        // reaches a fixpoint; MAX_MULTIHOP_ROUNDS is the hard backstop.
+        // See docs/taint-tracking.md, "Bounded multi-hop cross-file taint".
+        if !csharp_summaries.is_empty() {
+            const MAX_MULTIHOP_ROUNDS: usize = 5;
+            let allowed_rule_ids: std::collections::HashSet<String> = csharp_rule_specs
+                .iter()
+                .map(|(id, _)| id.to_string())
+                .collect();
+            // Build a directory→canonical-paths index: all C# files in a
+            // directory are treated as the same namespace and resolve each other.
+            let mut dir_index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+            for (path, _) in &csharp_files {
+                if let Some(prepared) = prepared_files.get(path) {
+                    if let Some(dir) = path.parent() {
+                        dir_index
+                            .entry(dir.to_path_buf())
+                            .or_default()
+                            .push(prepared.canonical_path.clone());
+                    }
+                }
+            }
+
+            for _round in 0..MAX_MULTIHOP_ROUNDS {
+                let snapshot = csharp_summaries.clone();
+                let mut changed = false;
+                for (path, _) in &csharp_files {
+                    let Some(prepared) = prepared_files.get(path) else {
+                        continue;
+                    };
+                    let canonical = prepared.canonical_path.clone();
+                    let same_package_paths: Vec<PathBuf> = path
+                        .parent()
+                        .and_then(|dir| dir_index.get(dir))
+                        .map(|siblings| {
+                            siblings
+                                .iter()
+                                .filter(|p| **p != canonical)
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if same_package_paths.is_empty() {
+                        continue;
+                    }
+                    let composed = csharp_taint::compose_cross_file_summaries(
+                        prepared.tree.root_node(),
+                        &prepared.source,
+                        None,
+                        &csharp_rule_specs,
+                        &same_package_paths,
+                        &snapshot,
+                        &allowed_rule_ids,
+                    );
+                    if composed.is_empty() {
+                        continue;
+                    }
+                    let entry = csharp_summaries.entry(canonical).or_default();
+                    for new_summary in composed {
+                        match entry.iter_mut().find(|s| s.name == new_summary.name) {
+                            Some(existing) => {
+                                if existing.merge_from(&new_summary) {
+                                    changed = true;
+                                }
+                            }
+                            None => {
+                                entry.push(new_summary);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
         has_csharp_cross_file = !csharp_summaries.is_empty();
         cross_file_summaries.extend(csharp_summaries);
     }
@@ -1734,6 +1997,94 @@ fn scan_files(
             }
             prepared_files.insert(path, prepared);
         }
+        // ── Bounded multi-hop composition (fixpoint) ──────────────────
+        // Mirror of the Java block above for Kotlin. Kotlin uses its OWN
+        // name-based, same-directory summary machinery (not the shared adapter
+        // path), so composition lives in
+        // `kotlin_taint::compose_cross_file_summaries` — but the scanner-side
+        // fixpoint is identical: compose per-file summaries one hop per round so
+        // a chain A→f→g→sink — where the MIDDLE helper `f` forwards its param
+        // into a same-directory helper `g` that sinks it — is captured.
+        // Resolution is same-directory (all Kotlin files in a directory are a
+        // same-package proxy), matching the single-hop Kotlin pass. Summaries
+        // grow monotonically over a finite lattice, so the loop reaches a
+        // fixpoint; MAX_MULTIHOP_ROUNDS is the hard backstop.
+        // See docs/taint-tracking.md, "Bounded multi-hop cross-file taint".
+        if !kotlin_summaries.is_empty() {
+            const MAX_MULTIHOP_ROUNDS: usize = 5;
+            let allowed_rule_ids: std::collections::HashSet<String> = kotlin_rule_specs
+                .iter()
+                .map(|(id, _)| id.to_string())
+                .collect();
+            // Build a directory→canonical-paths index: all Kotlin files in a
+            // directory are treated as the same package and resolve each other.
+            let mut dir_index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+            for (path, _) in &kotlin_files {
+                if let Some(prepared) = prepared_files.get(path) {
+                    if let Some(dir) = path.parent() {
+                        dir_index
+                            .entry(dir.to_path_buf())
+                            .or_default()
+                            .push(prepared.canonical_path.clone());
+                    }
+                }
+            }
+
+            for _round in 0..MAX_MULTIHOP_ROUNDS {
+                let snapshot = kotlin_summaries.clone();
+                let mut changed = false;
+                for (path, _) in &kotlin_files {
+                    let Some(prepared) = prepared_files.get(path) else {
+                        continue;
+                    };
+                    let canonical = prepared.canonical_path.clone();
+                    let same_package_paths: Vec<PathBuf> = path
+                        .parent()
+                        .and_then(|dir| dir_index.get(dir))
+                        .map(|siblings| {
+                            siblings
+                                .iter()
+                                .filter(|p| **p != canonical)
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if same_package_paths.is_empty() {
+                        continue;
+                    }
+                    let composed = kotlin_taint::compose_cross_file_summaries(
+                        prepared.tree.root_node(),
+                        &prepared.source,
+                        None,
+                        &kotlin_rule_specs,
+                        &same_package_paths,
+                        &snapshot,
+                        &allowed_rule_ids,
+                    );
+                    if composed.is_empty() {
+                        continue;
+                    }
+                    let entry = kotlin_summaries.entry(canonical).or_default();
+                    for new_summary in composed {
+                        match entry.iter_mut().find(|s| s.name == new_summary.name) {
+                            Some(existing) => {
+                                if existing.merge_from(&new_summary) {
+                                    changed = true;
+                                }
+                            }
+                            None => {
+                                entry.push(new_summary);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
         has_kotlin_cross_file = !kotlin_summaries.is_empty();
         cross_file_summaries.extend(kotlin_summaries);
     }

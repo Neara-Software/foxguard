@@ -412,6 +412,143 @@ fn realistic_java_multihop_break_breaks_chain() {
     assert_fixture("java_multihop_broken", 1, &[]);
 }
 
+/// Bounded multi-hop chain where the MIDDLE helper itself makes the
+/// same-directory cross-file call. Three-file C# chain:
+/// SearchHandler.Search() (source) → Service.Forward() → QueryHelper.RunQuery()
+/// (SqlCommand sink), where `Service.Forward` forwards its argument to
+/// `QueryHelper.RunQuery` in a THIRD file of the same directory. C# uses its OWN
+/// name-based, same-directory summary machinery (not the shared adapter), but
+/// the scanner-side fixpoint is the same: the chain is only found once
+/// `Service.Forward`'s summary is composed one hop deeper against
+/// `QueryHelper.RunQuery`'s summary.
+#[test]
+fn realistic_csharp_multihop_composed() {
+    assert_fixture("csharp_multihop", 1, &[("csharp/taint-sql-injection", 1)]);
+}
+
+/// The C# chain above must only resolve on a full-directory scan: scanning any
+/// single file in isolation finds no taint finding (no source is present in any
+/// single file, and `term` is only ever a bare parameter).
+#[test]
+fn realistic_csharp_multihop_single_file_finds_no_taint() {
+    assert_fixture("csharp_multihop/SearchHandler.cs", 0, &[]);
+    assert_fixture("csharp_multihop/Service.cs", 0, &[]);
+    assert_fixture("csharp_multihop/QueryHelper.cs", 0, &[]);
+}
+
+/// Negative multi-hop: identical shape to `csharp_multihop` but the middle
+/// helper passes a clean constant to the sink helper instead of forwarding its
+/// tainted parameter. The composition is taint-flow-sensitive, so the clean
+/// argument records no sink flow and the chain BREAKS: no finding on a directory
+/// scan. (C#'s rules ship sanitizers, so a sanitizer call would break it too.)
+#[test]
+fn realistic_csharp_multihop_break_breaks_chain() {
+    assert_fixture("csharp_multihop_broken", 0, &[]);
+}
+
+/// Bounded multi-hop chain where the MIDDLE helper itself makes the
+/// same-directory cross-file call. Three-file Ruby chain:
+/// SearchController#search (params source) → Service#forward →
+/// CommandHelper#run_cmd (system() sink), where `Service#forward` forwards its
+/// argument to `CommandHelper#run_cmd` in a THIRD file of the same directory.
+/// The chain is only found once `Service#forward`'s summary is composed one hop
+/// deeper against `run_cmd`'s summary. The `system(arg)` call in the sink file
+/// also trips the conservative `rb/no-command-injection` regex.
+#[test]
+fn realistic_ruby_multihop_composed() {
+    assert_fixture("ruby_multihop", 2, &[("rb/taint-command-injection", 1)]);
+}
+
+/// The Ruby chain above must only resolve on a full-directory scan: scanning any
+/// single file in isolation finds no taint finding (the sink file still trips
+/// the single-file regex heuristic `rb/no-command-injection`, but no `*/taint-*`
+/// rule fires because no source reaches a resolved sink in any single file).
+#[test]
+fn realistic_ruby_multihop_single_file_finds_no_taint() {
+    assert_fixture("ruby_multihop/search_controller.rb", 0, &[]);
+    assert_fixture("ruby_multihop/service.rb", 0, &[]);
+    assert_fixture("ruby_multihop/command_helper.rb", 1, &[]);
+}
+
+/// Negative multi-hop: identical shape to `ruby_multihop` but the middle helper
+/// passes a clean constant to the sink helper instead of forwarding its tainted
+/// parameter. The composition is taint-flow-sensitive, so the chain BREAKS: no
+/// taint finding on a directory scan (only the sink file's regex hit remains).
+/// (Ruby's rules ship sanitizers, so a sanitizer call would break it too.)
+#[test]
+fn realistic_ruby_multihop_break_breaks_chain() {
+    assert_fixture("ruby_multihop_broken", 1, &[]);
+}
+
+/// Bounded multi-hop chain where the MIDDLE helper itself makes the
+/// same-directory cross-file call. Three-file PHP chain:
+/// search() ($_GET source) → forward() → run_cmd() (system() sink), where
+/// `forward` forwards its argument to `run_cmd` in a THIRD file of the same
+/// directory. The chain is only found once `forward`'s summary is composed one
+/// hop deeper against `run_cmd`'s summary. The `system($arg)` call in the sink
+/// file also trips the conservative `php/no-command-injection` regex.
+#[test]
+fn realistic_php_multihop_composed() {
+    assert_fixture("php_multihop", 2, &[("php/taint-command-injection", 1)]);
+}
+
+/// The PHP chain above must only resolve on a full-directory scan: scanning any
+/// single file in isolation finds no taint finding (the sink file still trips
+/// the single-file regex heuristic `php/no-command-injection`, but no `*/taint-*`
+/// rule fires because no source reaches a resolved sink in any single file).
+#[test]
+fn realistic_php_multihop_single_file_finds_no_taint() {
+    assert_fixture("php_multihop/search_handler.php", 0, &[]);
+    assert_fixture("php_multihop/service.php", 0, &[]);
+    assert_fixture("php_multihop/command_helper.php", 1, &[]);
+}
+
+/// Negative multi-hop: identical shape to `php_multihop` but the middle helper
+/// passes a clean constant to the sink helper instead of forwarding its tainted
+/// parameter. The composition is taint-flow-sensitive, so the chain BREAKS: no
+/// taint finding on a directory scan (only the sink file's regex hit remains).
+/// (PHP's rules ship sanitizers, so a sanitizer call would break it too.)
+#[test]
+fn realistic_php_multihop_break_breaks_chain() {
+    assert_fixture("php_multihop_broken", 1, &[]);
+}
+
+/// Bounded multi-hop chain where the MIDDLE helper itself makes the
+/// same-directory cross-file call. Three-file Kotlin chain:
+/// handle() (call.receiveText source) → forward() → runQuery() (executeQuery
+/// sink), where `forward` forwards its argument to `runQuery` in a THIRD file of
+/// the same directory. The chain is only found once `forward`'s summary is
+/// composed one hop deeper against `runQuery`'s summary. The concatenation in
+/// the sink file also trips the conservative `kt/no-sql-injection` regex.
+#[test]
+fn realistic_kotlin_multihop_composed() {
+    assert_fixture("kotlin_multihop", 2, &[("kt/taint-sql-injection", 1)]);
+}
+
+/// The Kotlin chain above must only resolve on a full-directory scan: scanning
+/// any single file in isolation finds no taint finding (the sink file still
+/// trips the single-file regex heuristic `kt/no-sql-injection`, but no
+/// `*/taint-*` rule fires because no source reaches a resolved sink in any
+/// single file).
+#[test]
+fn realistic_kotlin_multihop_single_file_finds_no_taint() {
+    assert_fixture("kotlin_multihop/SearchHandler.kt", 0, &[]);
+    assert_fixture("kotlin_multihop/Service.kt", 0, &[]);
+    assert_fixture("kotlin_multihop/QueryHelper.kt", 1, &[]);
+}
+
+/// Negative multi-hop: identical shape to `kotlin_multihop` but the middle
+/// helper passes a clean constant to the sink helper instead of forwarding its
+/// tainted parameter. The built-in Kotlin rules ship NO configured sanitizers
+/// and the engine's tainted-name set is add-only (Kotlin params are `val`), so a
+/// fresh clean local passed to the helper is the break mechanism. The
+/// composition is taint-flow-sensitive, so the chain BREAKS: no taint finding on
+/// a directory scan (only the sink file's regex hit remains).
+#[test]
+fn realistic_kotlin_multihop_break_breaks_chain() {
+    assert_fixture("kotlin_multihop_broken", 1, &[]);
+}
+
 #[test]
 fn realistic_gin_app() {
     // Three planted vulnerabilities (command injection, SQL
