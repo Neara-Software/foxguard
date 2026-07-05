@@ -3447,6 +3447,63 @@ fn try_compile_focus_call_sink_block(
     out.len() > before
 }
 
+/// Normalize a leading Semgrep typed-receiver cast `(Type $RECV).…` to a bare
+/// metavariable receiver `$RECV.…`, so a call whose receiver is a typed
+/// metavariable — e.g. the statement sink
+/// `(java.lang.Runtime $R).exec($CMD, $ENV_ARGS, ...);` — reads as an ordinary
+/// `$R.exec(...)` call context. Returns the input trimmed and unchanged when it
+/// is not a `(Type $MV)` group followed by a single trailing call (a bare
+/// `(Type $MV)` typed-metavariable, or a chained receiver, is left alone so the
+/// typed-source recognizer keeps ownership and no INNER call is mistaken for
+/// the sink call).
+fn strip_typed_receiver(call: &str) -> String {
+    let c = call.trim();
+    if c.starts_with('(') {
+        if let Some((_, metavar, remainder)) = parse_typed_metavar(c) {
+            let remainder = remainder.trim();
+            if !remainder.is_empty() {
+                let normalized = format!("{metavar}{remainder}");
+                // Only rewrite when the result is a SINGLE call whose argument
+                // list spans to the end (`$R.exec($CMD, $ENV_ARGS, ...);`). A
+                // chained receiver (`$REQ.getSession().$FUNC(...)`) is left
+                // un-normalized so the focus-call recognizer never mistakes the
+                // INNER call (`getSession`) for the sink call — those chained
+                // shapes remain (faithfully) unsupported.
+                if is_single_trailing_call(&normalized) {
+                    return normalized;
+                }
+            }
+        }
+    }
+    c.to_string()
+}
+
+/// True when `pat` (a `;`-terminated statement or expression) is a single call
+/// `callee(args)` whose FIRST `(` argument list closes at the very end — i.e.
+/// there is no trailing chained call. `$R.exec($X, ...)` is single; the chained
+/// `$REQ.getSession().$FUNC($X)` is not (its first `(` closes early).
+fn is_single_trailing_call(pat: &str) -> bool {
+    let p = pat.trim().trim_end_matches(';').trim();
+    let Some(open) = p.find('(') else {
+        return false;
+    };
+    let bytes = p.as_bytes();
+    let mut depth = 0i32;
+    for (i, &b) in bytes.iter().enumerate().skip(open) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i == p.len() - 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Walk a sink `patterns:` block (recursing into `pattern-either:`/`patterns:`)
 /// collecting focused metavariables (`focus-metavariable: $F` and bare
 /// `pattern: $F`), call-context texts (`pattern:`/`pattern-inside:` whose value
@@ -3476,16 +3533,23 @@ fn collect_focus_call_sink_parts(
                         let t = s.trim();
                         if is_metavariable(t) {
                             seeds.push(t.to_string());
-                        } else if is_call_context_pattern(t) {
-                            call_texts.push(t.to_string());
+                        } else {
+                            // Normalize a leading typed-receiver cast
+                            // `(java.lang.Runtime $R).exec(...)` to `$R.exec(...)`
+                            // so a statement sink whose receiver is a typed
+                            // metavariable reads as an ordinary call context.
+                            let norm = strip_typed_receiver(t);
+                            if is_call_context_pattern(&norm) {
+                                call_texts.push(norm);
+                            }
                         }
                     }
                 }
                 Some("pattern-inside") => {
                     if let Some(s) = val.as_str() {
-                        let t = s.trim();
-                        if is_call_context_pattern(t) {
-                            call_texts.push(t.to_string());
+                        let norm = strip_typed_receiver(s.trim());
+                        if is_call_context_pattern(&norm) {
+                            call_texts.push(norm);
                         }
                     }
                 }
@@ -10550,6 +10614,144 @@ class Handler {
             "a read off a locally-declared HttpServletRequest reaching exec() must fire, got {:?}",
             findings
         );
+    }
+
+    // ── Typed-receiver STATEMENT sink (trailing `;` + focus-metavariable) ────
+    //
+    // A faithful reduction of the registry `tainted-env-from-http-request`
+    // sink shape: a statement (trailing `;`) whose receiver is a typed
+    // metavariable and whose focused metavariable is a call argument:
+    //
+    //   pattern-sinks:
+    //     - patterns:
+    //         - pattern: (java.lang.Runtime $R).exec($CMD, $ENV_ARGS, ...);
+    //         - focus-metavariable: $ENV_ARGS
+    //
+    // The leading `(java.lang.Runtime $R)` typed receiver is normalized to a
+    // bare `$R.exec(...)` call, so the existing focus-on-call-argument sink
+    // recognizer compiles it to a `MethodName { method: "exec" }` sink (which
+    // only fires when a tracked-tainted value reaches an argument of `exec`).
+
+    const TYPED_RECEIVER_STMT_SINK_RULE: &str = r#"
+id: java-typed-receiver-stmt-sink
+mode: taint
+languages: [java]
+severity: ERROR
+message: "Tainted env args reach Runtime.exec"
+pattern-sources:
+  - pattern: (HttpServletRequest $REQ)
+pattern-sinks:
+  - patterns:
+      - pattern: (java.lang.Runtime $R).exec($CMD, $ENV_ARGS, ...);
+      - focus-metavariable: $ENV_ARGS
+"#;
+
+    #[test]
+    fn typed_receiver_statement_sink_loads_and_fires() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(TYPED_RECEIVER_STMT_SINK_RULE);
+
+        // The typed-receiver statement sink compiled to a concrete
+        // `MethodName { method: "exec" }` matcher — NOT an empty/skipped sink.
+        assert!(
+            rule.spec.sinks.iter().any(|s| matches!(
+                s,
+                GenericMatcher::MethodName { method, .. } if method == "exec"
+            )),
+            "statement sink should compile to MethodName{{exec}}, got {:?}",
+            rule.spec.sinks
+        );
+
+        // Tainted input read off an HttpServletRequest reaching an `exec(...)`
+        // call argument fires.
+        let fire_src = r#"
+class Handler {
+    void handler(HttpServletRequest req) throws Exception {
+        Runtime r = Runtime.getRuntime();
+        String[] env = { req.getParameter("x") };
+        r.exec("cmd", env);
+    }
+}
+"#;
+        let tree = parse_file(fire_src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(fire_src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "tainted value reaching Runtime.exec(...) must fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Near-miss: the same sink stays SILENT when nothing tainted reaches the
+    /// `exec(...)` call (all arguments are constants) — the sink is gated on
+    /// taint, not "any `exec` call".
+    #[test]
+    fn typed_receiver_statement_sink_silent_on_clean_call() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(TYPED_RECEIVER_STMT_SINK_RULE);
+
+        let miss_src = r#"
+class Handler {
+    void handler(HttpServletRequest req) throws Exception {
+        Runtime r = Runtime.getRuntime();
+        String[] env = { "SAFE=1" };
+        r.exec("cmd", env);
+    }
+}
+"#;
+        let tree = parse_file(miss_src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(miss_src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a Runtime.exec(...) call with no tainted argument must not fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Faithfulness guard for the typed-receiver normalization: a CHAINED-call
+    /// sink `(HttpServletRequest $REQ).getSession().$FUNC(...)` must NOT be
+    /// mistaken for a `getSession(...)` sink (the inner call in the chain). The
+    /// outer method is a regex-pinned metavariable on a multi-level receiver
+    /// chain, which the single-level focus-call recognizer does not express, so
+    /// the rule must SKIP rather than compile an over-broad `MethodName`.
+    #[test]
+    fn chained_receiver_statement_sink_does_not_compile_bogus_inner_sink() {
+        let yaml = r#"
+id: java-chained-session-sink
+mode: taint
+languages: [java]
+severity: WARNING
+message: "Tainted session attribute"
+pattern-sources:
+  - pattern: (HttpServletRequest $REQ)
+pattern-sinks:
+  - patterns:
+      - pattern: (HttpServletRequest $REQ).getSession().$FUNC($NAME, $VALUE);
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: ^(putValue|setAttribute)$
+      - focus-metavariable: $VALUE
+"#;
+        let v: YamlValue = serde_yaml_ng::from_str(yaml).unwrap();
+        match parse_taint_rule(&v) {
+            TaintRuleParse::Skip(_) => {}
+            TaintRuleParse::Compiled(r) => {
+                // If it ever DOES compile, it must never be the bogus inner
+                // `getSession` method sink.
+                assert!(
+                    !r.spec.sinks.iter().any(|s| matches!(
+                        s,
+                        GenericMatcher::MethodName { method, .. } if method == "getSession"
+                    )),
+                    "chained sink must not compile to MethodName{{getSession}}, got {:?}",
+                    r.spec.sinks
+                );
+            }
+            TaintRuleParse::NotTaint => panic!("expected a taint rule"),
+        }
     }
 
     // ── Taint-labels (`label:` / `requires:`) — Java `CONCAT` family ─────────
