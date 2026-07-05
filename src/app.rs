@@ -133,7 +133,14 @@ fn execute_scan_resolved(scan: ScanArgs) -> Result<ScanExecution, String> {
         }
     }
     let excludes = PathExcludeMatcher::new(&scan.exclude)?;
-    let targets = collect_changed_targets(&scan.path, scan.changes.selection())?;
+    let targets = if let Some(list_file) = scan.changed_files_from.as_deref() {
+        // Explicit changed-file list (e.g. from the GitHub App): scan only
+        // these paths but keep `scan.path` as the analysis root so cross-file
+        // taint context is preserved. Precedence over the change-mode flags.
+        Some(resolve_changed_files_from(&scan.path, list_file)?)
+    } else {
+        collect_changed_targets(&scan.path, scan.changes.selection())?
+    };
     let coccinelle_rule_ids = coccinelle::rule_ids(&coccinelle_rules);
     let codeql_rule_ids = codeql::rule_ids(&codeql_rules);
 
@@ -607,6 +614,7 @@ fn tui_scan_args(args: &TuiArgs) -> ScanArgs {
         no_builtins: args.no_builtins,
         codeql_db: None,
         changes: args.changes.clone(),
+        changed_files_from: None,
         exclude: args.exclude.clone(),
         baseline: args.baseline.clone(),
         write_baseline: None,
@@ -782,6 +790,34 @@ fn collect_changed_targets(
     Ok(Some(files))
 }
 
+/// Resolve an explicit changed-file list (newline-delimited, repo-root-relative
+/// paths) into scan targets rooted at `scan_path`. Blank lines and comments
+/// (`#`) are ignored, and paths that no longer exist on disk (e.g. files a PR
+/// deleted) are skipped. Returned paths are kept relative to `scan_path` so the
+/// exclude matcher sees repo-root-relative paths. An empty resolved list is a
+/// valid result: the caller scans nothing and reports zero findings rather than
+/// falling back to a full-tree scan.
+fn resolve_changed_files_from(scan_path: &str, list_file: &str) -> Result<Vec<PathBuf>, String> {
+    let contents = std::fs::read_to_string(list_file)
+        .map_err(|e| format!("failed to read changed-files list '{}': {}", list_file, e))?;
+
+    let root = Path::new(scan_path);
+    let mut files = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let candidate = root.join(line);
+        // A PR can delete files; skip anything that is not a present file so we
+        // never error out or scan phantom paths.
+        if candidate.is_file() {
+            files.push(candidate);
+        }
+    }
+    Ok(files)
+}
+
 fn count_secret_files(scan_path: &Path) -> usize {
     if scan_path.is_file() {
         return 1;
@@ -812,5 +848,42 @@ mod tests {
 
         assert!(ids.contains(&"kernel/pq-vulnerable-cocci".to_string()));
         assert!(!ids.contains(&"kernel/non-pq-cocci".to_string()));
+    }
+
+    #[test]
+    fn resolve_changed_files_from_skips_missing_and_comments() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::write(root.join("a.py"), "print(1)\n").unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub").join("b.py"), "print(2)\n").unwrap();
+
+        let list = root.join("changed.txt");
+        std::fs::write(&list, "# comment\n\na.py\nsub/b.py\ndeleted/gone.py\n").unwrap();
+
+        let files = resolve_changed_files_from(root.to_str().unwrap(), list.to_str().unwrap())
+            .expect("resolve");
+
+        // Existing files resolve (rooted at scan path); the missing/deleted
+        // path and the comment/blank lines are dropped.
+        assert_eq!(files.len(), 2, "got {files:?}");
+        assert!(files.contains(&root.join("a.py")));
+        assert!(files.contains(&root.join("sub").join("b.py")));
+    }
+
+    #[test]
+    fn resolve_changed_files_from_empty_list_is_empty_not_full_tree() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::write(root.join("a.py"), "print(1)\n").unwrap();
+        let list = root.join("changed.txt");
+        std::fs::write(&list, "\n  \n# only comments\n").unwrap();
+
+        let files = resolve_changed_files_from(root.to_str().unwrap(), list.to_str().unwrap())
+            .expect("resolve");
+        assert!(
+            files.is_empty(),
+            "empty list must not fall back to full tree; got {files:?}"
+        );
     }
 }

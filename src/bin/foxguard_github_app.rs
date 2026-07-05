@@ -12,7 +12,8 @@
 //! Run:      `FOXGUARD_WEBHOOK_SECRET=xxx FOXGUARD_BIND=0.0.0.0:8080 foxguard-github-app`
 //! Docker:   `docker build -f Dockerfile.github-app -t ghcr.io/0sec-labs/foxguard-github-app .`
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -439,18 +440,44 @@ async fn process_pull_request_delivery(
         .await
         .map_err(|error| error.to_string())?;
 
+    let pr_number = pull_request.number;
+    let repo_full_name = repository.full_name.clone();
+
+    // Fetch the PR's changed lines BEFORE scanning so the scan can be
+    // diff-scoped to just the changed files — while still cloning the full
+    // repo so the analysis root preserves cross-file taint. On failure we
+    // fall back to a full-tree scan (safer: keeps coverage) and log it.
+    let changed_lines: Option<HashMap<String, HashSet<usize>>> = match state
+        .review
+        .pull_request_changed_lines(&repo_full_name, pr_number, &token)
+        .await
+    {
+        Ok(lines) => Some(lines),
+        Err(error) => {
+            warn!(
+                repo = repo_full_name,
+                pr_number,
+                %error,
+                "failed to fetch PR changed lines; falling back to full-tree scan"
+            );
+            None
+        }
+    };
+    let changed_files: Option<Vec<String>> = changed_lines
+        .as_ref()
+        .map(|lines| lines.keys().cloned().collect());
+
     let scan_token = token.clone();
     let mut result = tokio::task::spawn_blocking(move || {
-        run_pull_request_scan(pull_request, &repository.full_name, &scan_token)
+        run_pull_request_scan(
+            pull_request,
+            &repository.full_name,
+            &scan_token,
+            changed_files,
+        )
     })
     .await
     .map_err(|error| format!("pull_request scan task failed: {error}"))??;
-
-    let changed_lines = state
-        .review
-        .pull_request_changed_lines(&result.repo, result.pr_number, &token)
-        .await
-        .map_err(|error| error.to_string())?;
 
     let review = state
         .review
@@ -461,7 +488,7 @@ async fn process_pull_request_delivery(
             &result.findings,
             None,
             &token,
-            Some(&changed_lines),
+            changed_lines.as_ref(),
         )
         .await
         .map_err(|error| error.to_string())?;
@@ -474,7 +501,7 @@ async fn process_pull_request_delivery(
             &result.head_sha,
             &result.findings,
             &token,
-            Some(&changed_lines),
+            changed_lines.as_ref(),
         )
         .await
     {
@@ -497,6 +524,7 @@ fn run_pull_request_scan(
     pull_request: GitHubPullRequest,
     target_repo: &str,
     installation_token: &str,
+    changed_files: Option<Vec<String>>,
 ) -> Result<PullRequestScanResult, String> {
     let workspace =
         tempfile::tempdir().map_err(|error| format!("failed to create scan workspace: {error}"))?;
@@ -517,7 +545,21 @@ fn run_pull_request_scan(
         ));
     }
 
-    let output = run_scanner(&checkout)?;
+    // Diff-scope the scan to the PR's changed files when we have them. The list
+    // is written inside the workspace tempdir and passed to the CLI, which
+    // scans only those paths but keeps the full checkout as the analysis root
+    // (cross-file taint preserved). Absent the list, we scan the whole tree.
+    let changed_files_list = match &changed_files {
+        Some(files) => {
+            let list_path = workspace.path().join("changed-files.txt");
+            std::fs::write(&list_path, files.join("\n"))
+                .map_err(|error| format!("failed to write changed-files list: {error}"))?;
+            Some(list_path)
+        }
+        None => None,
+    };
+
+    let output = run_scanner(&checkout, changed_files_list.as_deref())?;
     let mut findings = parse_json_findings(&output)?;
     for finding in &mut findings {
         finding.file = relative_path(&finding.file, Some(&checkout));
@@ -683,12 +725,44 @@ fn redact_git_error(error: &str, installation_token: &str) -> String {
     redacted
 }
 
-fn run_scanner(checkout: &Path) -> Result<String, String> {
+/// Path globs excluded from every PR scan to strip clearly non-reviewable
+/// files (fixtures, vendored deps, generated/minified bundles). This cuts scan
+/// time — a major driver of the 60s timeouts — without dropping real code.
+const SCAN_EXCLUDE_GLOBS: &[&str] = &[
+    "tests/fixtures",
+    "**/examples/**",
+    "*-min.js",
+    "**/vendor/**",
+    "**/node_modules/**",
+    "**/*.min.*",
+    "**/dist/**",
+    "**/build/**",
+];
+
+/// Build the `foxguard` argument vector. When `changed_files_list` is provided
+/// the scan is diff-scoped to that file (with `checkout` as the analysis root,
+/// preserving cross-file taint); path exclusions are always applied. Pure and
+/// unit-tested — the live invocation in `run_scanner` just feeds these to the
+/// process.
+fn build_scanner_args(checkout: &Path, changed_files_list: Option<&Path>) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec![checkout.as_os_str().to_owned()];
+    if let Some(list) = changed_files_list {
+        args.push("--changed-files-from".into());
+        args.push(list.as_os_str().to_owned());
+    }
+    for glob in SCAN_EXCLUDE_GLOBS {
+        args.push("--exclude".into());
+        args.push(OsString::from(*glob));
+    }
+    args.push("--format".into());
+    args.push("json".into());
+    args
+}
+
+fn run_scanner(checkout: &Path, changed_files_list: Option<&Path>) -> Result<String, String> {
     let mut command = Command::new("foxguard");
     command
-        .arg(checkout)
-        .arg("--format")
-        .arg("json")
+        .args(build_scanner_args(checkout, changed_files_list))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     run_command_with_timeout(command, PULL_REQUEST_SCAN_TIMEOUT, "foxguard")
@@ -895,6 +969,60 @@ mod tests {
 
         assert_eq!(payload.action.as_deref(), Some("synchronize"));
         assert!(payload.installation.is_none());
+    }
+
+    #[test]
+    fn build_scanner_args_diff_scopes_and_excludes_noise() {
+        let checkout = Path::new("/work/repo");
+        let list = Path::new("/work/changed-files.txt");
+        let args = build_scanner_args(checkout, Some(list));
+        let args: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        // Scans the checkout as the analysis root (cross-file taint context).
+        assert_eq!(args.first().map(String::as_str), Some("/work/repo"));
+        // Diff-scoped to the changed-files list.
+        let idx = args
+            .iter()
+            .position(|a| a == "--changed-files-from")
+            .expect("expected --changed-files-from flag");
+        assert_eq!(
+            args.get(idx + 1).map(String::as_str),
+            Some("/work/changed-files.txt")
+        );
+        // JSON output for machine parsing.
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--format" && w[1] == "json"));
+        // Every configured noise glob is passed as an --exclude.
+        for glob in SCAN_EXCLUDE_GLOBS {
+            assert!(
+                args.windows(2)
+                    .any(|w| w[0] == "--exclude" && w[1] == *glob),
+                "missing --exclude {glob}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_scanner_args_full_tree_fallback_omits_changed_files_flag() {
+        let args = build_scanner_args(Path::new("/work/repo"), None);
+        let args: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        // No diff-scoping flag when the changed-files list is unavailable.
+        assert!(!args.iter().any(|a| a == "--changed-files-from"));
+        // Exclusions still apply to keep the fallback scan cheaper.
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--exclude" && w[1] == "**/vendor/**"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--format" && w[1] == "json"));
     }
 
     #[test]
