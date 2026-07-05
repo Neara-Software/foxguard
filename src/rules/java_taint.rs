@@ -282,12 +282,15 @@ fn unsafe_deserialization_spec() -> TaintSpec {
 //   over-approximates: `helper.process(x)`, `Helper.process(x)`, and a bare
 //   `process(x)` all resolve to *any* same-package `process` summary,
 //   regardless of the receiver's declared type.
+// * **Bounded multi-hop IS modeled.** A helper `f` that forwards its parameter
+//   into another same-directory helper `g` which sinks it (`A → f → g → sink`)
+//   is captured by [`compose_cross_file_summaries`], the per-file step of the
+//   scanner's bounded multi-hop fixpoint (see `docs/taint-tracking.md`).
 // * **What is NOT modeled:** instance-method dispatch through interfaces or
 //   subclasses, method overloads (same name, different arity/types — only
 //   arity is checked via the argument count), `import`-based class resolution
-//   across packages/directories, and multi-hop chains (a helper that itself
-//   calls another cross-file helper). These need a Java type/symbol table the
-//   engine does not build.
+//   across packages/directories, and cross-file chains deeper than the hop cap.
+//   These need a Java type/symbol table the engine does not build.
 
 /// Extract cross-file taint summaries for every method declaration in `root`.
 ///
@@ -523,6 +526,165 @@ fn lookup_cross_file_summary<'a>(
         }
     }
     None
+}
+
+/// Re-derive a file's cross-file summaries with same-package call resolution
+/// enabled, composing the current summary map one hop deeper.
+///
+/// This is the Java counterpart of [`go_taint::compose_cross_file_summaries`]
+/// and the per-file step of the scanner's **bounded multi-hop** fixpoint.
+///
+/// Java uses its OWN name-based, same-directory summary machinery (not the
+/// shared `TaintLanguageAdapter` path Python/Go/JS use), so composition is
+/// implemented directly here. For each method we seed one parameter at a time
+/// as a synthetic source and propagate intra-file taint (the base summary
+/// already over-approximates return/propagation *through* calls, so
+/// `params_to_return` needs no cross-file step). We then resolve every
+/// helper-method call that lands in a sibling summary: when a tainted argument
+/// hits a param the sibling records in `params_to_sink`, THIS parameter reaches
+/// that sink one hop deeper — e.g. `f(p)` whose body is `return g(p)` where the
+/// sibling `g` sinks its argument gains `f`'s `params_to_sink` entry.
+///
+/// The scanner unions the returned flows into the existing summaries via
+/// [`FunctionTaintSummary::merge_from`] and repeats until a fixpoint (no
+/// change) or the hop bound is reached. `summaries` is a read-only snapshot
+/// from the previous round, so each round adds exactly one hop; monotone growth
+/// over a finite lattice guarantees termination, and the scanner's round cap is
+/// a hard backstop against mutually-recursive helpers.
+pub fn compose_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    _aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+    same_package_paths: &[PathBuf],
+    summaries: &CrossFileSummaryMap,
+    allowed_rule_ids: &HashSet<String>,
+) -> Vec<FunctionTaintSummary> {
+    let cross_file = CrossFileInfo {
+        same_package_paths,
+        summaries,
+        allowed_rule_ids,
+    };
+
+    let mut out = Vec::new();
+    walk_tree(root, source, &mut |node, src| {
+        if node.kind() != "method_declaration" {
+            return;
+        }
+        let Some(method_name) = node
+            .child_by_field_name("name")
+            .map(|n| node_text(n, src).to_string())
+        else {
+            return;
+        };
+        let param_names = method_param_names(node, src);
+        if let Some(summary) = compose_java_method(
+            node,
+            &method_name,
+            &param_names,
+            src,
+            rule_specs,
+            &cross_file,
+        ) {
+            out.push(summary);
+        }
+    });
+    out
+}
+
+/// Compose one method's cross-file `params_to_sink` flows: seed each parameter
+/// as a source, propagate intra-file taint, and record a flow whenever a
+/// tainted argument reaches a sibling helper's recorded sink. Returns `None`
+/// when no parameter reaches a cross-file sink (the base summary already owns
+/// the direct-sink and `params_to_return` facts).
+fn compose_java_method(
+    method_node: Node<'_>,
+    method_name: &str,
+    param_names: &[String],
+    source: &str,
+    rule_specs: &[(&str, TaintSpec)],
+    cross_file: &CrossFileInfo<'_>,
+) -> Option<FunctionTaintSummary> {
+    if param_names.is_empty() {
+        return None;
+    }
+    let body = find_scope_body(method_node).unwrap_or(method_node);
+
+    // Sanitizers from every rule are unioned so a value cleaned before it
+    // reaches the helper is not treated as tainted. Java's built-in rules ship
+    // none today, but this keeps the composition sanitizer-aware for custom
+    // rules and mirrors the shared-machinery languages.
+    let mut sanitizers = Vec::new();
+    for (_, rule_spec) in rule_specs {
+        sanitizers.extend(rule_spec.sanitizers.iter().cloned());
+    }
+
+    let mut params_to_sink: Vec<ParamSinkFlow> = Vec::new();
+    for (param_idx, param_name) in param_names.iter().enumerate() {
+        let synthetic = TaintSpec {
+            sources: vec![NodeMatcher::ParamName {
+                names: vec![param_name.clone()],
+                description: format!("parameter '{param_name}'"),
+            }],
+            sinks: vec![],
+            sanitizers: sanitizers.clone(),
+        };
+
+        let mut state = TaintState::default();
+        collect_param_sources(method_node, source, &synthetic, None, &mut state);
+        for _ in 0..3 {
+            propagate_assignments(body, source, &synthetic, None, &mut state);
+        }
+
+        walk_scope_nodes(body, source, &mut |node, src| {
+            if node.kind() != "method_invocation" {
+                return;
+            }
+            let Some(callee) = call_method_name(node, src) else {
+                return;
+            };
+            let Some(summary) = lookup_cross_file_summary(cross_file, callee) else {
+                return;
+            };
+            let Some(args) = node.child_by_field_name("arguments") else {
+                return;
+            };
+            let mut cursor = args.walk();
+            let arg_nodes: Vec<Node<'_>> = args.named_children(&mut cursor).collect();
+
+            for flow in &summary.params_to_sink {
+                if !cross_file.allowed_rule_ids.contains(&flow.sink_rule_id) {
+                    continue;
+                }
+                if flow.param_index >= arg_nodes.len() {
+                    continue;
+                }
+                let arg = arg_nodes[flow.param_index];
+                if expression_taint(arg, src, &synthetic, None, &state).is_none() {
+                    continue;
+                }
+                let dup = params_to_sink
+                    .iter()
+                    .any(|f| f.param_index == param_idx && f.sink_rule_id == flow.sink_rule_id);
+                if !dup {
+                    params_to_sink.push(ParamSinkFlow {
+                        param_index: param_idx,
+                        sink_rule_id: flow.sink_rule_id.clone(),
+                        sink_description: flow.sink_description.clone(),
+                    });
+                }
+            }
+        });
+    }
+
+    if params_to_sink.is_empty() {
+        return None;
+    }
+    Some(FunctionTaintSummary {
+        name: method_name.to_string(),
+        params_to_return: Vec::new(),
+        params_to_sink,
+    })
 }
 
 fn analyze_scope(
@@ -1448,6 +1610,107 @@ class Plain {
         assert!(
             found.iter().all(|s| s.name != "log"),
             "method with no param flow should not be summarized: {found:?}"
+        );
+    }
+
+    #[test]
+    fn compose_lifts_forwarded_param_to_cross_file_sink() {
+        // Middle helper `process` forwards its parameter into a same-package
+        // helper `runQuery` that sinks it. Its base summary records nothing;
+        // composing it against `runQuery`'s summary must lift the cross-file
+        // sink into `process`'s own params_to_sink (the A->f->g->sink hop).
+        let sink_src = r#"
+class QueryHelper {
+    static Statement stmt;
+    static void runQuery(String term) throws Exception {
+        stmt.executeQuery("SELECT * FROM users WHERE name = '" + term + "'");
+    }
+}
+"#;
+        let middle_src = r#"
+class Service {
+    static void process(String term) throws Exception {
+        QueryHelper.runQuery(term);
+    }
+}
+"#;
+        let sink_path = PathBuf::from("QueryHelper.java");
+        let mut map = CrossFileSummaryMap::new();
+        map.insert(sink_path.clone(), summaries(sink_src));
+
+        // Sanity: the base summary of `process` records no sink flow.
+        assert!(
+            summaries(middle_src)
+                .iter()
+                .find(|s| s.name == "process")
+                .is_none_or(|s| s.params_to_sink.is_empty()),
+            "base summary of process must not record a sink flow"
+        );
+
+        let tree = parse_file(middle_src, Language::Java).expect("parse middle");
+        let specs = java_taint_rule_specs();
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let composed = compose_cross_file_summaries(
+            tree.root_node(),
+            middle_src,
+            None,
+            &specs,
+            std::slice::from_ref(&sink_path),
+            &map,
+            &allowed,
+        );
+        let process = composed
+            .iter()
+            .find(|s| s.name == "process")
+            .expect("process should gain a composed summary");
+        let flow = process
+            .params_to_sink
+            .iter()
+            .find(|f| f.param_index == 0)
+            .expect("param 0 should reach the cross-file sink");
+        assert_eq!(flow.sink_rule_id, "java/taint-sql-injection");
+    }
+
+    #[test]
+    fn compose_is_taint_sensitive_across_the_hop() {
+        // The middle helper replaces its parameter with a constant before the
+        // cross-file call, so the composed summary must NOT record a sink flow
+        // (the negative multi-hop shape — no configured Java sanitizer needed).
+        let sink_src = r#"
+class QueryHelper {
+    static Statement stmt;
+    static void runQuery(String term) throws Exception {
+        stmt.executeQuery("SELECT * FROM users WHERE name = '" + term + "'");
+    }
+}
+"#;
+        let middle_src = r#"
+class Service {
+    static void process(String term) throws Exception {
+        String safe = "constant";
+        QueryHelper.runQuery(safe);
+    }
+}
+"#;
+        let sink_path = PathBuf::from("QueryHelper.java");
+        let mut map = CrossFileSummaryMap::new();
+        map.insert(sink_path.clone(), summaries(sink_src));
+
+        let tree = parse_file(middle_src, Language::Java).expect("parse middle");
+        let specs = java_taint_rule_specs();
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let composed = compose_cross_file_summaries(
+            tree.root_node(),
+            middle_src,
+            None,
+            &specs,
+            std::slice::from_ref(&sink_path),
+            &map,
+            &allowed,
+        );
+        assert!(
+            composed.iter().all(|s| s.params_to_sink.is_empty()),
+            "a clean (constant) argument must not compose a sink flow: {composed:?}"
         );
     }
 
