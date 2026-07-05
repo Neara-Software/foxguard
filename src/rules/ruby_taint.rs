@@ -781,6 +781,18 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
                 {
                     return Some(description.clone());
                 }
+                // Case 3: Ruby constant scope-resolution path, e.g.
+                // `Digest::MD5`. Compiled from a `pattern: Digest::MD5` source
+                // (see `is_ruby_constant_path` in the Semgrep bridge). Matched
+                // by EXACT text so `Digest::SHA256` stays silent — the
+                // `md5-used-as-password` discriminator. The taint then flows
+                // through `.hexdigest`/`.new`/… reads on the constant via the
+                // existing receiver-propagation path in `expression_taint`.
+                if node.kind() == "scope_resolution"
+                    && node_text(node, source) == canonical.as_str()
+                {
+                    return Some(description.clone());
+                }
             }
             NodeMatcher::ParamName { names, description } => {
                 // Bare-identifier sources (`params`, `gets`, `ENV`, …) are
