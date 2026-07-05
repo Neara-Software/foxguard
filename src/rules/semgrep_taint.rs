@@ -275,6 +275,15 @@ enum GenericMatcher {
         description: String,
         regex: Option<String>,
     },
+
+    /// Matches a LOOSE-EQUALITY comparison SINK — a binary `==`/`!=` expression
+    /// one of whose operands is tainted. Compiled from the PHP Semgrep sink
+    /// patterns `$VAR1 == $VAR2` / `$VAR1 != $VAR2` (the `md5-loose-equality`
+    /// type-juggling rule). Matches ONLY the loose operators, never the strict
+    /// `===`/`!==` (which is the safe form the rule recommends). Sink/sanitizer
+    /// only — a comparison is a destination, not a taint origin. Matched by the
+    /// PHP engine; other engines carry it in the spec but no-op it.
+    LooseEquality { description: String },
 }
 
 #[derive(Clone, Debug)]
@@ -445,6 +454,10 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => python_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -556,6 +569,11 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+        GenericMatcher::LooseEquality { description } => {
+            javascript_taint::NodeMatcher::LooseEquality {
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -661,6 +679,10 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => go_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -766,6 +788,10 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => java_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -878,6 +904,10 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => c_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -983,6 +1013,10 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => kotlin_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1088,6 +1122,10 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => ruby_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1202,6 +1240,10 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => csharp_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1305,6 +1347,10 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => bash_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1414,6 +1460,11 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+        GenericMatcher::LooseEquality { description } => {
+            solidity_taint::NodeMatcher::LooseEquality {
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1517,6 +1568,10 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => scala_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1620,6 +1675,10 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => apex_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1723,6 +1782,10 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => swift_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1819,6 +1882,10 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
                 regex: regex.clone(),
             }
         }
+
+        GenericMatcher::LooseEquality { description } => php_taint::NodeMatcher::LooseEquality {
+            description: description.clone(),
+        },
     }
 }
 
@@ -5429,6 +5496,27 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
         }
     }
 
+    // ── LooseEquality form: `$VAR1 == $VAR2` / `$VAR1 != $VAR2` (PHP) ─────
+    //
+    // The PHP `md5-loose-equality` rule expresses its sink as a loose-equality
+    // comparison of two metavariables. When a hash-family value (`md5(...)`,
+    // `hash(...)`, `sha1(...)`, …) reaches a loose `==`/`!=` comparison, PHP's
+    // type-juggling allows a "magic hash" bypass — the fix is a strict
+    // `===`/`!==`. The bridge compiles the loose comparison to a
+    // `LooseEquality` sink; the PHP engine fires only when the comparison uses
+    // the LOOSE operator (`==`/`!=`, never the strict `===`/`!==`) AND one
+    // operand carries taint. Gated to PHP + sink/sanitizer role: type-juggling
+    // is PHP-specific, and a comparison is a data-flow destination, not a taint
+    // origin.
+    if lang == Language::Php && is_loose_equality_pattern(pat) {
+        return match role {
+            MatcherRole::Sink | MatcherRole::Sanitizer => Some(GenericMatcher::LooseEquality {
+                description: describe(pat, role),
+            }),
+            MatcherRole::Source => None,
+        };
+    }
+
     // ── BinopFormat form: string-building sinks ──────────────────────────
     //
     // Semgrep SQL/command-string sinks express tainted concatenation as a
@@ -5911,6 +5999,43 @@ fn parse_return_metavar(pat: &str) -> Option<()> {
 ///
 /// Rejected (returns false): plain calls, attribute chains, subscripts,
 /// assignments, and any binop whose operands include unrecognised tokens.
+/// True when `pat` is a LOOSE-equality comparison of two metavariables —
+/// `$VAR1 == $VAR2` or `$VAR1 != $VAR2` — and NOT the strict `===`/`!==`.
+///
+/// Faithfulness (the whole point of `md5-loose-equality`): the strict operators
+/// `===`/`!==` are the SAFE form the rule recommends, so they must never match.
+/// The pattern is accepted only when, after trimming, the whole expression is
+/// exactly `<metavar> <op> <metavar>` with `op` ∈ {`==`, `!=`} and the operator
+/// is not part of a longer `===`/`!==` token.
+fn is_loose_equality_pattern(pat: &str) -> bool {
+    let p = pat.trim();
+    for op in ["==", "!="] {
+        let Some(idx) = p.find(op) else {
+            continue;
+        };
+        // Reject the strict form: `==`/`!=` immediately followed by another `=`
+        // is `===`/`!==` (the safe comparison the rule does NOT flag).
+        if p[idx + op.len()..].starts_with('=') {
+            continue;
+        }
+        // Reject `<=` / `>=` masquerading as `==` scan noise: `==` cannot be
+        // preceded by `<`/`>`/`!` (a distinct operator), and `!=` is searched
+        // separately, so a boundary check on the byte before `idx` suffices.
+        if idx > 0 {
+            let prev = p.as_bytes()[idx - 1];
+            if matches!(prev, b'<' | b'>' | b'!' | b'=') {
+                continue;
+            }
+        }
+        let lhs = p[..idx].trim();
+        let rhs = p[idx + op.len()..].trim();
+        if is_metavariable(lhs) && is_metavariable(rhs) {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_binop_format_pattern(pat: &str) -> bool {
     // f-string interpolation: `f"...{$...}..."`.
     if (pat.starts_with("f\"") || pat.starts_with("f'")) && pat.contains("{$") {
@@ -13533,5 +13658,130 @@ def numeric(a, b):
             findings.is_empty(),
             "plain literals / bare variables / numeric sums reaching text(...) must NOT fire, got {findings:?}"
         );
+    }
+
+    // ── PHP loose-equality comparison sink (`md5-loose-equality`) ────────────
+    //
+    // These exercise the full `parse_taint_rule` -> `compiled()` -> `check()`
+    // path for the `LooseEquality` sink primitive. The HARD faithfulness gate is
+    // the loose-vs-strict discrimination: a hash-family source reaching a LOOSE
+    // `==`/`!=` fires, but the SAME source reaching a STRICT `===`/`!==` (the
+    // safe form the rule recommends) must NOT — firing on strict comparison
+    // would be the over-match the rule exists to avoid.
+
+    const MD5_LOOSE_RULE: &str = r#"
+id: md5-loose-equality
+mode: taint
+languages: [php]
+severity: ERROR
+message: "Make sure comparisons involving md5 values are strict"
+pattern-sinks:
+  - pattern: $VAR1 == $VAR2
+  - pattern: $VAR1 != $VAR2
+pattern-sources:
+  - pattern: md5(...)
+  - pattern: hash(...)
+  - pattern: sha1(...)
+pattern-sanitizers:
+  - pattern: strlen(...)
+"#;
+
+    #[test]
+    fn md5_loose_equality_loads() {
+        // Must compile to a live rule with a LooseEquality sink.
+        let rule = compiled(MD5_LOOSE_RULE);
+        assert!(
+            rule.spec
+                .sinks
+                .iter()
+                .any(|s| matches!(s, GenericMatcher::LooseEquality { .. })),
+            "expected a LooseEquality sink, got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    #[test]
+    fn md5_loose_equality_loose_comparison_fires() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MD5_LOOSE_RULE);
+        // A hash-family value flowing into a LOOSE `==` comparison fires.
+        let src = "<?php\nfunction f($u){\n  $h = md5($u);\n  if ($h == $u) { return 1; }\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "md5 value in a loose `==` comparison must fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn md5_loose_equality_direct_source_at_sink_fires() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MD5_LOOSE_RULE);
+        // The source expression can appear inline in the comparison.
+        let src = "<?php\nfunction f($u){\n  if (md5($u) == \"0\") { return 1; }\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert_eq!(rule.check(src, &tree).len(), 1);
+    }
+
+    #[test]
+    fn md5_loose_equality_strict_comparison_stays_clean() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MD5_LOOSE_RULE);
+        // The SAME md5 value in a STRICT `===` comparison must NOT fire — this
+        // is the whole point of the rule and the faithfulness gate.
+        let src = "<?php\nfunction f($u){\n  $h = md5($u);\n  if ($h === $u) { return 1; }\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "strict `===` comparison must NOT fire (safe form the rule recommends), got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn md5_loose_equality_untainted_comparison_stays_clean() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MD5_LOOSE_RULE);
+        // A loose comparison of two untainted values is not a finding.
+        let src = "<?php\nfunction f($a,$b){\n  if ($a == $b) { return 1; }\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert!(
+            rule.check(src, &tree).is_empty(),
+            "untainted `==` comparison must NOT fire"
+        );
+    }
+
+    #[test]
+    fn md5_loose_equality_sanitized_operand_stays_clean() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MD5_LOOSE_RULE);
+        // `strlen(...)` sanitizes the hash before the comparison → no finding.
+        let src =
+            "<?php\nfunction f($u){\n  $h = md5($u);\n  if (strlen($h) == $u) { return 1; }\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert!(
+            rule.check(src, &tree).is_empty(),
+            "strlen-sanitized operand must NOT fire"
+        );
+    }
+
+    #[test]
+    fn loose_equality_not_a_source_shape() {
+        // A comparison is a destination, never a taint origin — the pattern must
+        // not compile as a SOURCE.
+        assert!(compile_pattern("$A == $B", MatcherRole::Source, Language::Php).is_none());
+        // And it is gated to PHP: other languages do not compile it (they have
+        // no type-juggling comparison sink).
+        assert!(compile_pattern("$A == $B", MatcherRole::Sink, Language::Java).is_none());
+        // Strict equality never compiles as a LooseEquality sink.
+        assert!(compile_pattern("$A === $B", MatcherRole::Sink, Language::Php).is_none());
+        assert!(compile_pattern("$A !== $B", MatcherRole::Sink, Language::Php).is_none());
+        // Assignment is not a comparison.
+        assert!(!is_loose_equality_pattern("$A = $B"));
+        // Loose forms are recognized.
+        assert!(is_loose_equality_pattern("$A == $B"));
+        assert!(is_loose_equality_pattern("$A != $B"));
     }
 }

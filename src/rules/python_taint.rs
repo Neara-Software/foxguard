@@ -1679,7 +1679,9 @@ fn match_source(
             // seeding, so it is a no-op here.
             | NodeMatcher::TypedName { .. }
             // Java-only typed-assignment sink; no-op in source position here.
-            | NodeMatcher::TypedAssignTarget { .. } => {
+            | NodeMatcher::TypedAssignTarget { .. }
+            // PHP-only loose-equality comparison sink; no-op in the Python engine.
+            | NodeMatcher::LooseEquality { .. } => {
                 // Sink-only matchers; MemberAssign is JS-specific.
             }
         }

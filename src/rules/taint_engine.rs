@@ -244,6 +244,24 @@ pub enum NodeMatcher {
         description: String,
         regex: Option<String>,
     },
+
+    /// Match a LOOSE-EQUALITY comparison SINK — a binary `==` or `!=`
+    /// expression (PHP type-juggling) where one operand is tainted. Compiled
+    /// from Semgrep sink patterns `$VAR1 == $VAR2` / `$VAR1 != $VAR2`
+    /// (the `md5-loose-equality` rule: comparing a hash with `==` allows
+    /// magic-hash type-juggling bypasses).
+    ///
+    /// Faithfulness (the whole point): this matches ONLY the loose `==`/`!=`
+    /// operators — NEVER the strict `===`/`!==` — because strict comparison is
+    /// exactly the safe form the rule tells you to use. The operator token is
+    /// checked by its exact grammar kind (`==` / `!=` are distinct node kinds
+    /// from `===` / `!==`), and the sink fires only when a tracked-tainted
+    /// value reaches one operand, so a strict comparison or an untainted loose
+    /// comparison is silent. Sink/sanitizer only — a comparison is a data-flow
+    /// destination, not a taint origin. Compiled solely for the PHP engine
+    /// (type-juggling is PHP-specific); other engines carry the matcher in the
+    /// spec but no-op it.
+    LooseEquality { description: String },
 }
 
 impl NodeMatcher {
@@ -265,6 +283,7 @@ impl NodeMatcher {
             NodeMatcher::TypedName { description, .. } => description,
             NodeMatcher::TypedAssignTarget { description, .. } => description,
             NodeMatcher::LiteralString { description, .. } => description,
+            NodeMatcher::LooseEquality { description } => description,
         }
     }
 }
@@ -1451,6 +1470,9 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
         }
         NodeMatcher::LiteralString { description, regex } => {
             format!("LS|{}|{description}", regex.as_deref().unwrap_or(""))
+        }
+        NodeMatcher::LooseEquality { description } => {
+            format!("LE|{description}")
         }
     }
 }

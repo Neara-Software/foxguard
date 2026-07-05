@@ -769,6 +769,13 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for PhpTaintAdapter {
         if node.kind() == "echo_statement" {
             handle_echo(node, ctx, state, findings);
         }
+        // `$a == $b` / `$a != $b` — a loose-equality comparison sink
+        // (`md5-loose-equality` type-juggling rule). PHP parses these as
+        // `binary_expression` nodes (the `.` string-concat form is skipped by
+        // the operator check inside the handler).
+        if node.kind() == "binary_expression" {
+            handle_loose_equality(node, ctx, state, findings);
+        }
         // `print` is a language construct parsed as `print_intrinsic`.
         if node.kind() == "print_intrinsic" {
             handle_print(node, ctx, state, findings);
@@ -1037,6 +1044,64 @@ fn handle_echo(
                 1,
             ));
             return;
+        }
+    }
+}
+
+/// Handle a `binary_expression` as a possible LOOSE-EQUALITY sink
+/// (`md5-loose-equality`): `$hash == $userInput` / `$hash != $userInput`.
+///
+/// Fires only when the rule configured a [`NodeMatcher::LooseEquality`] sink,
+/// the operator is the LOOSE `==` / `!=` (the strict `===` / `!==` — the safe
+/// form the rule recommends — is a distinct grammar token and never matches),
+/// and one operand carries taint (e.g. an `md5(...)`/`hash(...)` source value).
+fn handle_loose_equality(
+    node: Node<'_>,
+    ctx: &PhpCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let sink_desc = ctx.spec.sinks.iter().find_map(|m| {
+        if let NodeMatcher::LooseEquality { description } = m {
+            Some(description.clone())
+        } else {
+            None
+        }
+    });
+    let Some(sink_desc) = sink_desc else {
+        return;
+    };
+
+    // The operator is an unnamed child token whose kind is the exact operator
+    // text (`==`, `!=`, `===`, `!==`, `.`, `<`, …). Accept ONLY the loose
+    // equality operators; the strict `===`/`!==` and every other operator are
+    // rejected.
+    let mut is_loose = false;
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if matches!(child.kind(), "==" | "!=") {
+            is_loose = true;
+            break;
+        }
+    }
+    if !is_loose {
+        return;
+    }
+
+    // One operand tainted → the loose comparison is the sink.
+    for i in 0..2 {
+        if let Some(operand) = node.named_child(i) {
+            if let Some((source_desc, src_line)) = expression_taint(operand, ctx, state) {
+                findings.push(taint_finding_for_node(
+                    node,
+                    source_desc,
+                    sink_desc.clone(),
+                    src_line,
+                    None,
+                    1,
+                ));
+                return;
+            }
         }
     }
 }
@@ -1521,7 +1586,11 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             | NodeMatcher::TypedAssignTarget { .. }
             // Ellipsis-string source `"..."`; no PHP registry rule uses this
             // source shape, so the PHP engine does not seed string literals.
-            | NodeMatcher::LiteralString { .. } => {
+            | NodeMatcher::LiteralString { .. }
+            // Loose-equality comparison sink (`md5-loose-equality`); a sink-only
+            // matcher handled in `handle_loose_equality`, no-op in source
+            // position.
+            | NodeMatcher::LooseEquality { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the PHP engine (no-op).
             }
