@@ -1899,6 +1899,40 @@ fn is_sanitizer_call(
     false
 }
 
+/// True when `node`'s source text satisfies the optional source-regex
+/// constraint carried by a `LiteralString { regex }` matcher (`None` = any
+/// literal). Mirrors the Python engine's enforcement so a `"$URL"` +
+/// `metavariable-regex` source seeds only the matching literals. Compiled
+/// regexes are cached per thread; a compile failure yields "no match".
+fn js_literal_matches_source_regex(node: Node<'_>, source: &str, regex: Option<&str>) -> bool {
+    let Some(pattern) = regex else {
+        return true;
+    };
+    let text = node_text(node, source);
+    JS_SOURCE_REGEX_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(re) = cache.get(pattern) {
+            return re.is_match(text);
+        }
+        match crate::rules::semgrep_compat::compile_regex(pattern) {
+            Ok(re) => {
+                let matched = re.is_match(text);
+                cache.insert(pattern.to_string(), re);
+                matched
+            }
+            Err(_) => false,
+        }
+    })
+}
+
+thread_local! {
+    /// Per-thread cache of compiled source-literal regexes (see the Python
+    /// engine's equivalent), keyed by the regex source string.
+    static JS_SOURCE_REGEX_CACHE: std::cell::RefCell<
+        HashMap<String, crate::rules::semgrep_compat::CompiledRegex>,
+    > = std::cell::RefCell::new(HashMap::new());
+}
+
 fn match_source(
     node: Node<'_>,
     source: &str,
@@ -1985,14 +2019,20 @@ fn match_source(
             NodeMatcher::ParamName { .. } => {
                 // Seeded at function entry, not matched on expressions.
             }
-            NodeMatcher::LiteralString { description } => {
+            NodeMatcher::LiteralString { description, regex } => {
                 // Ellipsis-string source `"..."`: any string literal is a taint
                 // origin. JS/TS string literals are `string` and (static or
                 // interpolated) `template_string`. Matching ONLY these literal
                 // node kinds keeps the source faithful — an identifier, call
                 // result, or environment read is never seeded, so the rule
                 // fires on `sign(p, "secret")` but not `sign(p, secretFromEnv)`.
-                if matches!(node.kind(), "string" | "template_string") {
+                //
+                // A `Some(regex)` constraint (the `"$URL"` + `metavariable-regex`
+                // shape) additionally restricts seeding to literals whose text
+                // matches; `None` (the common case) seeds any literal.
+                if matches!(node.kind(), "string" | "template_string")
+                    && js_literal_matches_source_regex(node, source, regex.as_deref())
+                {
                     return Some(description.clone());
                 }
             }

@@ -1446,6 +1446,46 @@ fn subscript_base_matches(value: Node<'_>, source: &str, want: Option<&str>) -> 
     }
 }
 
+/// True when `node`'s source text satisfies the optional source-regex
+/// constraint carried by a `LiteralString { regex }` matcher.
+///
+/// `None` = no constraint (any string literal qualifies — the bare `"..."`
+/// hardcoded-secret shape). `Some(pattern)` restricts seeding to literals whose
+/// text matches the combined lookahead regex built by the Semgrep bridge (the
+/// `"$URL"` + `metavariable-regex` shape). Compiled regexes are cached per
+/// thread so a file with many literals does not recompile the pattern each
+/// time. A compile failure (the bridge already rejects malformed patterns at
+/// load time) conservatively yields "no match" so a bad constraint never
+/// over-seeds.
+fn literal_matches_source_regex(node: Node<'_>, source: &str, regex: Option<&str>) -> bool {
+    let Some(pattern) = regex else {
+        return true;
+    };
+    let text = node_text(node, source);
+    SOURCE_REGEX_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(re) = cache.get(pattern) {
+            return re.is_match(text);
+        }
+        match crate::rules::semgrep_compat::compile_regex(pattern) {
+            Ok(re) => {
+                let matched = re.is_match(text);
+                cache.insert(pattern.to_string(), re);
+                matched
+            }
+            Err(_) => false,
+        }
+    })
+}
+
+thread_local! {
+    /// Per-thread cache of compiled source-literal regexes, keyed by the regex
+    /// source string, to avoid recompiling once per string-literal node.
+    static SOURCE_REGEX_CACHE: std::cell::RefCell<
+        HashMap<String, crate::rules::semgrep_compat::CompiledRegex>,
+    > = std::cell::RefCell::new(HashMap::new());
+}
+
 fn match_source(
     node: Node<'_>,
     source: &str,
@@ -1540,13 +1580,22 @@ fn match_source(
                 // from the function's parameter list, not when walking
                 // expressions.
             }
-            NodeMatcher::LiteralString { description } => {
+            NodeMatcher::LiteralString { description, regex } => {
                 // Ellipsis-string source `"..."`: any string literal is a taint
                 // origin. Python string literals are `string` (and adjacent
                 // `concatenated_string`, e.g. `"a" "b"`). Matching ONLY these
                 // literal node kinds keeps the source faithful — an identifier,
                 // call result, or environment read is never seeded.
-                if matches!(node.kind(), "string" | "concatenated_string") {
+                //
+                // When `regex` is `Some`, the literal is seeded ONLY if its text
+                // matches the constraint (the `"$URL"` + `metavariable-regex`
+                // shape — e.g. the `requests` `http://` cleartext rules). This
+                // is the whole point: `requests.request("GET", "http://evil")`
+                // fires, but `"https://safe"` / `"localhost"` do NOT match and
+                // are never seeded.
+                if matches!(node.kind(), "string" | "concatenated_string")
+                    && literal_matches_source_regex(node, source, regex.as_deref())
+                {
                     return Some(description.clone());
                 }
             }

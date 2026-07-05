@@ -227,7 +227,23 @@ pub enum NodeMatcher {
     /// destination. Only the Python and JavaScript engines consult it today
     /// (the only registry rules with this source shape target those langs);
     /// other engines carry it in the spec but no-op it.
-    LiteralString { description: String },
+    ///
+    /// `regex` optionally constrains WHICH literals are seeded: when
+    /// `Some(pattern)`, only a string literal whose text matches the compiled
+    /// regex is a source (`None` = any literal, the original behavior). This
+    /// carries the Semgrep `pattern: "$URL"` + `metavariable-pattern`/
+    /// `metavariable-regex` shape (a literal whose *content* matches a regex),
+    /// e.g. the `requests` `http://` SSRF/cleartext rules whose source is "a
+    /// string literal matching `http://` and not localhost/127.0.0.1". The
+    /// stored value is the (fancy-regex-compatible) regex SOURCE string; the
+    /// engine compiles it via `semgrep_compat::compile_regex` at match time.
+    /// Faithfulness: with the regex present a non-matching literal
+    /// (`"https://safe"`, `"localhost"`) is NOT seeded, so the rule fires only
+    /// on the constrained literals — never every string.
+    LiteralString {
+        description: String,
+        regex: Option<String>,
+    },
 }
 
 impl NodeMatcher {
@@ -248,7 +264,7 @@ impl NodeMatcher {
             NodeMatcher::ReturnValue { description, .. } => description,
             NodeMatcher::TypedName { description, .. } => description,
             NodeMatcher::TypedAssignTarget { description, .. } => description,
-            NodeMatcher::LiteralString { description } => description,
+            NodeMatcher::LiteralString { description, .. } => description,
         }
     }
 }
@@ -1362,8 +1378,8 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
         } => {
             format!("TAT|{type_name}|{description}")
         }
-        NodeMatcher::LiteralString { description } => {
-            format!("LS|{description}")
+        NodeMatcher::LiteralString { description, regex } => {
+            format!("LS|{}|{description}", regex.as_deref().unwrap_or(""))
         }
     }
 }
