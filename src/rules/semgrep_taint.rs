@@ -387,6 +387,16 @@ enum GenericMatcher {
         method: String,
         description: String,
     },
+
+    /// Inline method call `<recv>.<method>("<arg>", ...)` as a taint SOURCE
+    /// (the JS `md5-used-as-password` source `$CRYPTO.createHash("md5")`). See
+    /// [`crate::rules::taint_engine::NodeMatcher::LiteralArgCall`]. Compiled
+    /// solely for the JS engine; other engines carry it but no-op it.
+    LiteralArgCall {
+        method: String,
+        arg: String,
+        description: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -629,6 +639,15 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => python_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -815,6 +834,15 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => javascript_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -992,6 +1020,15 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => go_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1167,6 +1204,15 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             init_method: init_method.clone(),
             init_arg: init_arg.clone(),
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => java_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
             description: description.clone(),
         },
     }
@@ -1353,6 +1399,15 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => c_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1530,6 +1585,15 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => kotlin_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1705,6 +1769,15 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
             init_method: init_method.clone(),
             init_arg: init_arg.clone(),
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => ruby_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
             description: description.clone(),
         },
     }
@@ -1893,6 +1966,15 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => csharp_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2066,6 +2148,15 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
             init_method: init_method.clone(),
             init_arg: init_arg.clone(),
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => bash_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
             description: description.clone(),
         },
     }
@@ -2252,6 +2343,15 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => solidity_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2425,6 +2525,15 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
             init_method: init_method.clone(),
             init_arg: init_arg.clone(),
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => scala_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
             description: description.clone(),
         },
     }
@@ -2602,6 +2711,15 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => apex_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2777,6 +2895,15 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => swift_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2943,6 +3070,15 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
             init_method: init_method.clone(),
             init_arg: init_arg.clone(),
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => php_taint::NodeMatcher::LiteralArgCall {
+            method: method.clone(),
+            arg: arg.clone(),
             description: description.clone(),
         },
     }
@@ -4774,6 +4910,28 @@ fn compile_entry(
             // tainted focus argument/RHS — FP-safe. Gated to C#.
             if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
                 if try_compile_csharp_pattern_regex_either_sink_block(v, role, lang, out) {
+                    return;
+                }
+            }
+            // ── JS DOM-property-assignment SINK with a metavariable property
+            //    name pinned by an anchored-alternation `metavariable-regex`
+            //    (the `react-unsanitized-property` rule) ─────────────────────
+            //
+            // The sink is `$BODY.$HTML = $SINK` (also the deep-member
+            // `$BODY. ... .$HTML = $SINK` and the concrete-receiver
+            // `ReactDOM.findDOMNode(...).$HTML = $SINK`) with a block-level
+            // `metavariable-regex: { $HTML: (innerHTML|outerHTML) }` and
+            // `focus-metavariable: $SINK`. The property being assigned is a
+            // METAVARIABLE, so the plain [`parse_member_assign_pattern`] path
+            // (which needs a concrete field) misses it and the block would
+            // otherwise drop the regex + focus and produce nothing. We ENUMERATE
+            // the anchored alternation into one concrete
+            // [`GenericMatcher::MemberAssign`] per property name — the JS engine
+            // then fires only on `<expr>.innerHTML = tainted` /
+            // `<expr>.outerHTML = tainted` (never any other property, and never
+            // a constant RHS). Gated to JS (the JS engine also serves TS).
+            if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
+                if try_compile_js_member_assign_regex_block(v, role, lang, out) {
                     return;
                 }
             }
@@ -7329,6 +7487,191 @@ fn parse_property_assign_arm(
     regex_alternatives_for(prop_mv, regexes)
 }
 
+/// Parse a JS/TS inline literal-argument call source `$RECV.method("<arg>")`
+/// into `(method, arg)`. The receiver must be a metavariable, the method a
+/// plain identifier, and the sole argument a single string literal (no extra
+/// arguments, no metavariable arguments — keeping the source faithful to the
+/// concrete-literal form). Any other shape → `None`.
+fn parse_js_literal_arg_call_source(pat: &str) -> Option<(String, String)> {
+    let p = pat.trim();
+    let open = p.find('(')?;
+    if !p.ends_with(')') {
+        return None;
+    }
+    let callee = p[..open].trim();
+    let args = p[open + 1..p.len() - 1].trim();
+    // Callee is `$RECV.method` — a metavariable receiver and identifier method.
+    let dot = callee.rfind('.')?;
+    let recv = callee[..dot].trim();
+    let method = callee[dot + 1..].trim();
+    if !is_metavariable(recv) || !is_identifier(method) {
+        return None;
+    }
+    // The single argument must be one string literal `"..."` / `'...'`.
+    let inner = string_literal_inner(args)?;
+    Some((method.to_string(), inner.to_string()))
+}
+
+/// If `s` is exactly one single- or double-quoted string literal, return its
+/// inner text (without quotes). Rejects anything else (metavariables, multiple
+/// args, ellipsis, concatenations).
+fn string_literal_inner(s: &str) -> Option<&str> {
+    let s = s.trim();
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
+    {
+        let inner = &s[1..s.len() - 1];
+        // Reject embedded quotes (would mean more than one literal / escapes).
+        if !inner.contains('"') && !inner.contains('\'') {
+            return Some(inner);
+        }
+    }
+    None
+}
+
+/// Compile a JS/TS `patterns:` sink block whose sink is a DOM property
+/// assignment `<expr>.$FIELD = $SINK` where the assigned property `$FIELD` is a
+/// METAVARIABLE pinned by an anchored-alternation `metavariable-regex` and
+/// `$SINK` is the block-level `focus-metavariable`, into one
+/// [`GenericMatcher::MemberAssign`] per enumerated property name.
+///
+/// Handles the `react-unsanitized-property` sink shape. The surrounding
+/// `pattern-inside` provenance contexts (`$BODY = useRef(...)` etc.) and the
+/// deep-member / concrete-receiver LHS forms are all droppable: the compiled
+/// `MemberAssign { field }` matches any assignment whose LHS property equals a
+/// listed name AND whose RHS carries taint, which is strictly ≤ the original
+/// (the property-name regex is enforced by enumeration, so a non-listed
+/// property never fires). Returns `true` iff at least one sink was emitted.
+fn try_compile_js_member_assign_regex_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    lang: Language,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    if lang != Language::JavaScript {
+        return false;
+    }
+    if !matches!(role, MatcherRole::Sink | MatcherRole::Sanitizer) {
+        return false;
+    }
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+
+    // Collect every assignment `pattern:` (direct or inside a `pattern-either`),
+    // the block-level `metavariable-regex` pins, and the focus metavariable.
+    let mut patterns: Vec<String> = Vec::new();
+    let mut regexes: Vec<(String, String)> = Vec::new();
+    let mut focus: Vec<String> = Vec::new();
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        patterns.push(s.trim().to_string());
+                    }
+                }
+                Some("pattern-either") => {
+                    if let Some(seq) = val.as_sequence() {
+                        for arm in seq {
+                            if let Some(am) = arm.as_mapping() {
+                                if let Some(p) =
+                                    am.get(YamlValue::from("pattern")).and_then(|x| x.as_str())
+                                {
+                                    patterns.push(p.trim().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                Some("focus-metavariable") => {
+                    if let Some(s) = val.as_str() {
+                        let mv = s.trim();
+                        if is_metavariable(mv) {
+                            focus.push(mv.to_string());
+                        }
+                    }
+                }
+                Some("metavariable-regex") => {
+                    if let Some(mm) = val.as_mapping() {
+                        let mv = mm
+                            .get(YamlValue::from("metavariable"))
+                            .and_then(|x| x.as_str());
+                        let re = mm.get(YamlValue::from("regex")).and_then(|x| x.as_str());
+                        if let (Some(mv), Some(re)) = (mv, re) {
+                            regexes.push((mv.to_string(), re.to_string()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let Some(focus_mv) = focus.first() else {
+        return false;
+    };
+    if regexes.is_empty() {
+        return false;
+    }
+
+    let mut fields: Vec<String> = Vec::new();
+    for pat in &patterns {
+        if let Some(names) = parse_js_member_assign_field_arm(pat, focus_mv, &regexes) {
+            for name in names {
+                if !fields.contains(&name) {
+                    fields.push(name);
+                }
+            }
+        }
+    }
+    if fields.is_empty() {
+        return false;
+    }
+
+    let before = out.len();
+    for field in fields {
+        out.push(GenericMatcher::MemberAssign {
+            description: describe(&field, role),
+            field,
+        });
+    }
+    out.len() > before
+}
+
+/// Parse a property-assignment sink arm `<expr>.$FIELD = $SINK` whose assigned
+/// property `$FIELD` is a metavariable pinned by an anchored-alternation
+/// `metavariable-regex` (ENUMERATED into the returned field names) and whose RHS
+/// equals the focus metavariable `$SINK`. The receiver (`<expr>`) may be any
+/// shape (a metavariable, a deep-member `$BODY. ... `, or a concrete
+/// `ReactDOM.findDOMNode(...)` chain) — it is a droppable narrowing. Any other
+/// shape → `None`.
+fn parse_js_member_assign_field_arm(
+    pattern: &str,
+    focus_mv: &str,
+    regexes: &[(String, String)],
+) -> Option<Vec<String>> {
+    let p = pattern.trim().trim_end_matches(';').trim();
+    let (lhs, rhs) = p.split_once('=')?;
+    // Reject `==` / `===` comparisons (the split would leave a leading `=`).
+    if rhs.starts_with('=') {
+        return None;
+    }
+    if rhs.trim() != focus_mv {
+        return None;
+    }
+    let lhs = lhs.trim();
+    let dot = lhs.rfind('.')?;
+    let prop_mv = lhs[dot + 1..].trim();
+    if !is_metavariable(prop_mv) {
+        return None;
+    }
+    regex_alternatives_for(prop_mv, regexes)
+}
+
 /// Compile a Bash-specific pattern (shell command or command substitution)
 /// into a `Call` matcher keyed by the command name.
 ///
@@ -7696,6 +8039,30 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
                 description: "hardcoded string literal".to_string(),
                 regex: None,
             });
+        }
+    }
+
+    // ── JS/TS inline literal-argument call SOURCE: `$RECV.method("<arg>")` ──
+    //
+    // The `md5-used-as-password` source `$CRYPTO.createHash("md5")`: a method
+    // call whose single argument is a string literal. None of the generic
+    // call/field shapes recognise a metavariable-receiver call with a concrete
+    // literal argument, so this would otherwise skip. We compile it to a
+    // [`GenericMatcher::LiteralArgCall`] keyed by the method name and the
+    // literal argument; the JS engine seeds the call result tainted and its
+    // method-chain propagation carries it through `.update(...).digest(...)` to
+    // the password sink. The literal-argument discriminator ("md5") keeps
+    // `createHash("sha256")` clean. Source role only, gated to JS (the JS engine
+    // also serves TS; the only registry rule with this inline shape is JS).
+    if let MatcherRole::Source = role {
+        if lang == Language::JavaScript {
+            if let Some((method, arg)) = parse_js_literal_arg_call_source(pat) {
+                return Some(GenericMatcher::LiteralArgCall {
+                    description: format!("value derived from `.{method}(\"{arg}\")`"),
+                    method,
+                    arg,
+                });
+            }
         }
     }
 
@@ -17841,6 +18208,192 @@ class T {
         assert!(
             findings.is_empty(),
             "a literal-derived value must NOT fire, got {findings:?}"
+        );
+    }
+
+    // ── JS md5-used-as-password: inline `createHash("md5")` provenance source ──
+
+    const MD5_PASSWORD_RULE: &str = r#"
+id: md5-used-as-password
+mode: taint
+languages: [javascript]
+severity: WARNING
+message: MD5 used as a password hash.
+pattern-sources:
+- pattern: $CRYPTO.createHash("md5")
+pattern-sinks:
+- patterns:
+  - pattern: $FUNCTION(...);
+  - metavariable-regex:
+      metavariable: $FUNCTION
+      regex: (?i)(.*password.*)
+"#;
+
+    /// The source compiles to `LiteralArgCall { createHash, md5 }` and the sink
+    /// to the password-name `CallRegex`.
+    #[test]
+    fn md5_password_compiles_to_literal_arg_call_source() {
+        let r = compiled(MD5_PASSWORD_RULE);
+        assert_eq!(r.spec.sources.len(), 1);
+        match &r.spec.sources[0] {
+            GenericMatcher::LiteralArgCall { method, arg, .. } => {
+                assert_eq!(method, "createHash");
+                assert_eq!(arg, "md5");
+            }
+            other => panic!("expected LiteralArgCall source, got {other:?}"),
+        }
+        assert!(matches!(
+            r.spec.sinks.as_slice(),
+            [GenericMatcher::CallRegex { .. }]
+        ));
+    }
+
+    /// FIRES on an inline `createHash("md5")` digest flowing into a
+    /// `*password*` sink; SILENT on `sha256` and on unrelated clean code.
+    #[test]
+    fn md5_password_fires_on_md5_only() {
+        use crate::engine::parser::parse_file;
+        let r = compiled(MD5_PASSWORD_RULE);
+
+        let vuln = r#"
+function ex1(user, pwtext) {
+    var digest = crypto.createHash("md5").update(pwtext).digest("hex");
+    user.setPassword(digest);
+}
+"#;
+        let tree = parse_file(vuln, Language::JavaScript).unwrap();
+        assert_eq!(r.check(vuln, &tree).len(), 1, "md5 → setPassword must fire");
+
+        // sha256 is the safe near-miss: the literal-arg discriminator excludes it.
+        let safe = r#"
+function ok1(user, pwtext) {
+    var digest = crypto.createHash("sha256").update(pwtext).digest("hex");
+    user.setPassword(digest);
+}
+"#;
+        let tree = parse_file(safe, Language::JavaScript).unwrap();
+        assert!(
+            r.check(safe, &tree).is_empty(),
+            "sha256 must NOT fire (algorithm discriminator)"
+        );
+
+        // md5 hash flowing into a NON-password sink stays silent.
+        let other_sink = r#"
+function f(user, pwtext) {
+    var digest = crypto.createHash("md5").update(pwtext).digest("hex");
+    console.log(digest);
+}
+"#;
+        let tree = parse_file(other_sink, Language::JavaScript).unwrap();
+        assert!(
+            r.check(other_sink, &tree).is_empty(),
+            "md5 → non-password sink must NOT fire"
+        );
+    }
+
+    // ── JS react-unsanitized-property: metavariable DOM property-assign sink ──
+
+    const REACT_UNSAN_RULE: &str = r#"
+id: react-unsanitized-property
+mode: taint
+languages: [javascript, typescript]
+severity: WARNING
+message: Detection of $HTML from non-constant definition.
+pattern-sources:
+  - patterns:
+      - pattern-either:
+          - pattern-inside: |
+              function ...({..., $X, ...}) { ... }
+          - pattern-inside: |
+              function ...(..., $X, ...) { ... }
+      - focus-metavariable: $X
+      - pattern-either:
+          - pattern: $X.$Y
+          - pattern: $X[...]
+pattern-sinks:
+- patterns:
+  - pattern-either:
+    - pattern-inside: |
+        $BODY = findDOMNode(...)
+        ...
+  - pattern-either:
+    - pattern: |
+        $BODY. ... .$HTML = $SINK
+    - pattern: |
+        $BODY.$HTML = $SINK
+  - metavariable-regex:
+      metavariable: $HTML
+      regex: (innerHTML|outerHTML)
+  - focus-metavariable: $SINK
+- patterns:
+  - pattern-either:
+    - pattern: ReactDOM.findDOMNode(...).$HTML = $SINK
+  - metavariable-regex:
+      metavariable: $HTML
+      regex: (innerHTML|outerHTML)
+  - focus-metavariable: $SINK
+"#;
+
+    /// The metavariable-property sink enumerates the `(innerHTML|outerHTML)`
+    /// regex into concrete `MemberAssign` sinks (no other property fires).
+    #[test]
+    fn react_unsan_enumerates_member_assign_sinks() {
+        let r = compiled(REACT_UNSAN_RULE);
+        let mut fields: Vec<String> = r
+            .spec
+            .sinks
+            .iter()
+            .map(|m| match m {
+                GenericMatcher::MemberAssign { field, .. } => field.clone(),
+                other => panic!("expected MemberAssign sink, got {other:?}"),
+            })
+            .collect();
+        fields.sort();
+        fields.dedup();
+        assert_eq!(fields, vec!["innerHTML", "outerHTML"]);
+    }
+
+    /// FIRES when a function-parameter property flows into `.outerHTML`;
+    /// SILENT on a constant RHS and on unrelated clean code.
+    #[test]
+    fn react_unsan_fires_on_tainted_html_only() {
+        use crate::engine::parser::parse_file;
+        let r = compiled(REACT_UNSAN_RULE);
+
+        let vuln = r#"
+function Test2(input) {
+    ReactDOM.findDOMNode(this.someRef).outerHTML = input.value;
+}
+"#;
+        let tree = parse_file(vuln, Language::JavaScript).unwrap();
+        assert_eq!(
+            r.check(vuln, &tree).len(),
+            1,
+            "tainted param → outerHTML must fire"
+        );
+
+        // Constant RHS is the safe near-miss.
+        let safe = r#"
+function OkTest2() {
+    ReactDOM.findDOMNode(this.someRef).outerHTML = "<a href='/about.html'>About</a>";
+}
+"#;
+        let tree = parse_file(safe, Language::JavaScript).unwrap();
+        assert!(
+            r.check(safe, &tree).is_empty(),
+            "constant RHS must NOT fire"
+        );
+
+        // A non-enumerated property (`textContent`) never fires.
+        let other_prop = r#"
+function f(input) {
+    el.textContent = input.value;
+}
+"#;
+        let tree = parse_file(other_prop, Language::JavaScript).unwrap();
+        assert!(
+            r.check(other_prop, &tree).is_empty(),
+            "non-HTML property must NOT fire"
         );
     }
 }

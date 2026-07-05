@@ -1698,7 +1698,8 @@ fn match_source(
             | NodeMatcher::ConstructorArgSink { .. }
             | NodeMatcher::PropertyAssignSink { .. }
             | NodeMatcher::MethodArgSink { .. }
-            | NodeMatcher::ReceiverProvenanceCall { .. } => {
+            | NodeMatcher::ReceiverProvenanceCall { .. }
+            | NodeMatcher::LiteralArgCall { .. } => {
                 // Sink-only matchers; MemberAssign is JS-specific.
             }
         }

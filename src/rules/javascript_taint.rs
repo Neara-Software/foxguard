@@ -2036,6 +2036,43 @@ fn match_source(
                     return Some(description.clone());
                 }
             }
+            NodeMatcher::LiteralArgCall {
+                method,
+                arg,
+                description,
+            } => {
+                // Inline hash-provenance source `$CRYPTO.createHash("md5")`:
+                // a call whose final method-name segment equals `method` AND
+                // whose first argument is a string literal equal to `arg`. The
+                // `arg` discriminator ("md5") is what keeps `createHash("sha256")`
+                // clean. Seeds the call result tainted; the engine's method-chain
+                // propagation carries it through `.update(...).digest(...)`.
+                if node.kind() != "call_expression" {
+                    continue;
+                }
+                let Some(func) = node.child_by_field_name("function") else {
+                    continue;
+                };
+                if func.kind() != "member_expression" {
+                    continue;
+                }
+                let Some(prop) = func.child_by_field_name("property") else {
+                    continue;
+                };
+                if node_text(prop, source) != method.as_str() {
+                    continue;
+                }
+                let Some(args) = node.child_by_field_name("arguments") else {
+                    continue;
+                };
+                let mut cursor = args.walk();
+                let Some(first) = args.named_children(&mut cursor).next() else {
+                    continue;
+                };
+                if first.kind() == "string" && string_literal_text(first, source) == arg.as_str() {
+                    return Some(description.clone());
+                }
+            }
             NodeMatcher::MethodName { .. }
             | NodeMatcher::CallRegex { .. }
             | NodeMatcher::MethodNameRegex { .. }

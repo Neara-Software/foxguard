@@ -1735,7 +1735,8 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             | NodeMatcher::ConstructorArgSink { .. }
             | NodeMatcher::PropertyAssignSink { .. }
             | NodeMatcher::MethodArgSink { .. }
-            | NodeMatcher::ReceiverProvenanceCall { .. } => {
+            | NodeMatcher::ReceiverProvenanceCall { .. }
+            | NodeMatcher::LiteralArgCall { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the PHP engine (no-op).
             }

@@ -214,3 +214,73 @@ seeding, bound-parameter attribute-read source, nested-dict sink containment,
 list-literal source, keyword-argument focus) or engine-core propagation work —
 none is a one-recognizer extension, and each would over-match if forced into
 today's vocabulary.
+
+---
+
+# JavaScript `mode: taint` skip shapes — parity investigation
+
+Assessment of the 13 JavaScript `mode: taint` registry rules the
+`semgrep_taint.rs` bridge skipped. Same hard rule as above: a rule that loads
+must **match what Semgrep matches, not more** — over-matching is worse than
+skipping. A definitive per-rule verdict was required.
+
+Outcome: **2 of 13 implemented** (`md5-used-as-password`,
+`react-unsanitized-property`), 11 deferred with the concrete primitive each
+needs. JavaScript coverage 230 → 232 loaded (13 → 11 taint skips).
+
+## Summary matrix
+
+| Rule | Source shape | Sink shape | Blocker | Status |
+|---|---|---|---|---|
+| `md5-used-as-password` | `$CRYPTO.createHash("md5")` (inline literal-arg call) | `$FN(...)` + `metavariable-regex $FN =~ .*password.*` (`CallRegex`) | inline literal-arg call source | **IMPLEMENTED** (`LiteralArgCall`) |
+| `react-unsanitized-property` | any function parameter (`ParamName` wildcard) → `$X.$Y` | `$BODY.$HTML = $SINK` + `metavariable-regex $HTML =~ (innerHTML\|outerHTML)` + focus `$SINK` | metavariable-property DOM-assign sink w/ regex enumeration | **IMPLEMENTED** (enumerated `MemberAssign`) |
+| `hardcoded-jwt-secret` | `$X = '...'` (assignment-of-literal) | `pattern-inside: $JWT.sign($DATA,$VALUE,...)` + focus `$VALUE` | assignment-literal source **and** a sink expressed only via `pattern-inside`+focus (needs positional `MethodArgSink` matched by the JS engine, which it does not) | deferred |
+| `hardcoded-passport-secret` | string literal in a specific object property (`{clientSecret:"..."}` / `secretOrKey` / `consumerSecret`) | `new $F($VALUE,...)` where `$F` derives from a `require("passport-*")` (metavariable-regex on the import module) + focus `$VALUE` | object-property-keyed literal source + import-provenance constructor-class sink — neither expressible; a broad `LiteralString`+`new $F(...)` would fire on every hardcoded string reaching any constructor | deferred |
+| `unsafe-formatstring` | syntactic computed-string (`$X + $Y`, `$X.concat($Y)`, `` `...${...}...` ``), *not* two literals | `console.$LOG($STR,$PARAM,...)` / `util.format($STR,$PARAM,...)` + focus `$STR` | source is a "computed-string-is-source" syntactic form (no data provenance); sink requires arg0 focus **with a mandatory 2nd argument** — no arg-count-constrained sink exists, a bare arg0 sink fires on the single-arg `console.log("..."+user)` ok-case | deferred |
+| `react-href-var` | multi-label `TAINTED`/`CONCAT`/`CLEAN` with `by-side-effect` CLEAN | JSX `<$EL href={$X}/>` / `React.createElement($EL,{href:$X})`, `requires: TAINTED and not CONCAT and not CLEAN` | boolean taint-label algebra (unsupported primitive) + JSX-attribute sink | deferred |
+| `remote-property-injection` | `$REQ.query`/`body`/… (`FieldName`) | `$OBJ[$INDEX] = ...` w/ tainted **key** (`$INDEX`), minus concat forms | tainted-subscript-KEY assignment sink for a metavariable base is not compiled for JS; and the fire/ok discriminator is a sanitizer `var $X = ...` / `pattern-not: var $X = $REQ.$ANY` ("assignment from a non-direct-request cleans"), inexpressible | deferred |
+| `express-libxml-noent` | `$REQ.query`/`body`/… (`FieldName`) | `$XML.$FUNC($QUERY,{...,noent:true,...})` + import-regex + func-regex + focus `$QUERY` | the fire/ok discriminator is the call-argument option-object field value `{noent:true}` vs `{noent:false}` — foxguard cannot constrain a call-argument object-literal field value | deferred |
+| `express-wkhtmltopdf-injection` | `$REQ.query`/`body`/… (`FieldName`) | `$WK($SINK,...)` where `$WK` is bound only by `pattern-inside: $WK = require('wkhtmltopdf')` | sink callee is a metavariable bound by require-provenance; foxguard has no require-provenance callee binding, and a bare `$WK(...)` metavariable-callee sink is universal (fires on every call) | deferred |
+| `detect-angular-trust-as-method` | `$scope.$X` (member read off the `$scope` parameter bound via `pattern-inside: app.controller(...,function($scope,$sce){...})`) | `$sce.trustAs(...)` / `$sce.trustAsHtml(...)` (`MethodName`) | source is a specific-receiver / any-field read off a `pattern-inside`-bound parameter; no such source exists, and keying by the literal name `scope` is unfaithful (it is a metavariable) | deferred |
+| `tainted-html-response` | first param `event` of the Lambda handler (`ParamName` wildcard) | object-literal `body:` property whose SIBLING must be `headers:{'Content-Type':'text/html'}` | only object-literal sink is `ObjectLiteralValue` (fires on ANY tainted value position — would fire on the `data: event.foo` ok-case) and cannot key on the `body` field nor enforce the sibling-header discriminator | deferred |
+| `unsafe-argon2-config` | object literal `{type: ...}` inside a `require('argon2')` context | 2nd arg of `$ARGON.hash(...,$Y)` | source is an object-literal config provenance and the safe/unsafe discriminator is a `pattern-sanitizer` on the object field value (`{type: $ARGON.argon2id}`); foxguard expresses neither object-literal-as-source nor object-field-value sanitizers | deferred |
+
+## Implemented
+
+### `md5-used-as-password` — inline literal-argument call source
+
+**Shape.** Source `$CRYPTO.createHash("md5")`; sink `$FN(...)` pinned by
+`metavariable-regex $FN =~ (?i)(.*password.*)`.
+
+**Primitive added.** `NodeMatcher::LiteralArgCall { method, arg }` — a method
+call whose final method name equals `method` (`createHash`) and whose first
+argument is a string literal equal to `arg` (`md5`) seeds the call result
+tainted; the JS engine's existing method-chain propagation carries the taint
+through `.update(...).digest(...)` to the sink (a `CallRegex` that already
+compiled). Faithful: the literal-arg discriminator keeps `createHash("sha256")`
+clean; a md5 digest into a non-`*password*` sink stays silent.
+
+### `react-unsanitized-property` — metavariable DOM-property-assign sink
+
+**Shape.** Sink `$BODY.$HTML = $SINK` (also deep-member and
+`ReactDOM.findDOMNode(...).$HTML = $SINK`) with `metavariable-regex $HTML =~
+(innerHTML|outerHTML)` + focus `$SINK`; source is any function parameter
+(compiles to the existing wildcard `ParamName`).
+
+**Recognizer added.** `try_compile_js_member_assign_regex_block` enumerates the
+anchored `(innerHTML|outerHTML)` alternation into one concrete
+`MemberAssign { field }` per name (mirroring the C# `PropertyAssignSink`
+enumeration). The JS engine already matches `MemberAssign` with a tainted RHS.
+Faithful: fires only on `<expr>.innerHTML|outerHTML = tainted`, silent on a
+constant RHS and on any other (non-enumerated) property.
+
+## Bottom line
+
+The two clean, provably-faithful wins are shipped (one new source primitive,
+one new sink recognizer reusing an existing engine matcher). The 11 deferred
+rules each need a real new primitive — boolean taint-label algebra, a
+call-argument object-field-value constraint, require-provenance callee binding,
+a `pattern-inside`-bound parameter attribute-read source, an assignment-form
+sanitizer, an object-field-value sanitizer, a sibling-keyed object-literal sink,
+or an arg-count-constrained format-string sink — none a one-recognizer
+extension, and each would over-match if forced into today's vocabulary.
