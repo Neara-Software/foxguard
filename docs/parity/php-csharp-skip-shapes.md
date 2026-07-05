@@ -205,8 +205,8 @@ regex + sanitizers to stay precise. Deferred.
 
 | Primitive | Unlocks | Notes |
 |---|---|---|
-| Focus-arg-of-call **source** (dual of the sink recognizer) | `use_weak_rng_for_keygeneration` | sinks already tractable via constructor `Call` |
-| C# `(Type $MV)` typed-metavariable source | `csharp-sqli` | Java/Go already have the sink-side dual |
+| ~~Focus-arg-of-call **source**~~ ✅ DONE 2026-07-05 | `use_weak_rng_for_keygeneration` (loaded) | `NodeMatcher::CallArgSource{method,arg_index}`; sink via C#-gated `new Type(...)`→`Call{canonical}` |
+| ~~C# `(Type $MV)` typed-metavariable source~~ ✅ DONE 2026-07-05 | `csharp-sqli` (loaded) | `TypedName`, C#-gated |
 | Typestate / object-configuration sink | 3 C# XXE rules | "call on an object configured unsafely earlier" |
 | PHP `->` + `::` call support in focus-call sink w/ faithful `pattern-inside` scoping | `doctrine-orm`, `laravel-sql-injection`, `laravel-api-route`, `laravel-unsafe-validator` | the `->`/`::` lexical gap is easy; the faithful scoping is the hard part |
 | Signature-param source (bare, no focus) + concat-argument sink | `xpath-injection` | |
