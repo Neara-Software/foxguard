@@ -545,21 +545,45 @@ fn run_pull_request_scan(
         ));
     }
 
-    // Diff-scope the scan to the PR's changed files when we have them. The list
-    // is written inside the workspace tempdir and passed to the CLI, which
-    // scans only those paths but keeps the full checkout as the analysis root
-    // (cross-file taint preserved). Absent the list, we scan the whole tree.
+    // Full-tree scan FIRST — this preserves whole-repo cross-file taint context
+    // (a source in an unchanged file reaching a sink in a changed file is still
+    // caught), which is foxguard's headline capability. The ~80% of PRs whose
+    // repos scan within the timeout get this full coverage.
+    //
+    // Only when the full scan TIMES OUT — which in production happens on large
+    // repos / monorepos (e.g. the biggest offenders had every PR blow the 60s
+    // cap and get NO review at all) — do we fall back to a diff-scoped scan of
+    // just the PR's changed files. That scan keeps the full checkout as its
+    // analysis root (so cross-file taint AMONG the changed files is preserved)
+    // and is fast, so a large-repo PR gets *some* review instead of none. The
+    // accepted, bounded tradeoff on the fallback path: a cross-file flow whose
+    // source is in an unchanged file is not caught (only the changed-file set
+    // is analysed). This is strictly better than the previous "timeout = no
+    // review" behaviour and never reduces coverage for scans that finish.
     let changed_files_list = match &changed_files {
-        Some(files) => {
+        Some(files) if !files.is_empty() => {
             let list_path = workspace.path().join("changed-files.txt");
             std::fs::write(&list_path, files.join("\n"))
                 .map_err(|error| format!("failed to write changed-files list: {error}"))?;
             Some(list_path)
         }
-        None => None,
+        _ => None,
     };
 
-    let output = run_scanner(&checkout, changed_files_list.as_deref())?;
+    let output = match run_scanner(&checkout, None) {
+        Ok(output) => output,
+        Err(error) if is_scan_timeout(&error) && changed_files_list.is_some() => {
+            warn!(
+                repo = target_repo,
+                pr_number = pull_request.number,
+                "full-tree scan timed out; falling back to a diff-scoped scan of \
+                 the PR's changed files (cross-file taint from unchanged files not \
+                 analysed on this path)"
+            );
+            run_scanner(&checkout, changed_files_list.as_deref())?
+        }
+        Err(error) => return Err(error),
+    };
     let mut findings = parse_json_findings(&output)?;
     for finding in &mut findings {
         finding.file = relative_path(&finding.file, Some(&checkout));
@@ -766,6 +790,14 @@ fn run_scanner(checkout: &Path, changed_files_list: Option<&Path>) -> Result<Str
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     run_command_with_timeout(command, PULL_REQUEST_SCAN_TIMEOUT, "foxguard")
+}
+
+/// True when a scan failure is the wall-clock timeout (as opposed to a spawn or
+/// other error). Used to decide whether to retry with a diff-scoped scan. The
+/// marker is the message produced by [`run_command_with_timeout`] on the
+/// `TimedOut` branch.
+fn is_scan_timeout(error: &str) -> bool {
+    error.contains("timed out after")
 }
 
 fn run_command_with_timeout(
@@ -1004,6 +1036,20 @@ mod tests {
                 "missing --exclude {glob}"
             );
         }
+    }
+
+    #[test]
+    fn is_scan_timeout_detects_only_the_timeout_error() {
+        use super::is_scan_timeout;
+        // The exact message run_command_with_timeout emits on the TimedOut branch.
+        assert!(is_scan_timeout("foxguard timed out after 60s"));
+        assert!(is_scan_timeout("git timed out after 60s"));
+        // Other scan failures must NOT trigger the diff-scoped fallback.
+        assert!(!is_scan_timeout(
+            "failed to run foxguard: No such file or directory"
+        ));
+        assert!(!is_scan_timeout("foxguard failed with exit status: 101"));
+        assert!(!is_scan_timeout(""));
     }
 
     #[test]
