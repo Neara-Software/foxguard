@@ -4581,6 +4581,53 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
         }
     }
 
+    // ── Go colon-syntax typed-metavariable shape: `($MV : Type)` [ .$FIELD ] ─
+    //
+    // Go's typed metavariable puts the metavariable FIRST and the type SECOND,
+    // separated by `:` — `($REQUEST : *http.Request).$ANYTHING` means "any
+    // field/method read off a variable declared `*http.Request`". Four Go
+    // registry taint rules (`tainted-url-host`, `open-redirect`,
+    // `gorm-dangerous-method-usage`, `filepath-clean-misuse`) express their
+    // `pattern-sources` this way ("input from an *http.Request is untrusted").
+    //
+    // SOURCE: compile to a `TypedName { type_name }` matcher normalized to the
+    // pointer-stripped, package-qualified type (`*http.Request` → `http.Request`);
+    // the Go engine seeds every parameter / local of that declared type as
+    // tainted, and the trailing `.$FIELD` read propagates through the existing
+    // attribute/selector handling. This stays type-specific (NOT "seed all
+    // params" — the metavariable-regex pinning `$ANYTHING` is a droppable
+    // narrowing), preserving precision at the gated sink.
+    //
+    // SINK / SANITIZER: the declared type is a droppable constraint. A trailing
+    // chain is re-compiled as `$MV{remainder}` through the normal call/member
+    // path; a bare `($X : bool)` (a gorm sanitizer) has no expressible node
+    // shape and is skipped (dropped as an over-broadening constraint, not a
+    // rule-level failure).
+    //
+    // Gated to Go: this colon syntax is Go-specific (Java uses the
+    // parenthesised `(Type $MV)` form handled above).
+    if lang == Language::Go {
+        if let Some((type_text, metavar, remainder)) = parse_go_typed_metavar(pat) {
+            let type_name = normalize_go_type(type_text);
+            match role {
+                MatcherRole::Source => {
+                    return Some(GenericMatcher::TypedName {
+                        description: format!("untrusted `{type_name}` typed value"),
+                        type_name,
+                    });
+                }
+                MatcherRole::Sink | MatcherRole::Sanitizer => {
+                    let rem = remainder.trim();
+                    if rem.is_empty() {
+                        return None;
+                    }
+                    let rewritten = format!("{metavar}{rem}");
+                    return compile_pattern(&rewritten, role, lang);
+                }
+            }
+        }
+    }
+
     // ── Bash command / command-substitution shapes ───────────────────────
     //
     // Bash taint rules express sources and sinks as shell commands rather than
@@ -5456,6 +5503,67 @@ fn parse_typed_metavar(pat: &str) -> Option<(&str, &str, &str)> {
     }
     let remainder = &rest[close + 1..];
     Some((ty, mv, remainder))
+}
+
+/// Parse Go's COLON-syntax typed metavariable `($MV : Type)` optionally followed
+/// by a trailing member/method read. Returns `(type_text, metavar_text,
+/// remainder)`:
+///
+/// - `($REQUEST : *http.Request).$ANYTHING` -> ("*http.Request", "$REQUEST", ".$ANYTHING")
+/// - `($REQUEST : http.Request).$ANYTHING`  -> ("http.Request",  "$REQUEST", ".$ANYTHING")
+/// - `($REQUEST : *http.Request)`           -> ("*http.Request", "$REQUEST", "")
+/// - `($X: bool)`                           -> ("bool",          "$X",       "")
+///
+/// This is DISTINCT from Java's parenthesised `(Type $MV)` form: Go writes the
+/// metavariable FIRST and the type SECOND, separated by a `:` (with or without
+/// surrounding whitespace). The typed group never contains inner parentheses, so
+/// the first `)` closes it. Only matches when the metavariable is a single
+/// Semgrep metavariable and the type is a Go type reference (`is_go_type_name`).
+fn parse_go_typed_metavar(pat: &str) -> Option<(&str, &str, &str)> {
+    let pat = pat.trim();
+    let rest = pat.strip_prefix('(')?;
+    let close = rest.find(')')?;
+    let inner = rest[..close].trim();
+    let (mv, ty) = inner.split_once(':')?;
+    let mv = mv.trim();
+    let ty = ty.trim();
+    if !is_metavariable(mv) || !is_go_type_name(ty) {
+        return None;
+    }
+    let remainder = &rest[close + 1..];
+    Some((ty, mv, remainder))
+}
+
+/// True when `s` is a Go type reference usable as a colon-typed-metavariable
+/// annotation: an optionally pointer-prefixed (`*`), possibly package-qualified
+/// (`http.Request`) identifier chain. Slice / array prefixes (`[]`) are also
+/// tolerated so `[]byte`-style annotations don't falsely parse a `:` elsewhere.
+fn is_go_type_name(s: &str) -> bool {
+    let base = normalize_go_type(s);
+    is_dotted_identifier(&base)
+}
+
+/// Normalize a Go type reference to a comparable form by stripping a leading
+/// pointer (`*`), address-of (`&`), and slice/array (`[]`) markers, plus
+/// surrounding whitespace — keeping the package-qualified name intact:
+/// `*http.Request` and `http.Request` both normalize to `http.Request`;
+/// `[]byte` to `byte`. Used to compare a source's declared-type annotation
+/// against a variable's syntactic declared type on BOTH sides consistently.
+/// Shared with the Go taint engine so both sides normalize identically.
+pub(crate) fn normalize_go_type(s: &str) -> String {
+    let mut base = s.trim();
+    loop {
+        let trimmed = base
+            .trim_start_matches('*')
+            .trim_start_matches('&')
+            .trim_start();
+        let trimmed = trimmed.strip_prefix("[]").unwrap_or(trimmed).trim_start();
+        if trimmed == base {
+            break;
+        }
+        base = trimmed;
+    }
+    base.trim().to_string()
 }
 
 /// True when `s` looks like a Java type reference usable as a typed-metavariable
@@ -11592,6 +11700,253 @@ pattern-sinks:
         assert!(
             matches!(parse_taint_rule(&v), TaintRuleParse::Skip(_)),
             "two distinct primary labels must stay skipped, not over-match"
+        );
+    }
+
+    // ── Go colon-syntax typed-metavariable-receiver source ──────────────────
+    //
+    // `($REQUEST : *http.Request).$ANYTHING` means "any field/method read off a
+    // variable declared `*http.Request` is a source". These exercise the whole
+    // `parse_taint_rule -> compiled() -> check()` path: the source must LOAD
+    // (compile to a `TypedName`), FIRE when a value read off an
+    // `*http.Request`-typed variable flows to a sink, and stay SILENT when the
+    // variable is a different declared type (the faithfulness requirement — the
+    // typed source must NOT broaden into "seed every parameter").
+
+    const GO_TYPED_SOURCE_RULE: &str = r#"
+id: go-typed-source
+mode: taint
+languages: [go]
+severity: WARNING
+message: "Untrusted *http.Request read reaches a redirect sink"
+pattern-sources:
+  - patterns:
+      - pattern: |
+          ($REQUEST : *http.Request).$ANYTHING
+pattern-sinks:
+  - pattern: http.Redirect($W, $REQ, $URL, ...)
+"#;
+
+    #[test]
+    fn go_typed_metavar_source_compiles_to_typed_name() {
+        let rule = compiled(GO_TYPED_SOURCE_RULE);
+        assert!(
+            rule.spec.sources.iter().any(|s| matches!(
+                s,
+                GenericMatcher::TypedName { type_name, .. } if type_name == "http.Request"
+            )),
+            "colon-typed source should compile to TypedName{{http.Request}}, got {:?}",
+            rule.spec.sources
+        );
+    }
+
+    #[test]
+    fn go_typed_metavar_source_loads_and_fires() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_TYPED_SOURCE_RULE);
+        // A field/method read off the `*http.Request`-typed parameter `r`
+        // (`r.URL.Query().Get(...)`) flows into the redirect sink.
+        let src = r#"
+package main
+import "net/http"
+func h(w http.ResponseWriter, r *http.Request) {
+    http.Redirect(w, r, r.URL.Query().Get("u"), 302)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "a read off an *http.Request-typed parameter reaching http.Redirect must fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn go_typed_metavar_source_discriminates_by_type() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_TYPED_SOURCE_RULE);
+        // Same flow SHAPE, but `r` is a different declared type — it must NOT be
+        // seeded, so nothing untrusted reaches the sink.
+        let src = r#"
+package main
+import "net/http"
+type Other struct{}
+func h(w http.ResponseWriter, r *Other) {
+    http.Redirect(w, r, r.URL.Query().Get("u"), 302)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a differently-typed parameter must not be seeded as a source, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn go_typed_metavar_source_non_pointer_type_fires() {
+        use crate::engine::parser::parse_file;
+        // The non-pointer `http.Request` annotation must match a `*http.Request`
+        // parameter too (both normalize to `http.Request`).
+        let rule = compiled(
+            r#"
+id: go-typed-source-value
+mode: taint
+languages: [go]
+severity: WARNING
+message: m
+pattern-sources:
+  - pattern: |
+      ($REQUEST : http.Request).$ANYTHING
+pattern-sinks:
+  - pattern: http.Redirect($W, $REQ, $URL, ...)
+"#,
+        );
+        let src = r#"
+package main
+import "net/http"
+func h(w http.ResponseWriter, r *http.Request) {
+    http.Redirect(w, r, r.Host, 302)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        assert!(
+            !rule.check(src, &tree).is_empty(),
+            "an `http.Request` annotation must match a `*http.Request` variable"
+        );
+    }
+
+    // ── Go negation-tier with the REAL typed source ─────────────────────────
+    //
+    // The `INPUT and not CLEAN` label algebra was already built; this verifies
+    // it holds END-TO-END now that the `($REQUEST : *http.Request).$ANYTHING`
+    // INPUT source actually seeds. Direct flow FIRES; the same value routed
+    // through the `"$U" + $X` CLEAN relabel is SUPPRESSED.
+    //
+    // The sink takes ONLY the URL argument (`redirect($URL)`) so the
+    // discrimination isolates the URL value's label set — passing the tainted
+    // `r` itself as another argument would fire independently (that is what
+    // `focus-metavariable: $URL` restricts in the real registry rule).
+    const GO_TYPED_NEGATION_RULE: &str = r#"
+id: go-typed-open-redirect
+mode: taint
+languages: [go]
+severity: WARNING
+message: "open redirect"
+pattern-sources:
+  - patterns:
+      - pattern: |
+          ($REQUEST : *http.Request).$ANYTHING
+    label: INPUT
+  - pattern: '"$U" + $X'
+    label: CLEAN
+    requires: INPUT
+pattern-sinks:
+  - pattern: redirect($URL)
+    requires: INPUT and not CLEAN
+"#;
+
+    #[test]
+    fn go_typed_negation_policy_compiles() {
+        let rule = compiled(GO_TYPED_NEGATION_RULE);
+        let policy = rule
+            .label_policy
+            .as_ref()
+            .expect("typed-source negation rule must compile a LabelPolicy");
+        assert_eq!(policy.source_label, "INPUT");
+        // The INPUT source is the typed source.
+        assert!(
+            rule.spec.sources.iter().any(|s| matches!(
+                s,
+                GenericMatcher::TypedName { type_name, .. } if type_name == "http.Request"
+            )),
+            "the INPUT source must be the typed *http.Request source, got {:?}",
+            rule.spec.sources
+        );
+    }
+
+    #[test]
+    fn go_typed_negation_direct_fires() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_TYPED_NEGATION_RULE);
+        let src = r#"
+package main
+import "net/http"
+func h(w http.ResponseWriter, r *http.Request) {
+    redirect(r.URL.Query().Get("u"))
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "un-sanitized *http.Request input into the redirect sink must fire (INPUT and not CLEAN), got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn go_typed_negation_relabeled_suppressed() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_TYPED_NEGATION_RULE);
+        // The SAME typed-source read is concatenated behind a fixed URL prefix,
+        // acquiring CLEAN — `not CLEAN` must reject it. Over-firing here is the
+        // forbidden behavior the negation tier exists to prevent.
+        let src = r#"
+package main
+import "net/http"
+func h(w http.ResponseWriter, r *http.Request) {
+    u := "https://safe.example.com/" + r.URL.Query().Get("u")
+    redirect(u)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a CLEAN-relabeled (concatenated) value must NOT fire (not CLEAN), got {findings:?}"
+        );
+    }
+
+    // The REAL registry `open-redirect` sink shape fires on genuinely
+    // vulnerable code: `http.Redirect($W, $REQ, $URL, ...)` with a tainted URL
+    // read off the `*http.Request` parameter.
+    #[test]
+    fn go_real_open_redirect_shape_fires_on_tainted_url() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(
+            r#"
+id: go-real-open-redirect
+mode: taint
+languages: [go]
+severity: WARNING
+message: "open redirect"
+pattern-sources:
+  - patterns:
+      - pattern: |
+          ($REQUEST : *http.Request).$ANYTHING
+    label: INPUT
+  - pattern: '"$U" + $X'
+    label: CLEAN
+    requires: INPUT
+pattern-sinks:
+  - patterns:
+      - pattern: http.Redirect($W, $REQ, $URL, ...)
+      - focus-metavariable: $URL
+    requires: INPUT and not CLEAN
+"#,
+        );
+        let src = r#"
+package main
+import "net/http"
+func h(w http.ResponseWriter, r *http.Request) {
+    http.Redirect(w, r, r.URL.Query().Get("u"), 302)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            !findings.is_empty(),
+            "tainted URL read off *http.Request into http.Redirect must fire, got {findings:?}"
         );
     }
 }

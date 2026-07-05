@@ -657,6 +657,14 @@ fn seed_param_sources(
         ) {
             continue;
         }
+        // Colon-syntax typed-metavariable source `($REQ : *http.Request)`:
+        // seed EVERY name in this declaration when its DECLARED TYPE matches a
+        // `TypedName` source, regardless of the parameter's name. The type is
+        // shared by all names in a `parameter_declaration` (`a, b *http.Request`).
+        let typed_desc = child
+            .child_by_field_name("type")
+            .and_then(|ty| go_typed_source_description(spec, node_text(ty, source)));
+
         // parameter_declaration has multiple `name` field children.
         // `parameter_declaration.name` is an identifier but there may
         // be several per declaration (`a, b int`).
@@ -666,12 +674,23 @@ fn seed_param_sources(
                 continue;
             }
             let param_name = node_text(inner, source);
+            let line = inner.start_position().row + 1;
+
+            if let Some(description) = &typed_desc {
+                state.taint_labeled(
+                    param_name.to_string(),
+                    description.clone(),
+                    line,
+                    source_labels(policy),
+                );
+                continue;
+            }
+
             for matcher in &spec.sources {
                 if let NodeMatcher::ParamName { names, description } = matcher {
                     if names.iter().any(|n| n == param_name)
                         || crate::rules::taint_engine::param_names_are_wildcard(names)
                     {
-                        let line = inner.start_position().row + 1;
                         state.taint_labeled(
                             param_name.to_string(),
                             description.clone(),
@@ -684,6 +703,26 @@ fn seed_param_sources(
             }
         }
     }
+}
+
+/// If `decl_type` (a variable's syntactic declared type, e.g. `*http.Request`)
+/// matches a `TypedName` colon-syntax source in `spec`, return that source's
+/// description. Both sides are normalized via `normalize_go_type` so
+/// `*http.Request` and `http.Request` compare equal (pointer stripped, package
+/// qualifier retained). Returns `None` when the type does not match a
+/// `TypedName` source — an unresolved / non-matching type is NEVER seeded
+/// (faithfulness: the source only taints variables of the annotated type).
+fn go_typed_source_description(spec: &TaintSpec, decl_type: &str) -> Option<String> {
+    let want = crate::rules::semgrep_taint::normalize_go_type(decl_type);
+    spec.sources.iter().find_map(|matcher| match matcher {
+        NodeMatcher::TypedName {
+            type_name,
+            description,
+        } if crate::rules::semgrep_taint::normalize_go_type(type_name) == want => {
+            Some(description.clone())
+        }
+        _ => None,
+    })
 }
 
 /// The label set a freshly-seeded primary source carries under `policy`:
@@ -738,6 +777,30 @@ fn handle_var_spec(node: Node<'_>, ctx: &GoCtx<'_>, state: &mut TaintState) {
     // var_spec has multiple `name` fields and an optional `value`
     // expression_list.
     let Some(value) = node.child_by_field_name("value") else {
+        // Colon-syntax typed-metavariable source `($REQ : *http.Request)`
+        // applied to a pure local declaration `var r *http.Request` (no
+        // initializer): seed every declared name whose DECLARED TYPE matches a
+        // `TypedName` source. Only the no-initializer form is seeded here — a
+        // declaration WITH an initializer flows through the value path below,
+        // where the initializer's taint governs (avoiding a seed-then-clear).
+        if let Some(description) = node
+            .child_by_field_name("type")
+            .and_then(|ty| go_typed_source_description(ctx.spec, node_text(ty, ctx.source)))
+        {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "identifier" {
+                    let name = node_text(child, ctx.source);
+                    let line = child.start_position().row + 1;
+                    state.taint_labeled(
+                        name.to_string(),
+                        description.clone(),
+                        line,
+                        source_labels(ctx.label_policy),
+                    );
+                }
+            }
+        }
         return;
     };
 
@@ -1617,8 +1680,10 @@ fn match_source(
             | NodeMatcher::BinopFormat { .. }
             | NodeMatcher::ObjectLiteralValue { .. }
             | NodeMatcher::ReturnValue { .. }
-            // Java-only typed-metavariable source; Go has no declared-type
-            // seeding, so it is a no-op here.
+            // Colon-syntax typed-metavariable source `($REQ : *http.Request)`:
+            // seeded by DECLARED TYPE at scope entry (`seed_param_sources` /
+            // `handle_var_spec`), like `ParamName` — not matched on expressions
+            // here, so it is a no-op in this per-node matcher.
             | NodeMatcher::TypedName { .. }
             // Java-only typed-assignment sink; no-op in source position here.
             | NodeMatcher::TypedAssignTarget { .. } => {
