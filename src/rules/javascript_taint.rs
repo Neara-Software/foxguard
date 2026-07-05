@@ -1985,6 +1985,17 @@ fn match_source(
             NodeMatcher::ParamName { .. } => {
                 // Seeded at function entry, not matched on expressions.
             }
+            NodeMatcher::LiteralString { description } => {
+                // Ellipsis-string source `"..."`: any string literal is a taint
+                // origin. JS/TS string literals are `string` and (static or
+                // interpolated) `template_string`. Matching ONLY these literal
+                // node kinds keeps the source faithful — an identifier, call
+                // result, or environment read is never seeded, so the rule
+                // fires on `sign(p, "secret")` but not `sign(p, secretFromEnv)`.
+                if matches!(node.kind(), "string" | "template_string") {
+                    return Some(description.clone());
+                }
+            }
             NodeMatcher::MethodName { .. }
             | NodeMatcher::CallRegex { .. }
             | NodeMatcher::MethodNameRegex { .. }

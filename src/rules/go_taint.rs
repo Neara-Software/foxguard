@@ -1686,7 +1686,10 @@ fn match_source(
             // here, so it is a no-op in this per-node matcher.
             | NodeMatcher::TypedName { .. }
             // Java-only typed-assignment sink; no-op in source position here.
-            | NodeMatcher::TypedAssignTarget { .. } => {
+            | NodeMatcher::TypedAssignTarget { .. }
+            // Ellipsis-string source `"..."`; no Go registry rule uses this
+            // source shape, so the Go engine does not seed string literals.
+            | NodeMatcher::LiteralString { .. } => {
                 // Sink-only matcher; MemberAssign is JS-specific; BinopFormat is
                 // matched on binary-expression nodes, not as a source.
             }

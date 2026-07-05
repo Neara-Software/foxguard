@@ -251,6 +251,21 @@ enum GenericMatcher {
         type_name: String,
         description: String,
     },
+
+    /// Matches any STRING-LITERAL node as a taint SOURCE — the Semgrep
+    /// ellipsis-string source `"..."` ("any string literal is the taint
+    /// origin"). Compiled from a bare `pattern-sources: - pattern: "..."`
+    /// entry (the boto3 `hardcoded-token` rule and the JS hardcoded-secret
+    /// family). Each engine seeds every string literal as tainted and lets
+    /// its normal propagation carry the taint to the sink, so a hardcoded
+    /// credential reaching a credential/JWT/crypto sink fires while a value
+    /// read from the environment stays clean.
+    ///
+    /// Source only — a literal is a taint origin, not a destination. Matched
+    /// by the Python and JavaScript engines (the only registry rules with
+    /// this source shape target those languages); other engines carry it in
+    /// the spec but no-op it.
+    LiteralString { description: String },
 }
 
 #[derive(Clone, Debug)]
@@ -415,6 +430,9 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralString { description } => python_taint::NodeMatcher::LiteralString {
+            description: description.clone(),
+        },
     }
 }
 
@@ -520,6 +538,11 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralString { description } => {
+            javascript_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -619,6 +642,9 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralString { description } => go_taint::NodeMatcher::LiteralString {
+            description: description.clone(),
+        },
     }
 }
 
@@ -716,6 +742,9 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             description,
         } => java_taint::NodeMatcher::TypedAssignTarget {
             type_name: type_name.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::LiteralString { description } => java_taint::NodeMatcher::LiteralString {
             description: description.clone(),
         },
     }
@@ -824,6 +853,9 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralString { description } => c_taint::NodeMatcher::LiteralString {
+            description: description.clone(),
+        },
     }
 }
 
@@ -923,6 +955,9 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralString { description } => kotlin_taint::NodeMatcher::LiteralString {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1020,6 +1055,9 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
             description,
         } => ruby_taint::NodeMatcher::TypedAssignTarget {
             type_name: type_name.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::LiteralString { description } => ruby_taint::NodeMatcher::LiteralString {
             description: description.clone(),
         },
     }
@@ -1130,6 +1168,9 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralString { description } => csharp_taint::NodeMatcher::LiteralString {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1225,6 +1266,9 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
             description,
         } => bash_taint::NodeMatcher::TypedAssignTarget {
             type_name: type_name.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::LiteralString { description } => bash_taint::NodeMatcher::LiteralString {
             description: description.clone(),
         },
     }
@@ -1330,6 +1374,11 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralString { description } => {
+            solidity_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1425,6 +1474,9 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
             description,
         } => scala_taint::NodeMatcher::TypedAssignTarget {
             type_name: type_name.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::LiteralString { description } => scala_taint::NodeMatcher::LiteralString {
             description: description.clone(),
         },
     }
@@ -1524,6 +1576,9 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralString { description } => apex_taint::NodeMatcher::LiteralString {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1621,6 +1676,9 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::LiteralString { description } => swift_taint::NodeMatcher::LiteralString {
+            description: description.clone(),
+        },
     }
 }
 
@@ -1709,6 +1767,9 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
             description,
         } => php_taint::NodeMatcher::TypedAssignTarget {
             type_name: type_name.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::LiteralString { description } => php_taint::NodeMatcher::LiteralString {
             description: description.clone(),
         },
     }
@@ -4457,6 +4518,16 @@ fn parse_apex_chained_call_source(pat: &str) -> Option<String> {
 /// Returns `None` if the pattern shape is not one of the supported forms
 /// (see module docs). Callers surface that as a skip-with-warning at the
 /// rule level.
+/// True when `pat` is exactly Semgrep's ellipsis-string literal `"..."` (or the
+/// single-quoted `'...'`) — the any-string-literal source metavariable. This is
+/// deliberately strict: a string pattern carrying content (`"secret"`,
+/// `"...key..."`) is a concrete/partial-value match, NOT the any-literal source,
+/// so it must not compile to a `LiteralString` (which would over-match).
+fn is_ellipsis_string_literal(pat: &str) -> bool {
+    let t = pat.trim();
+    t == "\"...\"" || t == "'...'"
+}
+
 fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<GenericMatcher> {
     let mut pat = pattern.trim();
     if pat.is_empty() {
@@ -4469,6 +4540,26 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
     // call/member shapes below recognise them.
     if matches!(lang, Language::Solidity | Language::Apex | Language::Php) {
         pat = pat.trim_end_matches(';').trim_end();
+    }
+
+    // ── Ellipsis-string SOURCE: bare `"..."` (any string literal) ──────────
+    //
+    // Semgrep's `pattern: "..."` is the any-string-literal metavariable: "a
+    // string literal is the taint source". The hardcoded-secret family (boto3
+    // `hardcoded-token`, and the JS jwt/passport rules) uses it to seed every
+    // literal string as tainted so that a hardcoded credential reaching a
+    // signer/crypto/credential sink fires. We compile ONLY the exact
+    // ellipsis-string forms `"..."` / `'...'` (not string patterns carrying
+    // content, which would be a concrete-value match, and not other shapes) to
+    // a `LiteralString` source. Source role only — a literal is a taint
+    // origin, not a destination; in sink/sanitizer position a bare string has
+    // no data-flow node to bind and is left unhandled.
+    if let MatcherRole::Source = role {
+        if is_ellipsis_string_literal(pat) {
+            return Some(GenericMatcher::LiteralString {
+                description: "hardcoded string literal".to_string(),
+            });
+        }
     }
 
     // ── Swift string-construction source: `"...\($X)..."`, `$SQL = "..." + $X`,
@@ -11947,6 +12038,129 @@ func h(w http.ResponseWriter, r *http.Request) {
         assert!(
             !findings.is_empty(),
             "tainted URL read off *http.Request into http.Redirect must fire, got {findings:?}"
+        );
+    }
+
+    // ── String-literal-value taint sources (`pattern-sources: "..."`) ────────
+    //
+    // The hardcoded-secret family compiles the ellipsis-string source `"..."`
+    // to a `LiteralString` matcher that seeds every string literal as tainted.
+    // These tests exercise the FULL `parse_taint_rule` -> `check` path and both
+    // directions of the discrimination: a hardcoded literal reaching the sink
+    // fires; a non-literal (a variable read from the environment) is silent.
+
+    #[test]
+    fn ellipsis_string_source_compiles_to_literal_string() {
+        let m = compile_pattern("\"...\"", MatcherRole::Source, Language::Python)
+            .expect("bare `\"...\"` must compile to a source matcher");
+        assert!(
+            matches!(m, GenericMatcher::LiteralString { .. }),
+            "bare ellipsis-string source must compile to LiteralString, got {m:?}"
+        );
+        // A string pattern carrying content is NOT the any-literal source — it
+        // must not collapse into LiteralString (that would over-match).
+        assert!(
+            !matches!(
+                compile_pattern("\"secret\"", MatcherRole::Source, Language::Python),
+                Some(GenericMatcher::LiteralString { .. })
+            ),
+            "a content-carrying string pattern must not compile to LiteralString"
+        );
+        // Sink position: a bare literal has no data-flow node to bind.
+        assert!(
+            compile_pattern("\"...\"", MatcherRole::Sink, Language::Python).is_none(),
+            "ellipsis-string in sink position must not compile"
+        );
+    }
+
+    /// A synthetic hardcoded-JWT-secret rule (the `"..."`-source shape) LOADS
+    /// through `parse_taint_rule` and FIRES when a hardcoded string literal
+    /// reaches the `jwt.sign` sink — Python engine.
+    #[test]
+    fn literal_string_source_python_fires_on_hardcoded_secret() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(
+            r#"
+id: hardcoded-jwt-secret-py
+mode: taint
+languages: [python]
+severity: WARNING
+message: "hardcoded secret"
+pattern-sources:
+  - pattern: |
+      "..."
+pattern-sinks:
+  - pattern: jwt.sign($PAYLOAD, $SECRET)
+"#,
+        );
+        // Literal secret flows into the sink -> fires.
+        let fire = r#"
+import jwt
+def make(payload):
+    return jwt.sign(payload, "hardcoded-secret")
+"#;
+        let tree = parse_file(fire, Language::Python).expect("python fixture parses");
+        assert_eq!(
+            rule.check(fire, &tree).len(),
+            1,
+            "a hardcoded string literal reaching jwt.sign must fire"
+        );
+        // A non-literal secret (read from the environment) must be silent.
+        let clean = r#"
+import jwt, os
+def make(payload):
+    secret_from_env = os.environ["JWT_SECRET"]
+    return jwt.sign(payload, secret_from_env)
+"#;
+        let tree = parse_file(clean, Language::Python).expect("python fixture parses");
+        assert!(
+            rule.check(clean, &tree).is_empty(),
+            "a non-literal secret (os.environ read) must NOT fire"
+        );
+    }
+
+    /// The same discrimination for the JavaScript engine: a hardcoded literal
+    /// reaching `jwt.sign` fires; a variable read from `process.env` is silent.
+    #[test]
+    fn literal_string_source_js_fires_on_hardcoded_secret() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(
+            r#"
+id: hardcoded-jwt-secret-js
+mode: taint
+languages: [javascript, typescript]
+severity: WARNING
+message: "hardcoded secret"
+pattern-sources:
+  - pattern: |
+      "..."
+pattern-sinks:
+  - pattern: jwt.sign($PAYLOAD, $SECRET)
+"#,
+        );
+        let fire = r#"
+const jwt = require("jsonwebtoken");
+function make(payload) {
+    return jwt.sign(payload, "hardcoded-secret");
+}
+"#;
+        let tree = parse_file(fire, Language::JavaScript).expect("js fixture parses");
+        assert_eq!(
+            rule.check(fire, &tree).len(),
+            1,
+            "a hardcoded string literal reaching jwt.sign must fire"
+        );
+        let clean = r#"
+const jwt = require("jsonwebtoken");
+function make(payload) {
+    const secretFromEnv = process.env.JWT_SECRET;
+    return jwt.sign(payload, secretFromEnv);
+}
+"#;
+        let tree = parse_file(clean, Language::JavaScript).expect("js fixture parses");
+        assert!(
+            rule.check(clean, &tree).is_empty(),
+            "a non-literal secret (process.env read) must NOT fire"
         );
     }
 }

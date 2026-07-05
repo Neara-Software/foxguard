@@ -861,6 +861,11 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 // the C# engine has no declared-type seeding, so it is a no-op
                 // here.
             }
+            NodeMatcher::LiteralString { .. } => {
+                // Ellipsis-string source `"..."`; no C# registry rule uses this
+                // source shape, so the C# engine carries it but does not seed
+                // string literals (no-op).
+            }
         }
     }
     None
@@ -967,7 +972,9 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         | NodeMatcher::ObjectLiteralValue { .. }
         | NodeMatcher::ReturnValue { .. }
         | NodeMatcher::TypedName { .. }
-        | NodeMatcher::TypedAssignTarget { .. } => false,
+        | NodeMatcher::TypedAssignTarget { .. }
+        // Ellipsis-string source `"..."` — not a call matcher.
+        | NodeMatcher::LiteralString { .. } => false,
     }
 }
 
