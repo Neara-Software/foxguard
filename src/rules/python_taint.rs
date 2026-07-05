@@ -37,7 +37,7 @@ use crate::rules::taint_engine::{
     cross_file_taint_finding, extract_cross_file_summary_for_function,
     extract_cross_file_summary_for_function_cf, match_binop_format_sink, match_call_sink,
     match_object_literal_sink, match_return_value_sink, node_text, push_attributed_findings,
-    summarize_function_return_generic, taint_finding_for_node, AnalysisContext,
+    summarize_function_return_generic, taint_finding_for_node_ranged, AnalysisContext,
     TaintLanguageAdapter, TaintState,
 };
 pub use crate::rules::taint_engine::{
@@ -426,8 +426,8 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for PyTaintAdapter {
             ) {
                 if name.kind() == "identifier" {
                     let lhs = node_text(name, ctx.source).to_string();
-                    if let Some((desc, src_line)) = expression_taint(value, ctx, state) {
-                        state.taint(lhs, desc, src_line);
+                    if let Some(o) = expression_taint(value, ctx, state) {
+                        state.taint_ranged(lhs, o.description, o.line, o.source_range);
                     } else {
                         state.clear(&lhs);
                     }
@@ -464,8 +464,8 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for PyTaintAdapter {
         if node.kind() == "return_statement" && return_taint.is_none() {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                if let Some((desc, _line)) = expression_taint(child, ctx, state) {
-                    *return_taint = Some(desc);
+                if let Some(o) = expression_taint(child, ctx, state) {
+                    *return_taint = Some(o.description);
                     break;
                 }
             }
@@ -477,7 +477,7 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for PyTaintAdapter {
         ctx: &PyCtx<'_>,
         state: &TaintState,
     ) -> Option<(String, usize)> {
-        expression_taint(expr, ctx, state)
+        expression_taint(expr, ctx, state).map(|o| (o.description, o.line))
     }
 
     fn seed_params(func_node: Node<'_>, ctx: &PyCtx<'_>, state: &mut TaintState) {
@@ -552,8 +552,8 @@ fn handle_assignment(node: Node<'_>, ctx: &PyCtx<'_>, state: &mut TaintState) {
     // Simple identifier LHS: the common case.
     if left.kind() == "identifier" {
         let lhs_name = node_text(left, ctx.source).to_string();
-        if let Some((desc, src_line)) = expression_taint(right, ctx, state) {
-            state.taint(lhs_name, desc, src_line);
+        if let Some(o) = expression_taint(right, ctx, state) {
+            state.taint_ranged(lhs_name, o.description, o.line, o.source_range);
         } else {
             // Reassignment with a clean RHS kills any previous taint on LHS.
             state.clear(&lhs_name);
@@ -577,8 +577,8 @@ fn handle_assignment(node: Node<'_>, ctx: &PyCtx<'_>, state: &mut TaintState) {
         if let Some(rhs_elems) = tuple_like_elements(right) {
             if rhs_elems.len() == lhs_targets.len() {
                 for (target, rhs) in lhs_targets.iter().zip(rhs_elems.iter()) {
-                    if let Some((desc, src_line)) = expression_taint(*rhs, ctx, state) {
-                        state.taint(target.clone(), desc, src_line);
+                    if let Some(o) = expression_taint(*rhs, ctx, state) {
+                        state.taint_ranged(target.clone(), o.description, o.line, o.source_range);
                     } else {
                         state.clear(target);
                     }
@@ -588,9 +588,14 @@ fn handle_assignment(node: Node<'_>, ctx: &PyCtx<'_>, state: &mut TaintState) {
         }
 
         // Arity mismatch or opaque RHS: apply conservative semantics.
-        if let Some((desc, src_line)) = expression_taint(right, ctx, state) {
+        if let Some(o) = expression_taint(right, ctx, state) {
             for target in &lhs_targets {
-                state.taint(target.clone(), desc.clone(), src_line);
+                state.taint_ranged(
+                    target.clone(),
+                    o.description.clone(),
+                    o.line,
+                    o.source_range,
+                );
             }
         } else {
             for target in &lhs_targets {
@@ -663,8 +668,8 @@ fn handle_as_pattern(node: Node<'_>, ctx: &PyCtx<'_>, state: &mut TaintState) {
         return;
     };
     let alias_name = node_text(alias_node, ctx.source).to_string();
-    if let Some((desc, src_line)) = expression_taint(value, ctx, state) {
-        state.taint(alias_name, desc, src_line);
+    if let Some(o) = expression_taint(value, ctx, state) {
+        state.taint_ranged(alias_name, o.description, o.line, o.source_range);
     } else {
         state.clear(&alias_name);
     }
@@ -741,15 +746,16 @@ fn handle_call(
         };
         let mut cursor = args.walk();
         for arg in args.named_children(&mut cursor) {
-            if let Some((source_desc, src_line)) = expression_taint(arg, ctx, state) {
+            if let Some(o) = expression_taint(arg, ctx, state) {
                 let rule_hint = attribution_hint_for_sink(&sink);
-                findings.push(taint_finding_for_node(
+                findings.push(taint_finding_for_node_ranged(
                     node,
-                    source_desc,
+                    o.description,
                     sink.description,
-                    src_line,
+                    o.line,
                     rule_hint,
                     1,
+                    o.source_range,
                 ));
                 // One finding per sink call is enough — don't double-report
                 // when multiple args are tainted.
@@ -815,15 +821,16 @@ fn handle_binop_format_sink(
         return;
     }
 
-    if let Some((source_desc, src_line)) = expression_taint(node, ctx, state) {
+    if let Some(o) = expression_taint(node, ctx, state) {
         let rule_hint = attribution_hint_for_sink(&sink);
-        findings.push(taint_finding_for_node(
+        findings.push(taint_finding_for_node_ranged(
             node,
-            source_desc,
+            o.description,
             sink.description,
-            src_line,
+            o.line,
             rule_hint,
             1,
+            o.source_range,
         ));
     }
 }
@@ -848,15 +855,16 @@ fn handle_dict_literal_sink(
         let Some(value) = child.child_by_field_name("value") else {
             continue;
         };
-        if let Some((source_desc, src_line)) = expression_taint(value, ctx, state) {
+        if let Some(o) = expression_taint(value, ctx, state) {
             let rule_hint = attribution_hint_for_sink(&sink);
-            findings.push(taint_finding_for_node(
+            findings.push(taint_finding_for_node_ranged(
                 node,
-                source_desc,
+                o.description,
                 sink.description,
-                src_line,
+                o.line,
                 rule_hint,
                 1,
+                o.source_range,
             ));
             return;
         }
@@ -877,15 +885,16 @@ fn handle_return_value_sink(
     };
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        if let Some((source_desc, src_line)) = expression_taint(child, ctx, state) {
+        if let Some(o) = expression_taint(child, ctx, state) {
             let rule_hint = attribution_hint_for_sink(&sink);
-            findings.push(taint_finding_for_node(
+            findings.push(taint_finding_for_node_ranged(
                 node,
-                source_desc,
+                o.description,
                 sink.description,
-                src_line,
+                o.line,
                 rule_hint,
                 1,
+                o.source_range,
             ));
             return;
         }
@@ -1034,11 +1043,11 @@ fn handle_cross_file_call(
             continue;
         }
         let arg = arg_nodes[flow.param_index];
-        if let Some((source_desc, src_line)) = expression_taint(arg, ctx, state) {
+        if let Some(o) = expression_taint(arg, ctx, state) {
             findings.push(cross_file_taint_finding(
                 node,
-                source_desc,
-                src_line,
+                o.description,
+                o.line,
                 &flow.sink_description,
                 &func_name,
                 &flow.sink_rule_id,
@@ -1091,35 +1100,61 @@ fn resolve_cross_file_callee(
     None
 }
 
-/// Returns the (source description, source line) if `expr` evaluates to (or
-/// references) a tainted value, otherwise `None`.
-fn expression_taint(
-    expr: Node<'_>,
-    ctx: &PyCtx<'_>,
-    state: &TaintState,
-) -> Option<(String, usize)> {
+/// Outcome of an [`expression_taint`] evaluation: the source description, the
+/// 1-indexed source line, and — when the originating source is a concrete AST
+/// node — the byte range of that node.
+///
+/// `source_range` is threaded so that at a sink the engine can report WHERE the
+/// source was, enabling the source-side `pattern-inside` / `pattern-not`
+/// post-filter in `semgrep_taint.rs`. It is `None` when the origin has no single
+/// node span (e.g. a seeded parameter tracked only by name). Rules WITHOUT a
+/// source-side `pattern-inside`/`pattern-not` never consult it, so this is
+/// purely additive.
+struct TaintOrigin {
+    description: String,
+    line: usize,
+    source_range: Option<(usize, usize)>,
+}
+
+/// Returns a [`TaintOrigin`] if `expr` evaluates to (or references) a tainted
+/// value, otherwise `None`.
+fn expression_taint(expr: Node<'_>, ctx: &PyCtx<'_>, state: &TaintState) -> Option<TaintOrigin> {
     let expr_line = expr.start_position().row + 1;
 
-    // Direct source match on this expression.
+    // Direct source match on this expression: the matched node IS the source,
+    // so record its byte range.
     if let Some(desc) = match_source(expr, ctx.source, ctx.spec, ctx.aliases) {
-        return Some((desc, expr_line));
+        return Some(TaintOrigin {
+            description: desc,
+            line: expr_line,
+            source_range: Some((expr.start_byte(), expr.end_byte())),
+        });
     }
 
-    // Tainted identifier reference.
+    // Tainted identifier reference: inherit the origin's stored range.
     if expr.kind() == "identifier" {
         let name = node_text(expr, ctx.source);
         if let Some(info) = state.info(name) {
-            return Some((info.description.clone(), info.line));
+            return Some(TaintOrigin {
+                description: info.description.clone(),
+                line: info.line,
+                source_range: info.source_range,
+            });
         }
     }
 
-    // Tainted attribute access on a tainted root (x.y where x is tainted).
+    // Tainted attribute access on a tainted root (x.y where x is tainted):
+    // inherit the root's stored source range.
     if expr.kind() == "attribute" {
         if let Some(object) = expr.child_by_field_name("object") {
             if object.kind() == "identifier" {
                 let name = node_text(object, ctx.source);
                 if let Some(info) = state.info(name) {
-                    return Some((info.description.clone(), info.line));
+                    return Some(TaintOrigin {
+                        description: info.description.clone(),
+                        line: info.line,
+                        source_range: info.source_range,
+                    });
                 }
             }
         }
@@ -1256,16 +1291,23 @@ fn expression_taint(
                     let callee = node_text(func, ctx.source);
                     if let Some(summary) = ctx.summaries.get(&call_summary_key(callee, args)) {
                         if let Some(desc) = &summary.direct_source {
-                            return Some((format!("{desc} (via {callee})"), expr_line));
+                            return Some(TaintOrigin {
+                                description: format!("{desc} (via {callee})"),
+                                line: expr_line,
+                                source_range: Some((expr.start_byte(), expr.end_byte())),
+                            });
                         }
                         let mut cursor = args.walk();
                         let arg_nodes: Vec<Node<'_>> = args.named_children(&mut cursor).collect();
                         for &param_idx in &summary.params_to_return {
                             if param_idx < arg_nodes.len() {
-                                if let Some((desc, src_line)) =
-                                    expression_taint(arg_nodes[param_idx], ctx, state)
+                                if let Some(o) = expression_taint(arg_nodes[param_idx], ctx, state)
                                 {
-                                    return Some((format!("{desc} (via {callee})"), src_line));
+                                    return Some(TaintOrigin {
+                                        description: format!("{} (via {callee})", o.description),
+                                        line: o.line,
+                                        source_range: o.source_range,
+                                    });
                                 }
                             }
                         }
@@ -1341,16 +1383,23 @@ fn expression_taint(
                 if let Some(args) = expr.child_by_field_name("arguments") {
                     if let Some(summary) = ctx.summaries.get(&call_summary_key(callee, args)) {
                         if let Some(desc) = &summary.direct_source {
-                            return Some((format!("{desc} (via {callee})"), expr_line));
+                            return Some(TaintOrigin {
+                                description: format!("{desc} (via {callee})"),
+                                line: expr_line,
+                                source_range: Some((expr.start_byte(), expr.end_byte())),
+                            });
                         }
                         let mut cursor = args.walk();
                         let arg_nodes: Vec<Node<'_>> = args.named_children(&mut cursor).collect();
                         for &param_idx in &summary.params_to_return {
                             if param_idx < arg_nodes.len() {
-                                if let Some((desc, src_line)) =
-                                    expression_taint(arg_nodes[param_idx], ctx, state)
+                                if let Some(o) = expression_taint(arg_nodes[param_idx], ctx, state)
                                 {
-                                    return Some((format!("{desc} (via {callee})"), src_line));
+                                    return Some(TaintOrigin {
+                                        description: format!("{} (via {callee})", o.description),
+                                        line: o.line,
+                                        source_range: o.source_range,
+                                    });
                                 }
                             }
                         }
@@ -1377,13 +1426,17 @@ fn expression_taint(
                                     args.named_children(&mut cursor).collect();
                                 for &param_idx in &summary.params_to_return {
                                     if param_idx < arg_nodes.len() {
-                                        if let Some((desc, src_line)) =
+                                        if let Some(o) =
                                             expression_taint(arg_nodes[param_idx], ctx, state)
                                         {
-                                            return Some((
-                                                format!("{desc} (via cross-file {func_name})"),
-                                                src_line,
-                                            ));
+                                            return Some(TaintOrigin {
+                                                description: format!(
+                                                    "{} (via cross-file {func_name})",
+                                                    o.description
+                                                ),
+                                                line: o.line,
+                                                source_range: o.source_range,
+                                            });
                                         }
                                     }
                                 }

@@ -1816,6 +1816,9 @@ struct TaintFindingView {
     source_description: String,
     sink_description: String,
     source_line: usize,
+    /// Byte range of the originating source node, when the engine tracked it.
+    /// Consumed by the source-side `pattern-inside`/`pattern-not` post-filter.
+    source_range: Option<(usize, usize)>,
     hops: u8,
 }
 
@@ -1831,6 +1834,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1845,6 +1849,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1859,6 +1864,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1873,6 +1879,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1887,6 +1894,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1901,6 +1909,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1915,6 +1924,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1929,6 +1939,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1943,6 +1954,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1957,6 +1969,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1971,6 +1984,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1985,6 +1999,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -1999,6 +2014,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -2013,6 +2029,7 @@ impl TaintFindingView {
             source_description: f.source_description,
             sink_description: f.sink_description,
             source_line: f.source_line,
+            source_range: f.source_range,
             hops: f.hops,
         }
     }
@@ -2221,6 +2238,61 @@ impl Rule for SemgrepTaintRule {
                 self.insides.sink.iter().any(|inside| {
                     inside.contains_range(root, source, t.sink_start_byte, t.sink_end_byte)
                 })
+            });
+        }
+        // ── Post-filter: enforce source-side `pattern-inside` constraints ───
+        //
+        // The source-side analog of the sink-side `pattern-inside` filter
+        // above. `compile_patterns_block` captured each `pattern-inside` inside
+        // a `pattern-sources` `patterns:` AND-block into `self.insides.source`.
+        // These express "the taint SOURCE must appear textually INSIDE this
+        // region" (e.g. an attribute read off the request parameter, valid only
+        // inside a `@view_config`-decorated view function — the Pyramid rules).
+        //
+        // Unlike the sink filter, this reads the finding's ORIGINATING source
+        // node range (`t.source_range`), threaded through the taint state by the
+        // engine (`TaintInfo::source_range`). A finding is kept only when that
+        // range is contained by some region matched by a source-side
+        // `pattern-inside`. When the source range is unknown (`None` — e.g. a
+        // seeded parameter the engine tracks only by name), we cannot prove
+        // containment, so we DROP the finding: conservative / FP-safe, matching
+        // the "never over-match" posture (a source-gated rule under-matches
+        // rather than shipping an imprecise, over-broad matcher).
+        //
+        // Only Python threads a source range today; other engines always pass
+        // `None`, and no other-language rule declares a source-side
+        // `pattern-inside`, so every existing rule is unaffected.
+        if !self.insides.source.is_empty() {
+            let root = tree.root_node();
+            raw.retain(|t| match t.source_range {
+                Some((s, e)) => self
+                    .insides
+                    .source
+                    .iter()
+                    .any(|inside| inside.contains_range(root, source, s, e)),
+                None => false,
+            });
+        }
+        // ── Post-filter: enforce source-side `pattern-not` constraints ──────
+        //
+        // Now that findings carry the originating source node range, the
+        // source-side `pattern-not` captured into `self.negatives.source` can be
+        // enforced too (e.g. the Pyramid `pattern-not: $REQ.dbsession`, which
+        // excludes the DB session handle from the request-attribute source). A
+        // finding is suppressed when its source node range is matched by any
+        // source-side negative pattern. When the source range is unknown
+        // (`None`), we cannot test the negative, so we KEEP the finding —
+        // `pattern-not` only ever removes, so the conservative direction is to
+        // not remove (unchanged behavior for engines that do not track a range).
+        if !self.negatives.source.is_empty() {
+            let root = tree.root_node();
+            raw.retain(|t| match t.source_range {
+                Some((s, e)) => !self
+                    .negatives
+                    .source
+                    .iter()
+                    .any(|neg| neg.overlaps_range(root, source, s, e)),
+                None => true,
             });
         }
         raw.into_iter()
@@ -2733,12 +2805,13 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
     let sink_negatives = compile_negative_patterns(&sink_neg_strings, lang, &id, "pattern-sinks");
     let source_negatives =
         compile_negative_patterns(&source_neg_strings, lang, &id, "pattern-sources");
-    if !source_neg_strings.is_empty() {
+    if !source_neg_strings.is_empty() && lang != Language::Python {
         eprintln!(
             "Warning: taint rule `{}` has `pattern-not` constraints inside \
-             `pattern-sources`; these are compiled but source-side enforcement \
-             is not yet applied (findings carry no source byte range) — \
-             documented limitation",
+             `pattern-sources`; source-side enforcement requires an engine that \
+             threads a source byte range onto findings (Python only today) — \
+             this rule's language does not, so the constraint is compiled but \
+             not enforced",
             id
         );
     }
@@ -2765,12 +2838,13 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
     let sink_insides = compile_inside_patterns(&sink_inside_strings, lang, &id, "pattern-sinks");
     let source_insides =
         compile_inside_patterns(&source_inside_strings, lang, &id, "pattern-sources");
-    if !source_inside_strings.is_empty() {
+    if !source_inside_strings.is_empty() && lang != Language::Python {
         eprintln!(
             "Warning: taint rule `{}` has `pattern-inside` constraints inside a \
-             `pattern-sources` `patterns:` block; these are compiled but source-side \
-             enforcement is not yet applied (findings carry no source byte range) — \
-             documented limitation",
+             `pattern-sources` `patterns:` block; source-side enforcement requires \
+             an engine that threads a source byte range onto findings (Python only \
+             today) — this rule's language does not, so the constraint is compiled \
+             but not enforced",
             id
         );
     }
@@ -10647,6 +10721,144 @@ pattern-sinks:
                 matches!(other, TaintRuleParse::Skip(_))
             ),
         }
+    }
+
+    // ── Source-side `pattern-inside` enforcement (Pyramid shape) ─────────────
+    //
+    // These pin the source-side analog of the sink-side `pattern-inside`
+    // filter: the taint SOURCE (an attribute read off the request parameter,
+    // `$REQ.$FIELD`) is a source ONLY when it appears textually inside a
+    // `@view_config`-decorated view function. The bridge threads the source
+    // node's byte range onto the finding (`TaintInfo::source_range`) so the
+    // post-filter can enforce the containment; without it the source would seed
+    // every `.GET` read in the file (over-match), which is why the Pyramid rules
+    // were skipped. The `probe_` name proves the compile shape; the `fires`
+    // test proves the inside-vs-outside discrimination.
+
+    const PYRAMID_SRC: &str = r#"
+@view_config
+def home_view(req):
+    name = req.GET['name']
+    return Response(name)
+
+def plain_helper(req):
+    name = req.GET['name']
+    return Response(name)
+"#;
+
+    /// Compile-shape probe: an attribute-read source (`$REQ.GET`) gated by a
+    /// source `pattern-inside` compiles to a `FieldName` source AND captures the
+    /// `pattern-inside` into `insides.source` (NOT the `ParamName` wildcard path,
+    /// which is reserved for a bare-metavar source). This is the piece that was
+    /// "compiled but not enforced" before this change.
+    #[test]
+    fn source_side_pattern_inside_probe_compiles_field_source_and_captures_inside() {
+        let rule = compiled(
+            r#"
+id: pyramid-like-probe
+mode: taint
+languages: [python]
+severity: ERROR
+message: "request attribute reaches Response"
+pattern-sources:
+  - patterns:
+      - pattern: $REQ.GET
+      - pattern-inside: |
+          @view_config
+          def $V(...):
+              ...
+pattern-sinks:
+  - pattern: Response($X)
+"#,
+        );
+        assert!(
+            rule.spec
+                .sources
+                .iter()
+                .any(|m| matches!(m, GenericMatcher::FieldName { field, .. } if field == "GET")),
+            "expected a FieldName {{ GET }} source, got {:?}",
+            rule.spec.sources
+        );
+        assert_eq!(
+            rule.insides.source.len(),
+            1,
+            "the source-side pattern-inside must be captured into insides.source"
+        );
+    }
+
+    /// The hard faithfulness gate: `req.GET['name']` INSIDE a `@view_config`
+    /// view flows to `Response(...)` and FIRES; the identical `req.GET['name']`
+    /// in a plain (non-`@view_config`) function does NOT — its source node is
+    /// not inside the required region.
+    #[test]
+    fn source_side_pattern_inside_fires_inside_view_only() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: pyramid-like
+mode: taint
+languages: [python]
+severity: ERROR
+message: "request attribute reaches Response"
+pattern-sources:
+  - patterns:
+      - pattern: $REQ.GET
+      - pattern-inside: |
+          @view_config
+          def $V(...):
+              ...
+pattern-sinks:
+  - pattern: Response($X)
+"#,
+        );
+
+        let tree = parse_file(PYRAMID_SRC, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(PYRAMID_SRC, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "only the source inside the @view_config view may fire, got lines {:?}",
+            findings.iter().map(|f| f.line).collect::<Vec<_>>()
+        );
+        // The surviving finding is the `Response(name)` on line 5 (inside the
+        // view), NOT the identical one on line 9 (inside plain_helper).
+        assert_eq!(
+            findings[0].line, 5,
+            "the surviving finding must be inside the @view_config view (line 5), got {}",
+            findings[0].line
+        );
+    }
+
+    /// Control: WITHOUT the source-side `pattern-inside`, the SAME attribute-read
+    /// source fires in BOTH functions — proving the discrimination above is due
+    /// to the source-side enforcement, not some other narrowing.
+    #[test]
+    fn source_without_pattern_inside_fires_in_both_functions() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: pyramid-like-nogate
+mode: taint
+languages: [python]
+severity: ERROR
+message: "request attribute reaches Response"
+pattern-sources:
+  - pattern: $REQ.GET
+pattern-sinks:
+  - pattern: Response($X)
+"#,
+        );
+
+        let tree = parse_file(PYRAMID_SRC, Language::Python).expect("python fixture should parse");
+        let findings = rule.check(PYRAMID_SRC, &tree);
+        assert_eq!(
+            findings.len(),
+            2,
+            "without the source pattern-inside, both req.GET reads fire, got lines {:?}",
+            findings.iter().map(|f| f.line).collect::<Vec<_>>()
+        );
     }
 
     /// Java AWS-Lambda shape: `focus-metavariable: $EVENT` + a typed

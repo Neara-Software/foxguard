@@ -415,6 +415,14 @@ pub struct TaintFinding {
     pub sink_description: String,
     /// 1-indexed line where the taint source was introduced.
     pub source_line: usize,
+    /// Byte range `[start, end)` of the AST node that introduced the taint
+    /// (the node that matched a `pattern-sources` matcher), when known.
+    /// Consumed by the source-side `pattern-inside` / `pattern-not` post-filter
+    /// in `semgrep_taint.rs`. `None` when the origin has no single node span
+    /// (a seeded parameter) or the engine path does not track it — the
+    /// post-filter only reads this when the rule declares a source-side
+    /// `pattern-inside`/`pattern-not`, so every other rule is unaffected.
+    pub source_range: Option<(usize, usize)>,
     /// Optional rule id hint set by the batched analyzer so callers can
     /// dispatch a finding back to the correct rule.
     pub rule_id_hint: Option<String>,
@@ -487,6 +495,18 @@ pub(super) struct TaintInfo {
     /// unchanged). `Some(set)` is populated only when a policy is active; a sink
     /// then fires only when the set satisfies the policy's `sink_requires`.
     pub labels: Option<BTreeSet<String>>,
+    /// Byte range `[start, end)` of the AST node that originally introduced
+    /// this taint (the node that matched a `pattern-sources` matcher). Threaded
+    /// through assignment/with/destructuring propagation so that at a sink the
+    /// engine can report WHERE the source was, enabling the source-side
+    /// `pattern-inside` / `pattern-not` post-filter in `semgrep_taint.rs`.
+    ///
+    /// `None` when the origin has no single node span (e.g. a seeded parameter)
+    /// or when the engine path does not track it — the historical behavior for
+    /// every rule WITHOUT a source-side `pattern-inside` is unchanged, and the
+    /// post-filter treats `None` conservatively (drops, FP-safe, for
+    /// `pattern-inside`; keeps for `pattern-not`).
+    pub source_range: Option<(usize, usize)>,
 }
 
 #[derive(Default)]
@@ -495,7 +515,8 @@ pub(super) struct TaintState {
 }
 
 impl TaintState {
-    /// Taint `name` with the historical unlabeled behavior (`labels = None`).
+    /// Taint `name` with the historical unlabeled behavior (`labels = None`,
+    /// `source_range = None`).
     pub fn taint(&mut self, name: String, description: String, line: usize) {
         self.tainted.insert(
             name,
@@ -503,6 +524,29 @@ impl TaintState {
                 description,
                 line,
                 labels: None,
+                source_range: None,
+            },
+        );
+    }
+
+    /// Taint `name` carrying the byte range of the originating source node
+    /// (used by the source-side `pattern-inside` post-filter). `labels = None`
+    /// (unlabeled behavior). Callers that have the source node's span thread it
+    /// here so it survives assignment propagation to the sink.
+    pub fn taint_ranged(
+        &mut self,
+        name: String,
+        description: String,
+        line: usize,
+        source_range: Option<(usize, usize)>,
+    ) {
+        self.tainted.insert(
+            name,
+            TaintInfo {
+                description,
+                line,
+                labels: None,
+                source_range,
             },
         );
     }
@@ -522,6 +566,7 @@ impl TaintState {
                 description,
                 line,
                 labels,
+                source_range: None,
             },
         );
     }
@@ -1253,6 +1298,31 @@ pub(super) fn taint_finding_for_node(
     rule_id_hint: Option<String>,
     hops: u8,
 ) -> TaintFinding {
+    taint_finding_for_node_ranged(
+        node,
+        source_description,
+        sink_description,
+        source_line,
+        rule_id_hint,
+        hops,
+        None,
+    )
+}
+
+/// Same as [`taint_finding_for_node`] but records the originating source
+/// node's byte range on the finding. Used by the Python engine to thread the
+/// source span through to the source-side `pattern-inside`/`pattern-not`
+/// post-filter; every other caller goes through [`taint_finding_for_node`]
+/// (which passes `None`), so their behavior is unchanged.
+pub(super) fn taint_finding_for_node_ranged(
+    node: Node<'_>,
+    source_description: String,
+    sink_description: String,
+    source_line: usize,
+    rule_id_hint: Option<String>,
+    hops: u8,
+    source_range: Option<(usize, usize)>,
+) -> TaintFinding {
     let start = node.start_position();
     let end = node.end_position();
     TaintFinding {
@@ -1265,6 +1335,7 @@ pub(super) fn taint_finding_for_node(
         source_description,
         sink_description,
         source_line,
+        source_range,
         rule_id_hint,
         hops,
     }
@@ -1459,6 +1530,7 @@ mod tests {
             source_description: "input".to_string(),
             sink_description: "exec".to_string(),
             source_line: 1,
+            source_range: None,
             rule_id_hint: attribution_hint_for_sink(&matched),
             hops: 1,
         };

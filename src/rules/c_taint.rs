@@ -367,6 +367,7 @@ fn analyze_scope(
             source_description: source_desc.clone(),
             sink_description: sink.description,
             source_line,
+            source_range: None,
             rule_id_hint: None,
             hops: 0,
         });

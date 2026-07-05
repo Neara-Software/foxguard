@@ -1168,6 +1168,7 @@ fn taint_finding_for_node(
         source_description: source_info.description,
         sink_description,
         source_line: source_info.line,
+        source_range: None,
         rule_id_hint: None,
         hops: source_info.hops.max(1),
     }
