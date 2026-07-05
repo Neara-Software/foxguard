@@ -6,21 +6,33 @@ blocked them. The hard rule throughout: a rule that loads must **match what
 Semgrep matches, not more** — a source that can only be approximated by
 over-seeding (firing everywhere) is left skipped rather than shipped broad.
 
-Outcome: **1 of 8 implemented** (`avoid-sqlalchemy-text`), 7 deferred with the
-concrete engine primitive each needs. The task framed these as "context-gated
+Outcome (original assessment): **1 of 8 implemented** (`avoid-sqlalchemy-text`),
+7 deferred with the concrete engine primitive each needs. (As of 2026-07-05,
+**4 of 8 load** — the three `requests` cleartext rules have since shipped; see
+the update note below.) The task framed these as "context-gated
 source shapes"; the investigation shows the real blockers are more varied
 (string-literal-regex seeding, list-literal seeding, keyword-argument focus,
 source-side `pattern-inside` enforcement) — only the two Pyramid rules are
 genuinely context-gated sources.
+
+> **Update (2026-07-05):** re-verified against the current snapshot with
+> `registry_coverage --list-skips python`. The three `requests` cleartext rules
+> below — `request-with-http`, `request-session-with-http`, and
+> `request-session-http-in-with-context` — **now load** and are no longer
+> skipped: the string-literal-regex source primitive they needed shipped
+> (`try_compile_string_literal_regex_source_block` in `semgrep_taint.rs`). Their
+> matrix rows are updated; the per-rule write-ups are kept as the record of the
+> original blocker. Still deferred: `pyramid-direct-use-of-response`,
+> `pyramid-sqlalchemy-sql-injection`, `tainted-html-response`, `wildcard-cors`.
 
 ## Summary matrix
 
 | Rule | Source shape | Sink shape | Blocker | Status |
 |---|---|---|---|---|
 | `avoid-sqlalchemy-text` | string CONSTRUCTION (`$X+$Y`, `$X%$Y`, `f"..."`, `$X.format(...)`) | `sqlalchemy.text(...)` (`Call`) | needed a construction source | **IMPLEMENTED** |
-| `request-with-http` | string LITERAL matching regex `http://` (not localhost/127.0.0.1) | `requests.$W($SINK,...)` + `focus $SINK` | string-literal-regex source primitive | deferred |
-| `request-session-with-http` | same string-literal-regex | `requests.Session(...).$W($SINK,...)` + focus | string-literal-regex source + chained-call sink | deferred |
-| `request-session-http-in-with-context` | same string-literal-regex | `pattern-inside: with requests.Session() as $S` + `$S.$W($SINK,...)` | string-literal-regex source + bound-receiver context sink | deferred |
+| `request-with-http` | string LITERAL matching regex `http://` (not localhost/127.0.0.1) | `requests.$W($SINK,...)` + `focus $SINK` | string-literal-regex source primitive | **loaded (2026-07-05)** |
+| `request-session-with-http` | same string-literal-regex | `requests.Session(...).$W($SINK,...)` + focus | string-literal-regex source + chained-call sink | **loaded (2026-07-05)** |
+| `request-session-http-in-with-context` | same string-literal-regex | `pattern-inside: with requests.Session() as $S` + `$S.$W($SINK,...)` | string-literal-regex source + bound-receiver context sink | **loaded (2026-07-05)** |
 | `pyramid-direct-use-of-response` | `$REQ.$ANYTHING` **inside** `@view_config def $V($REQ)` (`pattern-not: $REQ.dbsession`) | `$REQ.response.body = $SINK`, `Response($SINK)`, … | source-side `pattern-inside` enforcement | deferred |
 | `pyramid-sqlalchemy-sql-injection` | same context-gated `$REQ.$ANYTHING` | `pattern-inside: $Q = $REQ.dbsession.query(...)` + `$Q.$SQLFUNC("...".$FMT(...,$SINK,...))` + neg-lookahead regex | source-side `pattern-inside` + nested-format sink | deferred |
 | `tainted-html-response` | param `event` inside `def $H(event, context)` | bare `$BODY` inside `{...,"Content-Type":"text/html",...,"body":$BODY,...}` | structured dict-literal sink containment | deferred |
