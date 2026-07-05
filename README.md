@@ -30,7 +30,7 @@ npx foxguard .
 - Taint tracking for 14 languages, with cross-file analysis for Python, JavaScript, Go, Java, Ruby, PHP, C#, and Kotlin
 - Fast local and CI scans, with diff mode for “what did this branch add?”
 - Secrets scanning, OSV-backed dependency scanning, and post-quantum crypto audit
-- Semgrep/OpenGrep-compatible YAML bridge for existing rule packs
+- Semgrep/OpenGrep-compatible YAML bridge that loads the vast majority of the public registry ([coverage report](docs/parity/registry-coverage.md))
 - Terminal, JSON, SARIF, CycloneDX 1.6 CBOM, and Semgrep-compatible JSON output
 
 ## Install
