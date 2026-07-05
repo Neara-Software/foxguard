@@ -909,6 +909,8 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             // First-parameter signature source / concat-in-call sink are
             // C#-only; carried in the spec but no-op here.
             | NodeMatcher::FirstParamSource { .. }
+            | NodeMatcher::MethodArgSink { .. }
+            | NodeMatcher::ReceiverProvenanceCall { .. }
             | NodeMatcher::CallArgConcat { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the Ruby engine (no-op).

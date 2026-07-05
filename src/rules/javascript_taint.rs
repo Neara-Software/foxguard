@@ -2062,6 +2062,8 @@ fn match_source(
             // First-parameter signature source / concat-in-call sink are
             // C#-only; carried in the spec but no-op here.
             | NodeMatcher::FirstParamSource { .. }
+            | NodeMatcher::MethodArgSink { .. }
+            | NodeMatcher::ReceiverProvenanceCall { .. }
             | NodeMatcher::CallArgConcat { .. } => {
                 // Sink-only matchers; BinopFormat sinks are carried in the spec
                 // but the JS engine does not yet match them as a source (no-op).

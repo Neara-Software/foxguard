@@ -1140,6 +1140,11 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 // Concat-in-call sink — sink-only, enforced in `find_sinks`;
                 // never a source (no-op here).
             }
+            NodeMatcher::MethodArgSink { .. } | NodeMatcher::ReceiverProvenanceCall { .. } => {
+                // MethodArgSink is a Java-only positional-argument sink;
+                // ReceiverProvenanceCall is a Java-only provenance source. Both
+                // are carried in the spec but no-op in the C# engine.
+            }
         }
     }
     None
@@ -1260,6 +1265,10 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         // Concat-in-call sink — enforced directly in `find_sinks`, not through
         // the generic call-matcher path.
         | NodeMatcher::CallArgConcat { .. }
+        // Java-only positional-argument sink / provenance source — not
+        // call matchers here.
+        | NodeMatcher::MethodArgSink { .. }
+        | NodeMatcher::ReceiverProvenanceCall { .. }
         // Ellipsis-string source `"..."` — not a call matcher.
         | NodeMatcher::LiteralString { .. } => false,
     }

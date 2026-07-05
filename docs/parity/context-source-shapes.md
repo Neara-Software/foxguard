@@ -155,6 +155,36 @@ nested `{...}` into a containment `CompiledAstPattern`, and on synthesizing an
 pieces. High-risk; deferred pending a spike on nested-dict `pattern-inside`
 compilation.
 
+### `tainted-html-string` (Java)
+
+A taint-**labels** XSS rule (`INPUT` → `CONCAT`, sink `requires: CONCAT`). Two
+blockers, either alone fatal:
+
+1. **The `CONCAT` relabel must be gated on an HTML-literal regex.** The `CONCAT`
+   source is a string-building expression (`"$HTMLSTR" + ...`, `.concat`,
+   `StringBuilder.append`, `+=`, `String.format`) whose literal operand matches
+   `metavariable-regex: $HTMLSTR ^<\w+` — i.e. the built string must START with
+   an HTML tag. The Java engine's string-building relabel
+   (`is_string_building_node`) applies `INPUT → CONCAT` to *any* concatenation,
+   NOT only HTML-tag-prefixed ones. The fixture's discriminator
+   `getVulnerablePayloadLevelSecure3ok` builds `"not html" += imageLocation` and
+   returns it — explicitly `ok`. With the ungated relabel that value acquires
+   `CONCAT` and the sink fires → **false positive**. Faithfulness needs a
+   regex-gated relabel primitive (only relabel when the string-building node's
+   literal operand matches `^<\w+`), which `LabelPolicy`/`Relabel` cannot express
+   today.
+
+2. **The sinks are `ResponseEntity` shapes no recognizer handles.**
+   `new ResponseEntity<>($PAYLOAD, ...)`, `new ResponseEntity<$ERROR>($PAYLOAD,
+   ...)`, `ResponseEntity. ... .body($PAYLOAD)`, and `ResponseEntity.ok($PAYLOAD).
+   ...` with `focus: $PAYLOAD`. These are a constructor-argument-focus sink and a
+   chained-builder `.body(...)` sink; the focus-call sink recognizer does not
+   cover a `new C<>($X, ...)` object-creation focus or a `Response. ... .body($X)`
+   ellipsis-chain, so every sink arm skips (`has no valid pattern-sinks`).
+
+**Needs:** a regex-gated string-building relabel (label side) + a
+constructor-argument / builder-chain focus sink primitive (sink side). Deferred.
+
 ### `wildcard-cors`
 
 Two blockers. Source `[..., "*", ...]` is a **list literal containing a value** —

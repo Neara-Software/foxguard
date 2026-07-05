@@ -1692,6 +1692,8 @@ fn match_source(
             // First-parameter signature source / concat-in-call sink are
             // C#-only; carried in the spec but no-op here.
             | NodeMatcher::FirstParamSource { .. }
+            | NodeMatcher::MethodArgSink { .. }
+            | NodeMatcher::ReceiverProvenanceCall { .. }
             | NodeMatcher::CallArgConcat { .. } => {
                 // Sink-only matchers; MemberAssign is JS-specific.
             }

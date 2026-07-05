@@ -369,6 +369,73 @@ pub enum NodeMatcher {
     /// call to a different method are all silent. Sink/sanitizer only. Matched by
     /// the C# engine; other engines carry it in the spec but no-op it.
     CallArgConcat { method: String, description: String },
+
+    /// Match a CALL to a named method whose argument at a SPECIFIC POSITION
+    /// carries taint — the Semgrep positional-`focus-metavariable` sink
+    /// `(HttpServletRequest $REQ).getSession().$FUNC($NAME, $VALUE)` +
+    /// `metavariable-regex: { $FUNC: ^(putValue|setAttribute)$ }` +
+    /// `focus-metavariable: $VALUE` (the `tainted-session-from-http-request`
+    /// trust-boundary rule: only a tainted VALUE written into the session is the
+    /// sink, never a tainted KEY).
+    ///
+    /// This is the positionally-precise analogue of [`NodeMatcher::MethodName`]
+    /// (which fires when ANY argument is tainted): it fires ONLY when the method
+    /// name is one of `methods` AND the argument at `arg_index` (zero-based)
+    /// carries taint. `setAttribute(taintedKey, "literal")` is therefore SILENT
+    /// (the focus is the value at index 1, not the key at index 0), while
+    /// `setAttribute("literal", taintedValue)` fires — the exact discriminator
+    /// the rule's `focus-metavariable: $VALUE` encodes.
+    ///
+    /// The receiver context (`request.getSession()`) is a droppable narrowing:
+    /// the sink is bounded by the method-name set and the tainted-argument
+    /// position, so a `setAttribute`/`putValue` on any receiver with a tainted
+    /// value at `arg_index` fires. Sink/sanitizer only — a call argument is a
+    /// data-flow destination, not a taint origin. Compiled solely for the Java
+    /// engine (the only registry rule with this shape is Java); other engines
+    /// carry the matcher in the spec but no-op it.
+    MethodArgSink {
+        methods: Vec<String>,
+        arg_index: usize,
+        description: String,
+    },
+
+    /// Match a METHOD CALL on a receiver of a KNOWN INITIALIZATION PROVENANCE as
+    /// a taint SOURCE — the Semgrep binding-linked source
+    ///
+    /// ```yaml
+    /// pattern-sources:
+    ///   - patterns:
+    ///       - pattern-inside: |
+    ///           $TYPE $MD = MessageDigest.getInstance("MD5");
+    ///           ...
+    ///       - pattern: $MD.digest(...)
+    /// ```
+    ///
+    /// (the `md5-used-as-password` rule: the bytes produced by `.digest()` on a
+    /// `MessageDigest` obtained via `MessageDigest.getInstance("MD5")` are an
+    /// MD5 hash — flowing them into a password sink is the weakness).
+    ///
+    /// Fires on a method call `RECV.method(...)` ONLY when:
+    /// - the call's final method name equals `method` (`digest`), AND
+    /// - `RECV` is a plain identifier whose in-scope declaration initializes it
+    ///   with a call `init_receiver.init_method(...)` whose first string-literal
+    ///   argument equals `init_arg` (`MessageDigest.getInstance("MD5")`).
+    ///
+    /// Faithfulness (the whole point): the `init_arg` string discriminator is
+    /// what distinguishes MD5 from a strong algorithm — a receiver initialized
+    /// with `MessageDigest.getInstance("SHA-256")` does NOT match, so
+    /// `sha.digest()` is correctly clean. The source fires on the `.digest()`
+    /// call itself (not the receiver variable), so only the hash bytes become
+    /// tainted. Source only — a digest call is a taint origin, not a
+    /// destination. Compiled solely for the Java engine; other engines carry the
+    /// matcher in the spec but no-op it.
+    ReceiverProvenanceCall {
+        init_receiver: String,
+        init_method: String,
+        init_arg: String,
+        method: String,
+        description: String,
+    },
 }
 
 impl NodeMatcher {
@@ -396,6 +463,8 @@ impl NodeMatcher {
             NodeMatcher::CallArgSource { description, .. } => description,
             NodeMatcher::FirstParamSource { description } => description,
             NodeMatcher::CallArgConcat { description, .. } => description,
+            NodeMatcher::MethodArgSink { description, .. } => description,
+            NodeMatcher::ReceiverProvenanceCall { description, .. } => description,
         }
     }
 }
@@ -1607,6 +1676,22 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
             description,
         } => {
             format!("CAC|{method}|{description}")
+        }
+        NodeMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => {
+            format!("MAS|{}|{arg_index}|{description}", methods.join(","))
+        }
+        NodeMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => {
+            format!("RPC|{init_receiver}.{init_method}({init_arg})|{method}|{description}")
         }
     }
 }
