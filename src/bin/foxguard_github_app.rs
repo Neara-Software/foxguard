@@ -45,7 +45,28 @@ use tracing_subscriber::EnvFilter;
 /// headroom while making it cheap to reject anything weaponised.
 const MAX_BODY_BYTES: usize = 1 << 20; // 1 MiB
 const MAX_REPO_BYTES: u64 = 1_000_000_000; // 1 GB
-const PULL_REQUEST_SCAN_TIMEOUT: Duration = Duration::from_secs(60);
+/// Wall-clock timeout applied to each `git` clone and each `foxguard` scan
+/// during a pull-request review, configurable via the
+/// `FOXGUARD_SCAN_TIMEOUT_SECS` environment variable (default `60`).
+///
+/// Large repositories — or PRs that surface hundreds of findings — can exceed
+/// 60s; in production ~20% of scans were hitting the fixed 60s ceiling and
+/// being killed. Raising this (e.g. `180`) reduces those timeouts at the cost
+/// of holding a scan worker slot longer. A missing, unparseable, or `0` value
+/// falls back to the 60s default.
+fn pull_request_scan_timeout() -> Duration {
+    parse_scan_timeout(std::env::var("FOXGUARD_SCAN_TIMEOUT_SECS").ok())
+}
+
+/// Pure parser for [`pull_request_scan_timeout`]: a positive integer number of
+/// seconds, or the 60s default when the value is missing, unparseable, or `0`.
+fn parse_scan_timeout(value: Option<String>) -> Duration {
+    let secs = value
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|&secs| secs > 0)
+        .unwrap_or(60);
+    Duration::from_secs(secs)
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -610,7 +631,7 @@ fn run_git(
     current_dir: Option<&Path>,
 ) -> Result<(), String> {
     let command = build_git_command(args, auth_header_key, installation_token, current_dir);
-    run_command_with_timeout(command, PULL_REQUEST_SCAN_TIMEOUT, "git")
+    run_command_with_timeout(command, pull_request_scan_timeout(), "git")
         .map(|_| ())
         .map_err(|error| redact_git_error(&error, installation_token))
 }
@@ -691,7 +712,7 @@ fn run_scanner(checkout: &Path) -> Result<String, String> {
         .arg("json")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    run_command_with_timeout(command, PULL_REQUEST_SCAN_TIMEOUT, "foxguard")
+    run_command_with_timeout(command, pull_request_scan_timeout(), "foxguard")
 }
 
 fn run_command_with_timeout(
@@ -1099,6 +1120,19 @@ mod tests {
             "snippet": "demo"
         })
         .to_string()
+    }
+
+    #[test]
+    fn parse_scan_timeout_reads_override_and_falls_back() {
+        use super::parse_scan_timeout;
+        // A valid positive override is honoured.
+        assert_eq!(parse_scan_timeout(Some("180".into())).as_secs(), 180);
+        assert_eq!(parse_scan_timeout(Some("  120 ".into())).as_secs(), 120);
+        // Missing / unparseable / zero all fall back to the 60s default.
+        assert_eq!(parse_scan_timeout(None).as_secs(), 60);
+        assert_eq!(parse_scan_timeout(Some("".into())).as_secs(), 60);
+        assert_eq!(parse_scan_timeout(Some("banana".into())).as_secs(), 60);
+        assert_eq!(parse_scan_timeout(Some("0".into())).as_secs(), 60);
     }
 
     #[test]
