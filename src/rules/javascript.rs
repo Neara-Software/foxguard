@@ -2947,13 +2947,6 @@ pub fn js_taint_rule_specs() -> Vec<(&'static str, JsTaintSpec)> {
     ]
 }
 
-/// Returns `true` if `rule_id` is one of the built-in JS taint rules
-/// handled by [`run_js_taint_batched`]. The scanner uses this to avoid
-/// running those rules individually in the per-rule loop.
-pub fn is_js_taint_rule_id(rule_id: &str) -> bool {
-    rule_id.starts_with("js/taint-")
-}
-
 /// Per-rule metadata used by the batched JS taint runner to shape
 /// findings (severity, CWE, fix hint, description formatter).
 struct JsTaintRuleDispatch {

@@ -1944,13 +1944,6 @@ fn go_taint_rule_dispatch_table() -> Vec<GoTaintRuleDispatch> {
     ]
 }
 
-/// Returns `true` if `rule_id` is one of the built-in Go taint rules
-/// handled by [`run_go_taint_batched`]. The scanner uses this to avoid
-/// running those rules individually in the per-rule loop.
-pub fn is_go_taint_rule_id(rule_id: &str) -> bool {
-    rule_id.starts_with("go/taint-")
-}
-
 /// Run every built-in Go taint rule over `tree` in a single batched
 /// pass, returning per-rule [`Finding`]s.
 ///

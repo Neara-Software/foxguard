@@ -2968,13 +2968,6 @@ fn py_taint_rule_dispatch_table() -> Vec<PyTaintRuleDispatch> {
     ]
 }
 
-/// Returns `true` if `rule_id` is one of the built-in Python taint
-/// rules handled by [`run_py_taint_batched`]. The scanner uses this to
-/// avoid running those rules individually in the per-rule loop.
-pub fn is_py_taint_rule_id(rule_id: &str) -> bool {
-    rule_id.starts_with("py/taint-")
-}
-
 /// Run every built-in Python taint rule over `tree` in a single
 /// batched pass, returning per-rule [`Finding`]s.
 ///
