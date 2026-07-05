@@ -3282,6 +3282,29 @@ fn compile_entry(
                     return;
                 }
             }
+            // ── Composed focus + `pattern-either`-of-regex-pinned-method-calls
+            //    SINK shape ───────────────────────────────────────────────────
+            //
+            // The `dangerous-spawn-process` sink family: a shared
+            // `focus-metavariable: $CMD` (or a per-arm bare `pattern: $CMD`) over
+            // a `pattern-either:` whose arms each name a call
+            // `os.$METHOD($MODE, $CMD, ...)` with a `metavariable-regex` pinning
+            // the callee's method metavariable `$METHOD`. None of the recognizers
+            // above handle a CONCRETE-receiver + metavariable-METHOD callee
+            // (`os.$METHOD`) — the normal pattern path compiles it to a
+            // receiver-agnostic `ReceiverCall { "os" }` that would fire on EVERY
+            // `os.X(...)`, dropping the `$METHOD` regex (over-match, refused). We
+            // instead ENUMERATE the regex alternation and compile one concrete
+            // `os.spawnv(...)`/… call per alternative (receiver AND method
+            // enforced), which is strictly ≤ what Semgrep matches. Arms whose
+            // `metavariable-regex` also pins a NON-callee metavariable (the
+            // `$BASH` bash-wrapper arms) are DEFERRED — that constraint is
+            // inexpressible and firing without it would over-match.
+            if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
+                if try_compile_focus_regex_either_sink_block(v, role, lang, out) {
+                    return;
+                }
+            }
             // `patterns:` is a Semgrep AND-block: all sub-items must hold
             // simultaneously. foxguard's taint engine cannot express all AND
             // semantics (no nested scope / contextual constraints), so we
@@ -4298,6 +4321,261 @@ fn try_compile_regex_constrained_receiver_block(
     }
 
     out.len() > before
+}
+
+/// Try to recognise the composed "shared `focus-metavariable` + `pattern-either`
+/// of regex-pinned method-call arms" SINK shape and compile each faithful arm to
+/// enumerated concrete `Call`/`MethodName` sinks.
+///
+/// The shape (the `dangerous-spawn-process` sink family):
+///
+/// ```yaml
+/// patterns:
+///   - focus-metavariable: $CMD          # shared focus (optional; an arm may
+///                                        # instead carry its own `pattern: $CMD`)
+///   - pattern-either:
+///       - patterns:                      # simple arm — COMPILED
+///           - pattern: os.$METHOD($MODE, $CMD, ...)
+///           - metavariable-regex: { metavariable: $METHOD, regex: (spawnv|...) }
+///       - patterns:                      # bash-wrapper arm — DEFERRED
+///           - pattern-inside: os.$METHOD($MODE, $BASH, ["-c", $CMD, ...], ...)
+///           - metavariable-regex: { metavariable: $METHOD, regex: (spawnv|...) }
+///           - metavariable-regex: { metavariable: $BASH,   regex: (.*)(sh|bash) }
+/// ```
+///
+/// Each compiled arm names a callee whose method segment is a metavariable
+/// pinned by a `metavariable-regex`. We ENUMERATE the anchored alternation of
+/// the pin and, per alternative, substitute it into the callee and compile the
+/// resulting CONCRETE call (`os.spawnv(...)`) through the normal pattern path —
+/// yielding a `Call { canonical: "os.spawnv" }` (receiver AND method enforced)
+/// or a `MethodName` (metavariable receiver). This is strictly ≤ what Semgrep
+/// matches (a subset of the alternation), never broader.
+///
+/// FAITHFULNESS DISCIPLINE — an arm is compiled ONLY when:
+///   1. the focused seed (`focus-metavariable`, or a bare `pattern: $F`) is an
+///      argument of the call (the sink is genuinely "the focused argument
+///      reaches this call"); and
+///   2. EVERY `metavariable-regex` in the arm pins the callee's method/callee
+///      metavariable. An arm that also pins a NON-callee metavariable (e.g.
+///      `$BASH`, an argument value) carries a constraint the taint engine cannot
+///      enforce — dropping it would broaden the sink — so that arm is DEFERRED.
+///      This is why the `["-c", $CMD]` bash-wrapper arms of
+///      `dangerous-spawn-process` never compile.
+///
+/// Returns `true` (and pushes ≥1 matcher) when at least one arm compiles; else
+/// `false`, leaving the caller to fall through to graceful degradation. Only the
+/// Sink/Sanitizer roles call this (a call argument is a data-flow destination).
+fn try_compile_focus_regex_either_sink_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    lang: Language,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+
+    // Shared seeds declared at THIS block level, and the `pattern-either` whose
+    // arms we compile.
+    let mut shared_seeds: Vec<String> = Vec::new();
+    let mut either_arms: Option<&[YamlValue]> = None;
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("focus-metavariable") => {
+                    if let Some(s) = val.as_str() {
+                        let mv = s.trim();
+                        if is_metavariable(mv) {
+                            shared_seeds.push(mv.to_string());
+                        }
+                    }
+                }
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if is_metavariable(t) {
+                            shared_seeds.push(t.to_string());
+                        }
+                    }
+                }
+                Some("pattern-either") => {
+                    if let Some(seq) = val.as_sequence() {
+                        either_arms = Some(seq.as_slice());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let Some(arms) = either_arms else {
+        return false;
+    };
+
+    let before = out.len();
+    for arm in arms {
+        compile_focus_regex_arm(arm, &shared_seeds, role, lang, out);
+    }
+    out.len() > before
+}
+
+/// Compile a single `pattern-either` arm of the composed focus+regex sink shape.
+/// See [`try_compile_focus_regex_either_sink_block`] for the discipline.
+fn compile_focus_regex_arm(
+    arm: &YamlValue,
+    shared_seeds: &[String],
+    role: MatcherRole,
+    lang: Language,
+    out: &mut Vec<GenericMatcher>,
+) {
+    // An arm is either a `{patterns: [...]}` AND-block or a single bare item.
+    let Some(arm_map) = arm.as_mapping() else {
+        return;
+    };
+    let arm_items: Vec<YamlValue> = if arm_map.len() == 1 {
+        match arm_map.iter().next() {
+            Some((k, val)) if k.as_str() == Some("patterns") => match val.as_sequence() {
+                Some(seq) => seq.clone(),
+                None => return,
+            },
+            _ => vec![arm.clone()],
+        }
+    } else {
+        vec![arm.clone()]
+    };
+
+    // Collect the arm's call context(s), regex pins, and any arm-local bare seeds
+    // (added to the shared seeds). We do NOT recurse into a nested
+    // `pattern-either` here: each arm is treated as one isolated AND-block so a
+    // sibling arm's pins never leak in.
+    let mut call_texts: Vec<String> = Vec::new();
+    let mut regexes: Vec<(String, String)> = Vec::new();
+    let mut seeds: Vec<String> = shared_seeds.to_vec();
+    for item in &arm_items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("focus-metavariable") => {
+                    if let Some(s) = val.as_str() {
+                        let mv = s.trim();
+                        if is_metavariable(mv) {
+                            seeds.push(mv.to_string());
+                        }
+                    }
+                }
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if is_metavariable(t) {
+                            seeds.push(t.to_string());
+                        } else if is_call_context_pattern(t) {
+                            call_texts.push(t.to_string());
+                        }
+                    }
+                }
+                Some("pattern-inside") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if is_call_context_pattern(t) {
+                            call_texts.push(t.to_string());
+                        }
+                    }
+                }
+                Some("metavariable-regex") => {
+                    if let Some(mm) = val.as_mapping() {
+                        let mv = mm
+                            .get(YamlValue::from("metavariable"))
+                            .and_then(|x| x.as_str());
+                        let re = mm.get(YamlValue::from("regex")).and_then(|x| x.as_str());
+                        if let (Some(mv), Some(re)) = (mv, re) {
+                            regexes.push((mv.to_string(), re.to_string()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // The arm MUST carry at least one regex pin: an unpinned metavariable-method
+    // callee would be universal (`os.X(...)` for any X) and is refused.
+    if regexes.is_empty() {
+        return;
+    }
+
+    for call in &call_texts {
+        // (1) the focused seed must be an argument of this call.
+        if !seeds.iter().any(|seed| call_has_arg(call, seed)) {
+            continue;
+        }
+        // The callee's method/callee segment must be a metavariable we can pin.
+        let Some(method_mv) = callee_method_metavar(call) else {
+            continue;
+        };
+        // (2) EVERY regex pin in the arm must pin exactly that callee
+        // metavariable; a pin on any OTHER metavariable is an inexpressible
+        // value/receiver constraint → defer the whole arm (never over-fire).
+        if !regexes.iter().all(|(m, _)| m == &method_mv) {
+            continue;
+        }
+        // Enumerate the anchored alternation and compile one concrete call per
+        // alternative, enforcing receiver + method name exactly.
+        let Some(names) = regex_alternatives_for(&method_mv, &regexes) else {
+            continue;
+        };
+        for name in names {
+            let concrete = concrete_callee_call(call, &method_mv, &name);
+            if let Some(m) = compile_pattern(&concrete, role, lang) {
+                if matches!(
+                    m,
+                    GenericMatcher::Call { .. } | GenericMatcher::MethodName { .. }
+                ) {
+                    out.push(m);
+                }
+            }
+        }
+    }
+}
+
+/// The callee's pinnable metavariable: the FINAL dotted segment of the callee
+/// (the method), or the whole callee, when it is a metavariable. `os.$METHOD` →
+/// `$METHOD`; `$RECV.$METH` → `$METH`; `$FUNC` → `$FUNC`; a concrete callee
+/// (`subprocess.run`) → `None`.
+fn callee_method_metavar(call: &str) -> Option<String> {
+    let c = call.trim().trim_end_matches(';').trim();
+    let open = c.find('(')?;
+    let callee = c[..open].trim();
+    let last = match callee.rfind('.') {
+        Some(d) => &callee[d + 1..],
+        None => callee,
+    };
+    if is_metavariable(last) {
+        Some(last.to_string())
+    } else {
+        None
+    }
+}
+
+/// Rebuild `call` with its callee method metavariable replaced by the concrete
+/// `name` and a wildcard `(...)` argument list. `os.$METHOD($MODE, $CMD, ...)`
+/// with (`$METHOD`, `spawnv`) → `os.spawnv(...)`. The argument list is
+/// intentionally collapsed to `...`: the compiled `Call`/`MethodName` sink fires
+/// on ANY tainted argument (the same argument-agnostic semantics the sibling
+/// focus-call recognizer uses), so the original args do not matter.
+fn concrete_callee_call(call: &str, method_mv: &str, name: &str) -> String {
+    let c = call.trim().trim_end_matches(';').trim();
+    let open = c.find('(').unwrap_or(c.len());
+    let callee = c[..open].trim();
+    let concrete_callee = match callee.rfind('.') {
+        Some(d) if &callee[d + 1..] == method_mv => format!("{}.{}", &callee[..d], name),
+        _ => name.to_string(),
+    };
+    format!("{concrete_callee}(...)")
 }
 
 /// Compile a Bash-specific pattern (shell command or command substitution)
@@ -6779,6 +7057,168 @@ fun handler(call: ApplicationCall) {
             TaintRuleParse::Skip(msg) => panic!("unexpected skip: {}", msg),
             TaintRuleParse::NotTaint => panic!("expected taint rule"),
         }
+    }
+
+    // ── Composed focus-metavariable + `pattern-either`-of-regex-pinned-method
+    //    SINK shape (the `dangerous-spawn-process` family) ─────────────────────
+
+    /// The `dangerous-spawn-process` sink (`os.$METHOD($MODE, $CMD, ...)` with a
+    /// `$METHOD` `metavariable-regex`, under a shared `focus-metavariable: $CMD`)
+    /// must compile to ENUMERATED concrete `Call { "os.<name>" }` sinks — one per
+    /// regex alternative — and NEVER a receiver-agnostic `ReceiverCall { "os" }`
+    /// (which would fire on every `os.X(...)`, dropping the method regex).
+    #[test]
+    fn focus_regex_either_sink_enumerates_calls_not_receivercall() {
+        let r = compiled(
+            r#"
+id: dsp
+mode: taint
+languages: [python]
+severity: ERROR
+message: m
+pattern-sources:
+  - pattern: os.getenv($X)
+pattern-sinks:
+  - patterns:
+    - focus-metavariable: $CMD
+    - pattern-either:
+      - patterns:
+        - pattern: os.$METHOD($MODE, $CMD, ...)
+        - metavariable-regex:
+            metavariable: $METHOD
+            regex: (spawnl|spawnv|posix_spawn)
+"#,
+        );
+        // Exactly the three enumerated methods, each a concrete `os.<name>` Call.
+        let mut canon: Vec<String> = r
+            .spec
+            .sinks
+            .iter()
+            .map(|m| match m {
+                GenericMatcher::Call { canonical, .. } => canonical.clone(),
+                other => panic!("expected Call sink, got {other:?}"),
+            })
+            .collect();
+        canon.sort();
+        assert_eq!(canon, vec!["os.posix_spawn", "os.spawnl", "os.spawnv"]);
+        // No over-broad receiver-agnostic sink leaked in.
+        assert!(
+            !r.spec
+                .sinks
+                .iter()
+                .any(|m| matches!(m, GenericMatcher::ReceiverCall { .. })),
+            "must not compile a receiver-agnostic ReceiverCall sink"
+        );
+    }
+
+    /// The bash-wrapper arm (`os.$METHOD($MODE, $BASH, ["-c", $CMD, ...], ...)`
+    /// with a `$BASH` value-regex) MUST be deferred: its `$BASH` pin is not on
+    /// the callee metavariable and cannot be enforced, so compiling it would
+    /// broaden the sink. Only the simple arm's methods should appear.
+    #[test]
+    fn focus_regex_either_sink_defers_bash_wrapper_arm() {
+        let r = compiled(
+            r#"
+id: dsp-bash
+mode: taint
+languages: [python]
+severity: ERROR
+message: m
+pattern-sources:
+  - pattern: os.getenv($X)
+pattern-sinks:
+  - patterns:
+    - focus-metavariable: $CMD
+    - pattern-either:
+      - patterns:
+        - pattern: os.$METHOD($MODE, $CMD, ...)
+        - metavariable-regex:
+            metavariable: $METHOD
+            regex: (spawnv|posix_spawn)
+      - patterns:
+        - pattern-inside: os.$METHOD($MODE, $BASH, ["-c", $CMD,...],...)
+        - metavariable-regex:
+            metavariable: $METHOD
+            regex: (spawnv|posix_spawn)
+        - metavariable-regex:
+            metavariable: $BASH
+            regex: (.*)(sh|bash)
+"#,
+        );
+        let mut canon: Vec<String> = r
+            .spec
+            .sinks
+            .iter()
+            .filter_map(|m| match m {
+                GenericMatcher::Call { canonical, .. } => Some(canonical.clone()),
+                _ => None,
+            })
+            .collect();
+        canon.sort();
+        canon.dedup();
+        // Only the simple arm compiled; the bash-wrapper arm produced nothing.
+        assert_eq!(canon, vec!["os.posix_spawn", "os.spawnv"]);
+        assert!(
+            !r.spec
+                .sinks
+                .iter()
+                .any(|m| matches!(m, GenericMatcher::ReceiverCall { .. })),
+            "deferred bash arm must not leak a broad ReceiverCall"
+        );
+    }
+
+    /// End-to-end (parse → check): the compiled sink FIRES on `os.spawnv(mode,
+    /// tainted)` and is SILENT on both a non-pinned method reached by taint
+    /// (`os.remove(tainted)` — the `$METHOD` regex is ENFORCED) and a
+    /// no-tainted-argument call (`os.getpid()`).
+    #[test]
+    fn focus_regex_either_sink_enforces_method_regex_end_to_end() {
+        use crate::engine::parser::parse_file;
+
+        let rule = compiled(
+            r#"
+id: dsp-e2e
+mode: taint
+languages: [python]
+severity: ERROR
+message: "tainted cmd spawned"
+pattern-sources:
+  - pattern: os.getenv($X)
+pattern-sinks:
+  - patterns:
+    - focus-metavariable: $CMD
+    - pattern-either:
+      - patterns:
+        - pattern: os.$METHOD($MODE, $CMD, ...)
+        - metavariable-regex:
+            metavariable: $METHOD
+            regex: (spawnl|spawnv|posix_spawn)
+"#,
+        );
+
+        let src = r#"
+import os
+def handler():
+    cmd = os.getenv('CMD')
+    os.spawnv(os.P_WAIT, cmd)
+    os.remove(cmd)
+    os.getpid()
+"#;
+        let tree = parse_file(src, Language::Python).expect("python fixture parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "only the regex-pinned os.spawnv sink should fire, got lines {:?}",
+            findings.iter().map(|f| f.line).collect::<Vec<_>>()
+        );
+        // The single finding is the `os.spawnv(...)` line (line 5 with leading \n).
+        assert_eq!(
+            findings[0].line, 5,
+            "the surviving finding must be the os.spawnv() call (regex enforced), \
+             got line {}",
+            findings[0].line
+        );
     }
 
     #[test]
