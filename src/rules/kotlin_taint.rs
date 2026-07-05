@@ -313,6 +313,7 @@ fn analyze_scope(
             source_description: source_desc.clone(),
             sink_description: sink.description,
             source_line,
+            source_range: None,
             rule_id_hint: None,
             // The Kotlin engine does not yet track hops; report 0 so the
             // reporting layer leaves confidence at the engine-default and

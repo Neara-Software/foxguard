@@ -97,20 +97,44 @@ propagation (engine core). Deferred.
 These are the genuinely **context-gated sources**: `$REQ.$ANYTHING`
 (any attribute read off the view request), valid **only inside** a
 `pattern-inside: @view_config def $VIEW($REQ): ...`, with `$REQ` bound to the
-view's parameter and `pattern-not: $REQ.dbsession`. Source-side `pattern-inside`
-is compiled today but **not enforced** — findings do not carry a source byte
-range, so the containment post-filter (which works for sinks) cannot run on
-sources (documented limitation, see `TaintInsides.source` / `TaintNegatives.source`).
-Dropping the gate and seeding `$REQ.$ANYTHING` everywhere would seed *every
-attribute read in the file* → massive over-match → forbidden.
+view's parameter and `pattern-not: $REQ.dbsession`.
+
+**Update (source-side `pattern-inside` enforcement — now IMPLEMENTED).** The
+first of the two blocking primitives is done. Findings now carry the originating
+source node's byte range (`TaintInfo::source_range` →
+`TaintFinding::source_range`, threaded through Python's assignment/with/
+destructuring propagation), so the `semgrep_taint.rs` post-filter enforces
+source-side `pattern-inside` **and** source-side `pattern-not` as the exact
+analog of the sink-side filters. A finding is kept only when its source node is
+contained by a source `pattern-inside` region (and not matched by a source
+`pattern-not`). Proven faithful by tests
+(`source_side_pattern_inside_fires_inside_view_only`,
+`source_without_pattern_inside_fires_in_both_functions`): with an attribute-read
+source gated by `@view_config def $V(...): ...`, the read inside the view fires
+and the identical read in a plain function does not; without the gate both fire.
+
+**Still deferred — the second blocking primitive:** the `$REQ.$ANYTHING` source
+shape itself does not compile. `$X.$Y` (a metavariable receiver AND a
+metavariable field) has no source matcher — it is dropped, and the rule skips
+with "no valid pattern-sources". A faithful compile needs a **bound-parameter
+attribute-read source**: `$REQ` bound to the view's parameter (from the
+`pattern-inside` signature) so that `$REQ.<any>` seeds ONLY attribute reads off
+that parameter. A naive "any attribute read" (wildcard-field `FieldName`) gated
+only by the now-working `pattern-inside` would still over-match *inside* the view
+(`os.getcwd`, `self.x`, … are attribute reads off non-request receivers), so the
+receiver metavariable must be bound — a cross-clause binding the
+`Call`/`FieldName` vocabulary cannot express. The enforcement half is shipped;
+this binding half remains.
 
 `pyramid-sqlalchemy-sql-injection` additionally needs a nested-format sink
 (`$Q.$SQLFUNC("...".$FMT(...,$SINK,...))` with a `metavariable-regex` alternation
 on `$SQLFUNC` and a negative-lookahead `(?!bindparams)` on `$FMT`), itself gated
-by another `pattern-inside`.
+by another `pattern-inside` — so even with both source primitives it stays
+sink-blocked.
 
-**Needs:** source-side `pattern-inside` enforcement (requires threading a source
-byte-range through findings) + bound-parameter metavariable source. Deferred.
+**Needs:** ~~source-side `pattern-inside` enforcement~~ (DONE) + bound-parameter
+attribute-read metavariable source (both rules) + nested-format sink
+(`pyramid-sqlalchemy-sql-injection` only). Deferred.
 
 ### `tainted-html-response`
 
@@ -148,8 +172,15 @@ focus sink. Deferred.
 ## Bottom line
 
 The one clean, provably-faithful win (`avoid-sqlalchemy-text`) is shipped by
-reusing `BinopFormat`. The remaining seven each need a real new engine primitive
-(string-literal-regex seeding, source-side `pattern-inside` enforcement,
-nested-dict sink containment, list-literal source, keyword-argument focus) or
-engine-core propagation work — none is a one-recognizer extension, and each would
-over-match if forced into today's vocabulary.
+reusing `BinopFormat`. **Source-side `pattern-inside`/`pattern-not` enforcement
+is now also shipped** (a general capability: findings carry the source node's
+byte range, so the containment/exclusion post-filter runs on sources as it does
+on sinks). That removes one of the two blocking primitives for the Pyramid
+rules, but they stay skipped because `$REQ.$ANYTHING` still needs a
+bound-parameter attribute-read source to compile without over-matching (and
+`pyramid-sqlalchemy-sql-injection` also needs the nested-format sink). The
+remaining shapes each need a real new engine primitive (string-literal-regex
+seeding, bound-parameter attribute-read source, nested-dict sink containment,
+list-literal source, keyword-argument focus) or engine-core propagation work —
+none is a one-recognizer extension, and each would over-match if forced into
+today's vocabulary.
