@@ -628,7 +628,7 @@ fn render_report(root: &Path, stats: &Stats) -> String {
     use std::fmt::Write;
     let mut s = String::new();
 
-    let today = "2026-07-04";
+    let today = "2026-07-05";
     let _ = writeln!(s, "# Semgrep registry coverage");
     let _ = writeln!(s);
     let _ = writeln!(
