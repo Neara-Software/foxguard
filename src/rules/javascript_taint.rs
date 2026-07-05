@@ -2051,7 +2051,11 @@ fn match_source(
             | NodeMatcher::TypedAssignTarget { .. }
             // PHP-only loose-equality comparison sink; a sink-only matcher the
             // JS engine does not match (no-op).
-            | NodeMatcher::LooseEquality { .. } => {
+            | NodeMatcher::LooseEquality { .. }
+            // PHP-only tainted class-name / subscript-key sinks; no-op in the
+            // JS engine.
+            | NodeMatcher::TaintedCallee { .. }
+            | NodeMatcher::TaintedSubscriptKey { .. } => {
                 // Sink-only matchers; BinopFormat sinks are carried in the spec
                 // but the JS engine does not yet match them as a source (no-op).
             }

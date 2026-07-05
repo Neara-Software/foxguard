@@ -751,7 +751,17 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for PhpTaintAdapter {
         findings: &mut Vec<TaintFinding>,
     ) {
         if node.kind() == "assignment_expression" {
+            // `$_SESSION[$KEY] = $VAL` — session-poisoning sink when the KEY of
+            // the assignment-LHS subscript is tainted (`tainted-session`).
+            // Checked BEFORE propagation so RHS-side clearing of the target does
+            // not interfere; this handler inspects only the LHS key.
+            handle_subscript_key_sink(node, ctx, state, findings);
             handle_assignment(node, ctx, state);
+        }
+        // `new $className(...)` — unsafe-reflection sink when the class-name
+        // selector is tainted (`tainted-object-instantiation`).
+        if node.kind() == "object_creation_expression" {
+            handle_tainted_callee(node, ctx, state, findings);
         }
         if node.kind() == "function_call_expression" {
             handle_function_call(node, ctx, state, findings);
@@ -1103,6 +1113,122 @@ fn handle_loose_equality(
                 return;
             }
         }
+    }
+}
+
+/// Handle an `object_creation_expression` as a possible TAINTED-CLASS-NAME sink
+/// (`tainted-object-instantiation`, unsafe reflection): `new $className(...)`
+/// where the class-name selector `$className` carries taint.
+///
+/// Fires only when the rule configured a [`NodeMatcher::TaintedCallee`] sink and
+/// the CLASS-NAME operand (the first named child, i.e. the type/callee position
+/// — NOT a constructor argument) is tainted. `new SafeClass($tainted)` does NOT
+/// fire here (its class name is a concrete `name` node, never tainted); the
+/// tainted argument is a different, ordinary call-argument sink.
+fn handle_tainted_callee(
+    node: Node<'_>,
+    ctx: &PhpCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let sink_desc = ctx.spec.sinks.iter().find_map(|m| {
+        if let NodeMatcher::TaintedCallee { description } = m {
+            Some(description.clone())
+        } else {
+            None
+        }
+    });
+    let Some(sink_desc) = sink_desc else {
+        return;
+    };
+
+    // The class-name selector is the first named child of the object-creation
+    // node (`new <classname>(<args>)`). `arguments` / `anonymous_class` children
+    // are NOT class names, so skip them — we inspect the class-name position
+    // only, never a constructor argument.
+    let Some(class_name) = node.named_child(0) else {
+        return;
+    };
+    if matches!(class_name.kind(), "arguments" | "anonymous_class") {
+        return;
+    }
+    if let Some((source_desc, src_line)) = expression_taint(class_name, ctx, state) {
+        findings.push(taint_finding_for_node(
+            node,
+            source_desc,
+            sink_desc,
+            src_line,
+            None,
+            1,
+        ));
+    }
+}
+
+/// Handle an `assignment_expression` as a possible TAINTED-SUBSCRIPT-KEY sink
+/// (`tainted-session`, session poisoning): `$_SESSION[$KEY] = $VAL` where the
+/// KEY / index of the assignment-LHS subscript carries taint.
+///
+/// Fires only when the rule configured a [`NodeMatcher::TaintedSubscriptKey`]
+/// sink, the assignment TARGET is a `subscript_expression` whose base matches
+/// the configured superglobal (`_SESSION`), and the KEY expression is tainted.
+/// It inspects the KEY operand ONLY — a tainted assigned VALUE
+/// (`$_SESSION["safe"] = $tainted`) does NOT fire here, and a nested
+/// `$_SESSION["prefix"][$tainted] = …` (whose outer base is `$_SESSION["prefix"]`
+/// rather than `$_SESSION`) is likewise silent.
+fn handle_subscript_key_sink(
+    node: Node<'_>,
+    ctx: &PhpCtx<'_>,
+    state: &mut TaintState,
+    findings: &mut Vec<TaintFinding>,
+) {
+    let sink = ctx.spec.sinks.iter().find_map(|m| {
+        if let NodeMatcher::TaintedSubscriptKey { base, description } = m {
+            Some((base.clone(), description.clone()))
+        } else {
+            None
+        }
+    });
+    let Some((want_base, sink_desc)) = sink else {
+        return;
+    };
+
+    let Some(left) = node.child_by_field_name("left") else {
+        return;
+    };
+    if left.kind() != "subscript_expression" {
+        return;
+    }
+
+    // The subscript base (first named child) must be a plain `variable_name`
+    // superglobal matching `want_base` (a nested subscript base like
+    // `$_SESSION['prefix']` is NOT a `variable_name`, so it is rejected).
+    let Some(base_node) = left.named_child(0) else {
+        return;
+    };
+    if let Some(want) = want_base.as_deref() {
+        if base_node.kind() != "variable_name" {
+            return;
+        }
+        let base_name = node_text(base_node, ctx.source).trim_start_matches('$');
+        if base_name != want {
+            return;
+        }
+    }
+
+    // The KEY is the second named child of the subscript. Fire only when it is
+    // tainted — the assigned VALUE (`node.right`) is deliberately not inspected.
+    let Some(key) = left.named_child(1) else {
+        return;
+    };
+    if let Some((source_desc, src_line)) = expression_taint(key, ctx, state) {
+        findings.push(taint_finding_for_node(
+            node,
+            source_desc,
+            sink_desc,
+            src_line,
+            None,
+            1,
+        ));
     }
 }
 
@@ -1590,7 +1716,13 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             // Loose-equality comparison sink (`md5-loose-equality`); a sink-only
             // matcher handled in `handle_loose_equality`, no-op in source
             // position.
-            | NodeMatcher::LooseEquality { .. } => {
+            | NodeMatcher::LooseEquality { .. }
+            // Tainted class-name sink (`tainted-object-instantiation`) and
+            // tainted subscript-key sink (`tainted-session`); sink-only matchers
+            // handled in `handle_tainted_callee` / `handle_subscript_key_sink`,
+            // no-op in source position.
+            | NodeMatcher::TaintedCallee { .. }
+            | NodeMatcher::TaintedSubscriptKey { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the PHP engine (no-op).
             }

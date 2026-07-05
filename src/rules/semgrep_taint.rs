@@ -284,6 +284,26 @@ enum GenericMatcher {
     /// only — a comparison is a destination, not a taint origin. Matched by the
     /// PHP engine; other engines carry it in the spec but no-op it.
     LooseEquality { description: String },
+
+    /// Matches an object-creation SINK whose CLASS-NAME / CALLEE is tainted —
+    /// the PHP unsafe-reflection sink `new $SINK(...)` bounded to its class-name
+    /// metavariable (`tainted-object-instantiation`). Fires ONLY when the class
+    /// name being instantiated carries taint, never on a tainted constructor
+    /// argument. Sink/sanitizer only. Matched by the PHP engine; other engines
+    /// carry it in the spec but no-op it.
+    TaintedCallee { description: String },
+
+    /// Matches an assignment-target SUBSCRIPT-KEY SINK — `$_SESSION[$KEY] = $VAL`
+    /// whose KEY / index is tainted (the PHP `tainted-session` session-poisoning
+    /// sink). `base = Some(name)` bounds the target base to a concrete
+    /// superglobal (`_SESSION`); `base = None` matches any subscript target.
+    /// Fires ONLY when the KEY carries taint, never on a tainted assigned VALUE.
+    /// Sink/sanitizer only. Matched by the PHP engine; other engines carry it in
+    /// the spec but no-op it.
+    TaintedSubscriptKey {
+        base: Option<String>,
+        description: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -458,6 +478,15 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => python_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => python_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            python_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -574,6 +603,17 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::TaintedCallee { description } => {
+            javascript_taint::NodeMatcher::TaintedCallee {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            javascript_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -683,6 +723,15 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => go_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => go_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            go_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -792,6 +841,15 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => java_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => java_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            java_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -908,6 +966,15 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => c_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => c_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            c_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1017,6 +1084,15 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => kotlin_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => kotlin_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            kotlin_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1126,6 +1202,15 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => ruby_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => ruby_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            ruby_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1244,6 +1329,15 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => csharp_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => csharp_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            csharp_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1351,6 +1445,15 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => bash_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => bash_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            bash_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1465,6 +1568,17 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::TaintedCallee { description } => {
+            solidity_taint::NodeMatcher::TaintedCallee {
+                description: description.clone(),
+            }
+        }
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            solidity_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1572,6 +1686,15 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => scala_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => scala_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            scala_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1679,6 +1802,15 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => apex_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => apex_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            apex_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1786,6 +1918,15 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => swift_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => swift_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            swift_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -1886,6 +2027,15 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
         GenericMatcher::LooseEquality { description } => php_taint::NodeMatcher::LooseEquality {
             description: description.clone(),
         },
+        GenericMatcher::TaintedCallee { description } => php_taint::NodeMatcher::TaintedCallee {
+            description: description.clone(),
+        },
+        GenericMatcher::TaintedSubscriptKey { base, description } => {
+            php_taint::NodeMatcher::TaintedSubscriptKey {
+                base: base.clone(),
+                description: description.clone(),
+            }
+        }
     }
 }
 
@@ -3511,6 +3661,51 @@ fn compile_entry(
                     return;
                 }
             }
+            // ── Tainted CLASS-NAME instantiation SINK shape (PHP) ────────────
+            //
+            // The `tainted-object-instantiation` rule (unsafe reflection) binds
+            // its sink to the CLASS-NAME selector of a `new`:
+            //
+            //   patterns:
+            //     - pattern-either:
+            //         - pattern-inside: new $SINK(...)
+            //     - pattern: $SINK
+            //
+            // i.e. "the focused metavariable `$SINK`, when it is the class name of
+            // a `new $SINK(...)`, is the sink". This is NOT a constructor-argument
+            // sink: the taint is the callee/class-name position. The focus-call
+            // recognizer above requires the focused metavariable to be an
+            // ARGUMENT of the call, so it (correctly) does not claim this block —
+            // `new $SINK(...)` has no `$SINK` argument. We compile a dedicated
+            // `TaintedCallee` sink; the PHP engine fires only when the class-name
+            // operand of an `object_creation_expression` carries taint. Gated to
+            // PHP + sink/sanitizer.
+            if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
+                if lang == Language::Php && try_compile_tainted_callee_sink_block(v, role, out) {
+                    return;
+                }
+            }
+            // ── Tainted SUBSCRIPT-KEY assignment SINK shape (PHP) ────────────
+            //
+            // The `tainted-session` rule (session poisoning) binds its sink to
+            // the KEY / index of a superglobal assignment target:
+            //
+            //   patterns:
+            //     - pattern-inside: $_SESSION[$KEY] = $VAL;
+            //     - pattern: $KEY
+            //
+            // i.e. "the focused metavariable `$KEY`, when it is the index of a
+            // `$_SESSION[$KEY] = …` write, is the sink". This is NOT a
+            // tainted-value sink: the taint is the subscript KEY of an
+            // assignment TARGET. We compile a dedicated `TaintedSubscriptKey`
+            // sink (recording the superglobal base); the PHP engine fires only
+            // when the key operand of an assignment-LHS `subscript_expression`
+            // carries taint. Gated to PHP + sink/sanitizer.
+            if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
+                if lang == Language::Php && try_compile_subscript_key_sink_block(v, role, out) {
+                    return;
+                }
+            }
             // ── Regex-bounded bare-metavar callee SINK shape ────────────────
             //
             // A `patterns:` AND-block that pairs a bare-metavariable callee
@@ -4172,6 +4367,287 @@ fn try_compile_focus_call_sink_block(
         compile_focus_call_callee(call, role, lang, &metavar_regexes, out);
     }
     out.len() > before
+}
+
+/// The PHP superglobals. When the base of a `$SUPER[$KEY] = …` assignment is one
+/// of these, the base is a CONCRETE variable (not a metavariable), so the
+/// subscript-key sink is bounded to writes into that superglobal.
+const PHP_SUPERGLOBALS: &[&str] = &[
+    "_GET", "_POST", "_REQUEST", "_COOKIE", "_SESSION", "_SERVER", "_ENV", "_FILES", "GLOBALS",
+];
+
+/// Return the stripped name (`_SESSION`) if `s` is a PHP superglobal token
+/// (`$_SESSION`, …). Superglobals are lexically indistinguishable from
+/// metavariables (`is_metavariable("$_SESSION")` is true), so the concrete
+/// superglobal set is what tells a real superglobal base apart from a rule
+/// metavariable key.
+fn php_superglobal_name(s: &str) -> Option<&'static str> {
+    let stripped = s.strip_prefix('$')?;
+    PHP_SUPERGLOBALS.iter().copied().find(|g| *g == stripped)
+}
+
+/// Parse a `new $MV(...)` object-creation pattern, returning the class-name
+/// metavariable (`$MV`) when the class name is a bare metavariable. Returns
+/// `None` for a concrete class name (`new SafeClass(...)`) — that is not a
+/// tainted-class-name shape.
+fn parse_new_metavar_classname(pat: &str) -> Option<String> {
+    let p = pat.trim().trim_end_matches(';').trim();
+    let rest = p.strip_prefix("new ")?.trim_start();
+    let open = rest.find('(')?;
+    if !rest.ends_with(')') {
+        return None;
+    }
+    let name = rest[..open].trim();
+    if is_metavariable(name) {
+        Some(name.to_string())
+    } else {
+        None
+    }
+}
+
+/// Compile the `tainted-object-instantiation` sink shape (PHP unsafe
+/// reflection):
+///
+/// ```yaml
+/// patterns:
+///   - pattern-either:
+///       - pattern-inside: new $SINK(...)
+///   - pattern: $SINK
+/// ```
+///
+/// Recognized when the block pairs a `pattern-inside: new $MV(...)` class-name
+/// context with a focus/bare `pattern: $MV` (or `focus-metavariable: $MV`)
+/// naming that SAME class-name metavariable. Compiles to a single
+/// [`GenericMatcher::TaintedCallee`]. Returns `false` (claiming nothing) when
+/// the focused metavariable is NOT the class name — e.g. a constructor-argument
+/// focus `new C($ARG)` + `pattern: $ARG` — so the ordinary argument-sink path
+/// keeps ownership and the class-name matcher never over-claims an argument
+/// sink.
+fn try_compile_tainted_callee_sink_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+    let mut seeds: Vec<String> = Vec::new();
+    let mut classname_mvs: Vec<String> = Vec::new();
+    collect_tainted_callee_parts(items, &mut seeds, &mut classname_mvs);
+
+    // The focused/bare metavariable must be exactly the class-name metavariable
+    // of a `new $MV(...)` context — never a constructor argument.
+    if !classname_mvs
+        .iter()
+        .any(|mv| seeds.iter().any(|seed| seed == mv))
+    {
+        return false;
+    }
+    out.push(GenericMatcher::TaintedCallee {
+        description: describe("new $SINK(...)", role),
+    });
+    true
+}
+
+/// Walk a sink `patterns:` block (recursing into `pattern-either:`/`patterns:`)
+/// collecting focused metavariables (`focus-metavariable: $F` / bare
+/// `pattern: $F`) and the class-name metavariables of any `new $MV(...)`
+/// `pattern-inside`/`pattern` context.
+fn collect_tainted_callee_parts(
+    items: &[YamlValue],
+    seeds: &mut Vec<String>,
+    classname_mvs: &mut Vec<String>,
+) {
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("focus-metavariable") => {
+                    if let Some(s) = val.as_str() {
+                        let mv = s.trim();
+                        if is_metavariable(mv) {
+                            seeds.push(mv.to_string());
+                        }
+                    }
+                }
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if is_metavariable(t) {
+                            seeds.push(t.to_string());
+                        } else if let Some(mv) = parse_new_metavar_classname(t) {
+                            classname_mvs.push(mv);
+                        }
+                    }
+                }
+                Some("pattern-inside") => {
+                    if let Some(s) = val.as_str() {
+                        if let Some(mv) = parse_new_metavar_classname(s.trim()) {
+                            classname_mvs.push(mv);
+                        }
+                    }
+                }
+                Some("pattern-either") | Some("patterns") => {
+                    if let Some(seq) = val.as_sequence() {
+                        collect_tainted_callee_parts(seq, seeds, classname_mvs);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Parse a `$BASE[$KEY] = $VAL` assignment-LHS-subscript pattern, returning
+/// `(base, key_mv, val_mv)` where `base` is `Some(name)` for a concrete
+/// superglobal target (`$_SESSION` → `_SESSION`) or `None` for a metavariable
+/// base. Both `$KEY` and `$VAL` must be metavariables (and not superglobals).
+/// Returns `None` for anything that is not a single subscript-target assignment
+/// whose key and value are metavariables.
+fn parse_subscript_key_assignment(pat: &str) -> Option<(Option<String>, String, String)> {
+    let p = pat.trim().trim_end_matches(';').trim();
+    // Locate the single top-level assignment `=` (not `==`/`!=`/`<=`/`>=`/`=>`).
+    let bytes = p.as_bytes();
+    let mut depth = 0i32;
+    let mut eq_idx = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'[' | b'(' => depth += 1,
+            b']' | b')' => depth -= 1,
+            b'=' if depth == 0 => {
+                let next = bytes.get(i + 1).copied();
+                let prev = i.checked_sub(1).map(|j| bytes[j]);
+                if next != Some(b'=')
+                    && next != Some(b'>')
+                    && !matches!(prev, Some(b'=') | Some(b'!') | Some(b'<') | Some(b'>'))
+                {
+                    eq_idx = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let eq = eq_idx?;
+    let lhs = p[..eq].trim();
+    let rhs = p[eq + 1..].trim();
+    // The assigned value must be a bare metavariable (`$VAL`).
+    if !is_metavariable(rhs) || php_superglobal_name(rhs).is_some() {
+        return None;
+    }
+    // The LHS must be a single `BASE[KEY]` subscript.
+    if !lhs.ends_with(']') {
+        return None;
+    }
+    let open = lhs.find('[')?;
+    let base = lhs[..open].trim();
+    let key = lhs[open + 1..lhs.len() - 1].trim();
+    // The key must be a metavariable (and not itself a superglobal).
+    if !is_metavariable(key) || php_superglobal_name(key).is_some() {
+        return None;
+    }
+    // The base is either a concrete superglobal or a metavariable (any base).
+    let base_opt = if let Some(sg) = php_superglobal_name(base) {
+        Some(sg.to_string())
+    } else if is_metavariable(base) {
+        None
+    } else {
+        return None;
+    };
+    Some((base_opt, key.to_string(), rhs.to_string()))
+}
+
+/// Compile the `tainted-session` sink shape (PHP session poisoning):
+///
+/// ```yaml
+/// patterns:
+///   - pattern-inside: $_SESSION[$KEY] = $VAL;
+///   - pattern: $KEY
+/// ```
+///
+/// Recognized when the block pairs a `pattern-inside: $BASE[$KEY] = $VAL;`
+/// assignment-target context with a focus/bare `pattern: $KEY` naming the KEY
+/// metavariable. Compiles to a single [`GenericMatcher::TaintedSubscriptKey`]
+/// carrying the superglobal base. Returns `false` (claiming nothing) when the
+/// focused metavariable is the assigned VALUE `$VAL` rather than the KEY — so a
+/// tainted-value sink is never mistaken for a tainted-key sink.
+fn try_compile_subscript_key_sink_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+    let mut seeds: Vec<String> = Vec::new();
+    let mut targets: Vec<(Option<String>, String, String)> = Vec::new();
+    collect_subscript_key_parts(items, &mut seeds, &mut targets);
+
+    // The focused/bare metavariable must be exactly the KEY of a
+    // `$BASE[$KEY] = $VAL` context — never the assigned value `$VAL`.
+    let hit = targets
+        .iter()
+        .find(|(_, key, _)| seeds.iter().any(|seed| seed == key));
+    let Some((base, _, _)) = hit else {
+        return false;
+    };
+    out.push(GenericMatcher::TaintedSubscriptKey {
+        base: base.clone(),
+        description: describe("$_SESSION[$KEY] = ...", role),
+    });
+    true
+}
+
+/// Walk a sink `patterns:` block (recursing into `pattern-either:`/`patterns:`)
+/// collecting focused metavariables and the `(base, key, val)` triples of any
+/// `$BASE[$KEY] = $VAL` `pattern-inside`/`pattern` assignment context.
+fn collect_subscript_key_parts(
+    items: &[YamlValue],
+    seeds: &mut Vec<String>,
+    targets: &mut Vec<(Option<String>, String, String)>,
+) {
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("focus-metavariable") => {
+                    if let Some(s) = val.as_str() {
+                        let mv = s.trim();
+                        if is_metavariable(mv) {
+                            seeds.push(mv.to_string());
+                        }
+                    }
+                }
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if is_metavariable(t) {
+                            seeds.push(t.to_string());
+                        } else if let Some(triple) = parse_subscript_key_assignment(t) {
+                            targets.push(triple);
+                        }
+                    }
+                }
+                Some("pattern-inside") => {
+                    if let Some(s) = val.as_str() {
+                        if let Some(triple) = parse_subscript_key_assignment(s.trim()) {
+                            targets.push(triple);
+                        }
+                    }
+                }
+                Some("pattern-either") | Some("patterns") => {
+                    if let Some(seq) = val.as_sequence() {
+                        collect_subscript_key_parts(seq, seeds, targets);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 /// Normalize a leading Semgrep typed-receiver cast `(Type $RECV).…` to a bare
@@ -13936,5 +14412,278 @@ pattern-sanitizers:
         // Loose forms are recognized.
         assert!(is_loose_equality_pattern("$A == $B"));
         assert!(is_loose_equality_pattern("$A != $B"));
+    }
+
+    // ── PHP tainted CLASS-NAME instantiation SINK (`tainted-object-instantiation`) ─
+    //
+    // The whole `parse_taint_rule -> compiled() -> check()` path: an
+    // attacker-controlled CLASS NAME in `new $SINK(...)` fires; a tainted
+    // constructor ARGUMENT (`new SafeClass($tainted)`) or a class-name variable
+    // holding a literal (`$a = "C"; new $a()`) stays silent — the faithfulness
+    // requirement (the taint is the class-name selector, not an argument).
+
+    /// The real registry `tainted-object-instantiation` rule shape.
+    const TAINTED_OBJECT_INSTANTIATION_RULE: &str = r#"
+id: tainted-object-instantiation
+mode: taint
+languages: [php]
+severity: WARNING
+message: "A new object is created where the class name is based on user input."
+pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: $_GET
+      - pattern: $_POST
+      - pattern: $_COOKIE
+      - pattern: $_REQUEST
+      - pattern: $_SERVER
+pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern-inside: new $SINK(...)
+    - pattern: $SINK
+"#;
+
+    #[test]
+    fn tainted_object_instantiation_loads() {
+        let rule = compiled(TAINTED_OBJECT_INSTANTIATION_RULE);
+        assert!(
+            rule.spec
+                .sinks
+                .iter()
+                .any(|s| matches!(s, GenericMatcher::TaintedCallee { .. })),
+            "expected a TaintedCallee sink, got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    #[test]
+    fn tainted_object_instantiation_fires_on_tainted_classname() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(TAINTED_OBJECT_INSTANTIATION_RULE);
+        // The CLASS NAME is attacker-controlled; the constructor argument is a
+        // safe literal — the class-name taint alone must fire.
+        let src = "<?php\nfunction f(){\n  $n = $_GET['c'];\n  $ctrl = new $n('safe');\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert_eq!(
+            rule.check(src, &tree).len(),
+            1,
+            "a tainted class name in `new $n(...)` must fire"
+        );
+    }
+
+    #[test]
+    fn tainted_object_instantiation_silent_on_tainted_argument() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(TAINTED_OBJECT_INSTANTIATION_RULE);
+        // The CLASS NAME is a concrete identifier; only a constructor ARGUMENT is
+        // tainted. This is a DIFFERENT sink shape and must NOT fire here (the
+        // faithfulness discrimination — near-miss on the argument position).
+        let src = "<?php\nfunction f(){\n  $ctrl = new SafeController($_GET['c']);\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert!(
+            rule.check(src, &tree).is_empty(),
+            "a tainted constructor ARGUMENT (concrete class name) must NOT fire, got {:?}",
+            rule.check(src, &tree)
+        );
+    }
+
+    #[test]
+    fn tainted_object_instantiation_silent_on_literal_classname() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(TAINTED_OBJECT_INSTANTIATION_RULE);
+        // The class-name variable holds a string literal — untainted → no fire.
+        let src = "<?php\nfunction f(){\n  $a = 'MyController';\n  $ctrl = new $a();\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert!(
+            rule.check(src, &tree).is_empty(),
+            "a literal-valued class-name variable must NOT fire"
+        );
+    }
+
+    #[test]
+    fn tainted_callee_compile_discrimination() {
+        // `new $MV(...)` yields the class-name metavariable; a concrete class
+        // name does not.
+        assert_eq!(
+            parse_new_metavar_classname("new $SINK(...)").as_deref(),
+            Some("$SINK")
+        );
+        assert!(parse_new_metavar_classname("new SafeClass(...)").is_none());
+
+        // The recognizer compiles ONLY when the focus names the class-name
+        // metavariable — a focus on a constructor ARGUMENT does not.
+        let classname_focus: YamlValue = serde_yaml_ng::from_str(
+            "- pattern-either:\n    - pattern-inside: new $SINK(...)\n- pattern: $SINK\n",
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        assert!(try_compile_tainted_callee_sink_block(
+            &classname_focus,
+            MatcherRole::Sink,
+            &mut out
+        ));
+        assert!(matches!(out[0], GenericMatcher::TaintedCallee { .. }));
+
+        let arg_focus: YamlValue =
+            serde_yaml_ng::from_str("- pattern-inside: new SafeClass($ARG)\n- pattern: $ARG\n")
+                .unwrap();
+        let mut out2 = Vec::new();
+        assert!(
+            !try_compile_tainted_callee_sink_block(&arg_focus, MatcherRole::Sink, &mut out2),
+            "a constructor-argument focus must NOT compile a TaintedCallee sink"
+        );
+        assert!(out2.is_empty());
+    }
+
+    // ── PHP tainted SUBSCRIPT-KEY assignment SINK (`tainted-session`) ────────────
+    //
+    // An attacker-controlled session KEY in `$_SESSION[$KEY] = $VAL` fires; a
+    // tainted assigned VALUE (`$_SESSION["safe"] = $tainted`) or a nested-base
+    // write (`$_SESSION["prefix"][$tainted] = …`) stays silent — the taint is the
+    // subscript KEY of the assignment TARGET, not the value.
+
+    /// The real registry `tainted-session` rule shape (trimmed sanitizer list).
+    const TAINTED_SESSION_RULE: &str = r#"
+id: tainted-session
+mode: taint
+languages: [php]
+severity: WARNING
+message: "Session key based on user input risks session poisoning."
+pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: $_GET
+      - pattern: $_POST
+      - pattern: $_COOKIE
+      - pattern: $_REQUEST
+pattern-sanitizers:
+  - patterns:
+    - pattern-either:
+      - pattern: md5(...)
+pattern-sinks:
+  - patterns:
+    - pattern-inside: $_SESSION[$KEY] = $VAL;
+    - pattern: $KEY
+"#;
+
+    #[test]
+    fn tainted_session_loads() {
+        let rule = compiled(TAINTED_SESSION_RULE);
+        assert!(
+            rule.spec.sinks.iter().any(|s| matches!(
+                s,
+                GenericMatcher::TaintedSubscriptKey { base: Some(b), .. } if b == "_SESSION"
+            )),
+            "expected a TaintedSubscriptKey{{_SESSION}} sink, got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    #[test]
+    fn tainted_session_fires_on_tainted_key_direct() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(TAINTED_SESSION_RULE);
+        let src = "<?php\nfunction f(){\n  $_SESSION[$_POST['input']] = true;\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert_eq!(
+            rule.check(src, &tree).len(),
+            1,
+            "a tainted session KEY (direct source) must fire"
+        );
+    }
+
+    #[test]
+    fn tainted_session_fires_on_tainted_key_via_variable() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(TAINTED_SESSION_RULE);
+        let src = "<?php\nfunction f(){\n  $k = $_POST['input'];\n  $_SESSION[$k] = true;\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert_eq!(
+            rule.check(src, &tree).len(),
+            1,
+            "a tainted session KEY (via a propagated variable) must fire"
+        );
+    }
+
+    #[test]
+    fn tainted_session_silent_on_tainted_value() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(TAINTED_SESSION_RULE);
+        // The KEY is a literal; only the assigned VALUE is tainted. This is a
+        // DIFFERENT flow and must NOT fire here (the faithfulness discrimination
+        // — near-miss on the value position).
+        let src = "<?php\nfunction f(){\n  $_SESSION['key'] = $_POST['input'];\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert!(
+            rule.check(src, &tree).is_empty(),
+            "a tainted assigned VALUE (literal key) must NOT fire, got {:?}",
+            rule.check(src, &tree)
+        );
+    }
+
+    #[test]
+    fn tainted_session_silent_on_nested_base() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(TAINTED_SESSION_RULE);
+        // The assignment target base is `$_SESSION['prefix']`, NOT `$_SESSION`
+        // directly — the `pattern-inside: $_SESSION[$KEY]` context does not match,
+        // so this must NOT fire.
+        let src = "<?php\nfunction f(){\n  $_SESSION['prefix'][$_POST['input']] = true;\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert!(
+            rule.check(src, &tree).is_empty(),
+            "a nested-base session write must NOT fire, got {:?}",
+            rule.check(src, &tree)
+        );
+    }
+
+    #[test]
+    fn tainted_session_silent_on_sanitized_key() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(TAINTED_SESSION_RULE);
+        // `md5(...)` sanitizes the key before it reaches the session write.
+        let src =
+            "<?php\nfunction f(){\n  $k = md5($_POST['input']);\n  $_SESSION[$k] = true;\n}\n";
+        let tree = parse_file(src, Language::Php).expect("php fixture parses");
+        assert!(
+            rule.check(src, &tree).is_empty(),
+            "an md5-sanitized session key must NOT fire"
+        );
+    }
+
+    #[test]
+    fn subscript_key_compile_discrimination() {
+        // `$_SESSION[$KEY] = $VAL` parses to (base, key, val).
+        let parsed = parse_subscript_key_assignment("$_SESSION[$KEY] = $VAL;").unwrap();
+        assert_eq!(parsed.0.as_deref(), Some("_SESSION"));
+        assert_eq!(parsed.1, "$KEY");
+        assert_eq!(parsed.2, "$VAL");
+
+        // The recognizer compiles ONLY when the focus names the KEY metavariable.
+        let key_focus: YamlValue =
+            serde_yaml_ng::from_str("- pattern-inside: $_SESSION[$KEY] = $VAL;\n- pattern: $KEY\n")
+                .unwrap();
+        let mut out = Vec::new();
+        assert!(try_compile_subscript_key_sink_block(
+            &key_focus,
+            MatcherRole::Sink,
+            &mut out
+        ));
+        assert!(matches!(
+            out[0],
+            GenericMatcher::TaintedSubscriptKey { base: Some(ref b), .. } if b == "_SESSION"
+        ));
+
+        // A focus on the assigned VALUE must NOT compile a TaintedSubscriptKey.
+        let val_focus: YamlValue =
+            serde_yaml_ng::from_str("- pattern-inside: $_SESSION[$KEY] = $VAL;\n- pattern: $VAL\n")
+                .unwrap();
+        let mut out2 = Vec::new();
+        assert!(
+            !try_compile_subscript_key_sink_block(&val_focus, MatcherRole::Sink, &mut out2),
+            "an assigned-value focus must NOT compile a TaintedSubscriptKey sink"
+        );
+        assert!(out2.is_empty());
     }
 }

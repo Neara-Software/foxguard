@@ -19,10 +19,15 @@ worse than skipping).
 
 ## Result
 
-- **Implemented: 1** — `md5-loose-equality` (new `LooseEquality` sink primitive).
-- **Deferred: 12** — each needs a genuinely new primitive or would over-match.
+- **Implemented: 3** — `md5-loose-equality` (`LooseEquality` sink primitive),
+  `tainted-object-instantiation` (`TaintedCallee` sink primitive),
+  `tainted-session` (`TaintedSubscriptKey` sink primitive).
+- **Deferred: 10** — each needs a genuinely new primitive or would over-match.
 
-PHP load rate 89.1% → 90.6% (57 → 58 / 64). Overall 2088 → 2089 / 2145 (97.4%).
+PHP load rate (this snapshot): 58 → 60 / 64 (93.8%) after adding the tainted
+class-name and subscript-key sinks (a clean +2 PHP delta). The overall registry
+total shifts with each fresh `semgrep-rules` clone (gitignored); the per-language
+PHP delta is the stable measure.
 
 ---
 
@@ -51,25 +56,53 @@ PHP load rate 89.1% → 90.6% (57 → 58 / 64). Overall 2088 → 2089 / 2145 (97
   PHP top-level file scope (as in the registry's own `.php` fixture) is not
   reached — a pre-existing engine-scope limitation, not specific to this sink.
 
+### `tainted-object-instantiation` (PHP) — tainted **class-name** sink ✅
+
+- **Source**: `$_GET`/`$_POST`/`$_COOKIE`/`$_REQUEST`/`$_SERVER` → `ParamName`.
+- **Sink (was the blocker)**: `pattern-inside: new $SINK(...)` + `pattern: $SINK`
+  — the taint is the **class-name selector** of an object creation (unsafe
+  reflection, CWE-470), NOT a constructor argument.
+- **Primitive added**: `NodeMatcher::TaintedCallee` (shared enum; carried +
+  no-op'd by every non-PHP engine). The `patterns:`-block recognizer
+  `try_compile_tainted_callee_sink_block` (**PHP-gated, sink/sanitizer**) fires
+  only when the focus/bare `pattern: $SINK` names the **class-name metavariable**
+  of a `new $SINK(...)` `pattern-inside`; a constructor-argument focus
+  (`new C($ARG)` + `pattern: $ARG`) is refused so the ordinary argument-sink path
+  keeps ownership. The PHP engine inspects the first named child (class-name
+  position) of an `object_creation_expression` only.
+- **Faithfulness proven** (tests in `semgrep_taint.rs`): fires on
+  `new $tainted('safe')`; **stays silent** on `new SafeController($_GET['c'])`
+  (tainted argument, concrete class name) and `$a = 'MyController'; new $a()`
+  (literal class-name variable).
+
+### `tainted-session` (PHP) — tainted **subscript-key** assignment sink ✅
+
+- **Source**: `$_GET`/`$_POST`/`$_COOKIE`/`$_REQUEST` → `ParamName`.
+  Sanitizers (`md5(...)`, `bin2hex(...)`, …) compile as `Call` sanitizers; the
+  one non-call sanitizer `$A . $B` (string concat) does not compile — the same
+  documented dropped-sanitizer graceful degradation as every other rule, a slight
+  broadening only on that concat form.
+- **Sink (was the blocker)**: `pattern-inside: $_SESSION[$KEY] = $VAL;` +
+  `pattern: $KEY` — the taint is the **index/KEY** of a `$_SESSION` write
+  (session poisoning, CWE-284), NOT the assigned value.
+- **Primitive added**: `NodeMatcher::TaintedSubscriptKey { base }` (shared enum;
+  carried + no-op'd by every non-PHP engine). The recognizer
+  `try_compile_subscript_key_sink_block` (**PHP-gated, sink/sanitizer**) fires
+  only when the focus/bare `pattern: $KEY` names the **KEY metavariable** of a
+  `$BASE[$KEY] = $VAL` `pattern-inside`, recording the concrete superglobal base
+  (`_SESSION`); a value focus (`pattern: $VAL`) is refused. The PHP engine
+  inspects the KEY operand of an assignment-LHS `subscript_expression` whose base
+  is the configured superglobal only.
+- **Faithfulness proven** (tests in `semgrep_taint.rs`): fires on
+  `$_SESSION[$_POST['input']] = true` and the propagated
+  `$k = $_POST['input']; $_SESSION[$k] = true`; **stays silent** on
+  `$_SESSION['key'] = $_POST['input']` (tainted VALUE, literal key),
+  `$_SESSION['prefix'][$_POST['input']] = true` (nested base, not `$_SESSION`),
+  and the `md5(...)`-sanitized key.
+
 ---
 
 ## Deferred — PHP
-
-### `tainted-object-instantiation` — tainted **class-name** in `new $SINK(...)`
-Sink is `pattern-inside: new $SINK(...)` + `pattern: $SINK`: the taint is the
-**class-name selector** of an object creation (unsafe reflection / arbitrary
-class instantiation), NOT a constructor argument. No matcher expresses "the
-type/callee operand of a `new` is tainted". **Needs a new primitive**:
-`TaintedCallee`/`TaintedClassName` (object-creation whose *name* operand carries
-taint). Compiling it as a constructor-arg sink would match a different thing.
-
-### `tainted-session` — tainted **subscript key** in `$_SESSION[$KEY] = $VAL`
-Sink is `pattern-inside: $_SESSION[$KEY] = $VAL;` + `pattern: $KEY`: the taint is
-the **index** of a `$_SESSION` write (session poisoning), NOT the assigned value.
-foxguard's `Subscript` matches a subscript *read*; there is no "tainted index of
-an assignment-target subscript" sink. **Needs a new primitive**:
-`SubscriptKeySink` (tainted index expression of an assignment-LHS subscript).
-Reusing a value-flow sink would flag the wrong operand.
 
 ### `doctrine-orm-dangerous-query` — focus arg in `$QUERY->METHOD(...)` + scope
 Sink is `focus-metavariable: $SINK` over a `pattern-either` of ~25
@@ -175,7 +208,5 @@ regex + sanitizers to stay precise. Deferred.
 | Focus-arg-of-call **source** (dual of the sink recognizer) | `use_weak_rng_for_keygeneration` | sinks already tractable via constructor `Call` |
 | C# `(Type $MV)` typed-metavariable source | `csharp-sqli` | Java/Go already have the sink-side dual |
 | Typestate / object-configuration sink | 3 C# XXE rules | "call on an object configured unsafely earlier" |
-| Tainted-**callee**/class-name sink | `tainted-object-instantiation` | unsafe reflection |
-| Tainted subscript-**key** assignment-LHS sink | `tainted-session` | session poisoning |
 | PHP `->` + `::` call support in focus-call sink w/ faithful `pattern-inside` scoping | `doctrine-orm`, `laravel-sql-injection`, `laravel-api-route`, `laravel-unsafe-validator` | the `->`/`::` lexical gap is easy; the faithful scoping is the hard part |
 | Signature-param source (bare, no focus) + concat-argument sink | `xpath-injection` | |

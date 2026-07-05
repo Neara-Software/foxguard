@@ -262,6 +262,53 @@ pub enum NodeMatcher {
     /// (type-juggling is PHP-specific); other engines carry the matcher in the
     /// spec but no-op it.
     LooseEquality { description: String },
+
+    /// Match an object-creation SINK whose CLASS-NAME / CALLEE selector is
+    /// tainted — the Semgrep unsafe-reflection sink `new $SINK(...)` bounded to
+    /// its class-name metavariable (`pattern-inside: new $SINK(...)` + focus
+    /// `pattern: $SINK`, the `tainted-object-instantiation` rule). Instantiating
+    /// an attacker-controlled class name allows arbitrary class instantiation /
+    /// remote code execution (CWE-470).
+    ///
+    /// Faithfulness (the whole point): this fires ONLY when the CLASS NAME being
+    /// instantiated carries taint — NEVER when a constructor ARGUMENT is tainted
+    /// (that is a different, ordinary call-argument sink). `new $tainted(...)`
+    /// fires; `new SafeClass($tainted)` does NOT (the class name `SafeClass` is a
+    /// concrete identifier, not a tainted value), and `new $x()` where `$x` holds
+    /// a string literal is silent (the class-name variable is untainted). The PHP
+    /// engine inspects the class-name operand of an `object_creation_expression`
+    /// only. Sink/sanitizer only — an instantiation is a data-flow destination,
+    /// not a taint origin. Compiled solely for the PHP engine (unsafe reflection
+    /// via a dynamic class name is the PHP shape); other engines carry the
+    /// matcher in the spec but no-op it.
+    TaintedCallee { description: String },
+
+    /// Match an assignment-target SUBSCRIPT-KEY SINK — a write
+    /// `$_SESSION[$KEY] = $VAL` whose INDEX / KEY expression is tainted (the
+    /// Semgrep `tainted-session` session-poisoning sink:
+    /// `pattern-inside: $_SESSION[$KEY] = $VAL;` + focus `pattern: $KEY`).
+    /// An attacker-controlled session key lets the user write any session
+    /// variable (CWE-284, broken access control).
+    ///
+    /// `base = Some(name)` bounds the write target's base to a concrete
+    /// superglobal whose final segment equals `name` (e.g. `_SESSION`);
+    /// `base = None` matches any subscript-assignment target (a metavariable
+    /// base in the pattern).
+    ///
+    /// Faithfulness (the whole point): this fires ONLY when the KEY / index of
+    /// the assignment target carries taint — NEVER when the assigned VALUE is
+    /// tainted (`$_SESSION["safe"] = $tainted` is a different flow). It also
+    /// requires the assignment TARGET base to be the configured superglobal, so
+    /// a nested `$_SESSION["prefix"][$tainted] = …` (whose outer base is
+    /// `$_SESSION["prefix"]`, not `$_SESSION`) does NOT fire. The PHP engine
+    /// inspects the key operand of an assignment-LHS `subscript_expression`
+    /// only. Sink/sanitizer only — a write target is a data-flow destination,
+    /// not a taint origin. Compiled solely for the PHP engine; other engines
+    /// carry the matcher in the spec but no-op it.
+    TaintedSubscriptKey {
+        base: Option<String>,
+        description: String,
+    },
 }
 
 impl NodeMatcher {
@@ -284,6 +331,8 @@ impl NodeMatcher {
             NodeMatcher::TypedAssignTarget { description, .. } => description,
             NodeMatcher::LiteralString { description, .. } => description,
             NodeMatcher::LooseEquality { description } => description,
+            NodeMatcher::TaintedCallee { description } => description,
+            NodeMatcher::TaintedSubscriptKey { description, .. } => description,
         }
     }
 }
@@ -1473,6 +1522,12 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
         }
         NodeMatcher::LooseEquality { description } => {
             format!("LE|{description}")
+        }
+        NodeMatcher::TaintedCallee { description } => {
+            format!("TC|{description}")
+        }
+        NodeMatcher::TaintedSubscriptKey { base, description } => {
+            format!("TSK|{}|{description}", base.as_deref().unwrap_or("*"))
         }
     }
 }

@@ -1691,7 +1691,11 @@ fn match_source(
             // source shape, so the Go engine does not seed string literals.
             | NodeMatcher::LiteralString { .. }
             // PHP-only loose-equality comparison sink; no-op in the Go engine.
-            | NodeMatcher::LooseEquality { .. } => {
+            | NodeMatcher::LooseEquality { .. }
+            // PHP-only tainted class-name / subscript-key sinks; no-op in the
+            // Go engine.
+            | NodeMatcher::TaintedCallee { .. }
+            | NodeMatcher::TaintedSubscriptKey { .. } => {
                 // Sink-only matcher; MemberAssign is JS-specific; BinopFormat is
                 // matched on binary-expression nodes, not as a source.
             }
