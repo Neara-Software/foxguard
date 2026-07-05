@@ -12,10 +12,10 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 | Rule files scanned | 2070 |
 | Files with YAML parse errors | 0 |
 | Total rules | 2144 |
-| Rules loaded OK | 2085 (97.2%) |
-| Rules skipped | 59 (2.8%) |
+| Rules loaded OK | 2087 (97.3%) |
+| Rules skipped | 57 (2.7%) |
 
-**Headline load rate: 97.2%** (2085 / 2144 rules).
+**Headline load rate: 97.3%** (2087 / 2144 rules).
 
 ## Skip-reason histogram
 
@@ -23,8 +23,8 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 58 | 98.3% | 2.7% |
-| `generic mode (languages: [generic])` | 1 | 1.7% | 0.0% |
+| `mode: taint (unsupported shape)` | 56 | 98.2% | 2.6% |
+| `generic mode (languages: [generic])` | 1 | 1.8% | 0.0% |
 
 ## Priority order — operator/feature backlog
 
@@ -32,9 +32,9 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 
 | Rank | Capability to add | Rules unlocked |
 |---:|---|---:|
-| 1 | `mode: taint (unsupported shape)` | 58 |
+| 1 | `mode: taint (unsupported shape)` | 56 |
 
-Operator/feature gaps account for **58 rules** (2.7% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **56 rules** (2.6% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
 
 ## Priority order — missing language grammars
 
@@ -52,7 +52,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 
 | Language | Total | Loaded | Skipped | Load rate |
 |---|---:|---:|---:|---:|
-| python | 423 | 410 | 13 | 96.9% |
+| python | 423 | 412 | 11 | 97.4% |
 | hcl | 359 | 359 | 0 | 100.0% |
 | javascript | 243 | 230 | 13 | 94.7% |
 | regex | 237 | 237 | 0 | 100.0% |
@@ -90,7 +90,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **java**: `mode: taint (unsupported shape)` (6)
 - **javascript**: `mode: taint (unsupported shape)` (13)
 - **php**: `mode: taint (unsupported shape)` (7)
-- **python**: `mode: taint (unsupported shape)` (13)
+- **python**: `mode: taint (unsupported shape)` (11)
 - **ruby**: `mode: taint (unsupported shape)` (7)
 - **solidity**: `mode: taint (unsupported shape)` (1)
 
