@@ -265,7 +265,16 @@ enum GenericMatcher {
     /// by the Python and JavaScript engines (the only registry rules with
     /// this source shape target those languages); other engines carry it in
     /// the spec but no-op it.
-    LiteralString { description: String },
+    ///
+    /// `regex = Some(pattern)` restricts the source to literals whose text
+    /// matches the regex (the `pattern: "$URL"` + `metavariable-pattern`/
+    /// `metavariable-regex` shape — a literal whose content matches a regex,
+    /// e.g. the `requests` `http://` cleartext rules). `None` = any literal
+    /// (the bare `"..."` hardcoded-secret shape).
+    LiteralString {
+        description: String,
+        regex: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -430,9 +439,12 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => python_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            python_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -538,9 +550,10 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => {
+        GenericMatcher::LiteralString { description, regex } => {
             javascript_taint::NodeMatcher::LiteralString {
                 description: description.clone(),
+                regex: regex.clone(),
             }
         }
     }
@@ -642,9 +655,12 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => go_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            go_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -744,9 +760,12 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => java_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            java_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -853,9 +872,12 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => c_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            c_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -955,9 +977,12 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => kotlin_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            kotlin_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -1057,9 +1082,12 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => ruby_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            ruby_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -1168,9 +1196,12 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => csharp_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            csharp_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -1268,9 +1299,12 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => bash_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            bash_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -1374,9 +1408,10 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => {
+        GenericMatcher::LiteralString { description, regex } => {
             solidity_taint::NodeMatcher::LiteralString {
                 description: description.clone(),
+                regex: regex.clone(),
             }
         }
     }
@@ -1476,9 +1511,12 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => scala_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            scala_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -1576,9 +1614,12 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => apex_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            apex_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -1676,9 +1717,12 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => swift_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            swift_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -1769,9 +1813,12 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
-        GenericMatcher::LiteralString { description } => php_taint::NodeMatcher::LiteralString {
-            description: description.clone(),
-        },
+        GenericMatcher::LiteralString { description, regex } => {
+            php_taint::NodeMatcher::LiteralString {
+                description: description.clone(),
+                regex: regex.clone(),
+            }
+        }
     }
 }
 
@@ -3265,6 +3312,35 @@ fn compile_entry(
                     return;
                 }
             }
+            // ── String-literal-matching-regex SOURCE shape ──────────────────
+            //
+            // The `requests` cleartext-transport family
+            // (`request-with-http`, `request-session-with-http`,
+            // `request-session-http-in-with-context`) expresses its source as a
+            // string LITERAL whose *content* matches a regex:
+            //
+            //   patterns:
+            //     - pattern: |
+            //         "$URL"
+            //     - metavariable-pattern:
+            //         metavariable: $URL
+            //         language: regex
+            //         patterns:
+            //           - pattern-regex: http://
+            //           - pattern-not-regex: .*://localhost
+            //           - pattern-not-regex: .*://127\.0\.0\.1
+            //
+            // i.e. "a literal that contains `http://` and is not localhost /
+            // 127.0.0.1". We compile this to a `LiteralString { regex: Some(..) }`
+            // source: the engine seeds ONLY string literals whose text matches
+            // the combined regex, so `requests.request("GET", "http://evil")`
+            // fires while `"https://safe"` / `"localhost"` / a non-literal
+            // variable stays clean. Source role only — a literal is an origin.
+            if let MatcherRole::Source = role {
+                if try_compile_string_literal_regex_source_block(v, rule_id, out) {
+                    return;
+                }
+            }
             // ── Focus-on-call-argument SINK shape (the sink-side analog of the
             //    parameter-as-source shape) ──────────────────
             //
@@ -3615,6 +3691,177 @@ fn try_compile_param_source_block(v: &YamlValue, out: &mut Vec<GenericMatcher>) 
         description: "untrusted function parameter".to_string(),
     });
     true
+}
+
+/// Try to recognise the "string-literal-matching-regex" SOURCE shape in a
+/// `patterns:` source block and, if found, push a
+/// [`GenericMatcher::LiteralString`] whose `regex` restricts seeding to literals
+/// whose text matches the constraint.
+///
+/// The recognised shape pairs a string-literal metavariable pattern with a
+/// `metavariable-pattern` (or `metavariable-regex`) that regex-constrains that
+/// same metavariable's content:
+///
+/// ```yaml
+/// patterns:
+///   - pattern: |
+///       "$URL"
+///   - metavariable-pattern:
+///       metavariable: $URL
+///       language: regex
+///       patterns:
+///         - pattern-regex: http://
+///         - pattern-not-regex: .*://localhost
+///         - pattern-not-regex: .*://127\.0\.0\.1
+/// ```
+///
+/// The positive `pattern-regex` clauses and negative `pattern-not-regex` clauses
+/// are combined into ONE lookahead regex `^(?=[\s\S]*(?:POS))...(?![\s\S]*(?:NEG))...`
+/// (each clause keeps Semgrep's "match anywhere in the value" semantics). The
+/// combined regex is validated with [`crate::rules::semgrep_compat::compile_regex`];
+/// if it fails to compile the block is left unrecognised (the caller falls
+/// through to graceful degradation). Returns `true` (pushing one matcher) on
+/// recognition.
+fn try_compile_string_literal_regex_source_block(
+    v: &YamlValue,
+    rule_id: &str,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+
+    let mut literal_metavar: Option<String> = None;
+    let mut constraint: Option<(String, Vec<String>, Vec<String>)> = None;
+
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        if let Some(mv) = quoted_single_metavar(s) {
+                            literal_metavar = Some(mv);
+                        }
+                    }
+                }
+                Some("metavariable-pattern") | Some("metavariable-regex") => {
+                    if let Some(m) = val.as_mapping() {
+                        let mv = m
+                            .get(YamlValue::from("metavariable"))
+                            .and_then(YamlValue::as_str);
+                        // `metavariable-regex` carries a single inline `regex:`;
+                        // `metavariable-pattern` (language: regex) carries a
+                        // nested `patterns:` / `pattern-regex:` set. Collect both.
+                        let mut positives: Vec<String> = Vec::new();
+                        let mut negatives: Vec<String> = Vec::new();
+                        if let Some(re) =
+                            m.get(YamlValue::from("regex")).and_then(YamlValue::as_str)
+                        {
+                            positives.push(re.to_string());
+                        }
+                        collect_regex_constraints(val, &mut positives, &mut negatives);
+                        if let Some(mv) = mv {
+                            if !positives.is_empty() {
+                                constraint = Some((mv.to_string(), positives, negatives));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let (Some(lit_mv), Some((c_mv, positives, negatives))) = (literal_metavar, constraint) else {
+        return false;
+    };
+    // The regex constraint must target the SAME metavariable the literal binds.
+    if lit_mv != c_mv {
+        return false;
+    }
+
+    // Build one combined lookahead regex: every positive must be present and no
+    // negative may be present, each searched anywhere in the literal's text.
+    let mut combined = String::from("^");
+    for p in &positives {
+        combined.push_str(&format!("(?=[\\s\\S]*(?:{p}))"));
+    }
+    for n in &negatives {
+        combined.push_str(&format!("(?![\\s\\S]*(?:{n}))"));
+    }
+
+    // Validate the combined regex compiles (fancy-regex handles the lookaheads).
+    if let Err(e) = crate::rules::semgrep_compat::compile_regex(&combined) {
+        eprintln!(
+            "Warning: taint rule `{rule_id}` string-literal-regex source did not compile ({e}); skipping entry"
+        );
+        return false;
+    }
+
+    out.push(GenericMatcher::LiteralString {
+        description: "string literal matching regex".to_string(),
+        regex: Some(combined),
+    });
+    true
+}
+
+/// If `pat` is a quoted string literal whose entire content is a single
+/// metavariable (`"$URL"` / `'$URL'`, possibly with a `pattern: |` trailing
+/// newline), return that metavariable (`$URL`). Any other shape returns `None`.
+fn quoted_single_metavar(pat: &str) -> Option<String> {
+    let t = pat.trim();
+    let bytes = t.as_bytes();
+    if bytes.len() < 3 {
+        return None;
+    }
+    let quote = bytes[0];
+    if (quote != b'"' && quote != b'\'') || bytes[bytes.len() - 1] != quote {
+        return None;
+    }
+    let inner = t[1..t.len() - 1].trim();
+    if is_metavariable(inner) {
+        Some(inner.to_string())
+    } else {
+        None
+    }
+}
+
+/// Recursively collect `pattern-regex:` (positive) and `pattern-not-regex:`
+/// (negative) clause strings from a `metavariable-pattern` value (walking its
+/// nested `patterns:` / `pattern-either:` lists).
+fn collect_regex_constraints(
+    node: &YamlValue,
+    positives: &mut Vec<String>,
+    negatives: &mut Vec<String>,
+) {
+    match node {
+        YamlValue::Mapping(map) => {
+            for (k, v) in map {
+                match k.as_str() {
+                    Some("pattern-regex") => {
+                        if let Some(s) = v.as_str() {
+                            positives.push(s.trim().to_string());
+                        }
+                    }
+                    Some("pattern-not-regex") => {
+                        if let Some(s) = v.as_str() {
+                            negatives.push(s.trim().to_string());
+                        }
+                    }
+                    _ => collect_regex_constraints(v, positives, negatives),
+                }
+            }
+        }
+        YamlValue::Sequence(seq) => {
+            for item in seq {
+                collect_regex_constraints(item, positives, negatives);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Walk a `patterns:` block (and nested `pattern-either:` lists) collecting
@@ -4836,6 +5083,7 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
         if is_ellipsis_string_literal(pat) {
             return Some(GenericMatcher::LiteralString {
                 description: "hardcoded string literal".to_string(),
+                regex: None,
             });
         }
     }
@@ -12694,6 +12942,187 @@ function make(payload) {
         assert!(
             rule.check(clean, &tree).is_empty(),
             "a non-literal secret (process.env read) must NOT fire"
+        );
+    }
+
+    // ── String-literal-matching-regex SOURCE (the `requests` http:// family) ──
+    //
+    // The `"$URL"` + `metavariable-regex` source compiles to a
+    // `LiteralString { regex: Some(..) }` that seeds ONLY string literals whose
+    // text matches the constraint (`http://`, not localhost/127.0.0.1). These
+    // tests exercise the full `parse_taint_rule -> check` path and the
+    // faithfulness discrimination in BOTH directions.
+
+    /// The source compiles to a regex-constrained `LiteralString`, not a bare
+    /// any-literal one (which would over-seed every string).
+    #[test]
+    fn string_literal_regex_source_compiles_with_regex() {
+        let r = compiled(
+            r#"
+id: req-http-src
+mode: taint
+languages: [python]
+severity: INFO
+message: m
+pattern-sources:
+  - patterns:
+      - pattern: |
+          "$URL"
+      - metavariable-pattern:
+          metavariable: $URL
+          language: regex
+          patterns:
+            - pattern-regex: http://
+            - pattern-not-regex: .*://localhost
+            - pattern-not-regex: .*://127\.0\.0\.1
+pattern-sinks:
+  - patterns:
+      - pattern-either:
+          - pattern: requests.$W($SINK, ...)
+          - pattern: requests.request($METHOD, $SINK, ...)
+          - pattern: requests.Request($METHOD, $SINK, ...)
+      - focus-metavariable: $SINK
+"#,
+        );
+        let lit: Vec<&Option<String>> = r
+            .spec
+            .sources
+            .iter()
+            .filter_map(|m| match m {
+                GenericMatcher::LiteralString { regex, .. } => Some(regex),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            lit.len(),
+            1,
+            "one LiteralString source, got {:?}",
+            r.spec.sources
+        );
+        assert!(
+            lit[0].is_some(),
+            "the requests http:// source must carry a regex constraint (not any-literal)"
+        );
+    }
+
+    /// Full parse -> check: a hardcoded `http://` literal reaching the
+    /// `requests.request` sink FIRES; an `https://` literal, a `localhost`
+    /// literal, and a non-literal variable are all SILENT (regex enforced).
+    #[test]
+    fn string_literal_regex_source_python_discriminates() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(
+            r#"
+id: req-http
+mode: taint
+languages: [python]
+severity: INFO
+message: m
+pattern-sources:
+  - patterns:
+      - pattern: |
+          "$URL"
+      - metavariable-pattern:
+          metavariable: $URL
+          language: regex
+          patterns:
+            - pattern-regex: http://
+            - pattern-not-regex: .*://localhost
+            - pattern-not-regex: .*://127\.0\.0\.1
+pattern-sinks:
+  - patterns:
+      - pattern-either:
+          - pattern: requests.$W($SINK, ...)
+          - pattern: requests.request($METHOD, $SINK, ...)
+          - pattern: requests.Request($METHOD, $SINK, ...)
+      - focus-metavariable: $SINK
+"#,
+        );
+
+        // FIRES: an `http://` literal reaches the sink.
+        let fire = r#"
+import requests
+def go():
+    requests.request("GET", "http://evil.example.com/api")
+"#;
+        let tree = parse_file(fire, Language::Python).expect("python fixture parses");
+        assert_eq!(
+            rule.check(fire, &tree).len(),
+            1,
+            "an http:// string literal reaching requests.request must fire"
+        );
+
+        // SILENT: `https://` literal does not match the `http://` regex.
+        let https = r#"
+import requests
+def go():
+    requests.request("GET", "https://safe.example.com/api")
+"#;
+        let tree = parse_file(https, Language::Python).expect("python fixture parses");
+        assert!(
+            rule.check(https, &tree).is_empty(),
+            "an https:// literal must NOT be seeded"
+        );
+
+        // SILENT: `http://localhost` is excluded by the pattern-not-regex.
+        let localhost = r#"
+import requests
+def go():
+    requests.request("GET", "http://localhost:8080/api")
+"#;
+        let tree = parse_file(localhost, Language::Python).expect("python fixture parses");
+        assert!(
+            rule.check(localhost, &tree).is_empty(),
+            "an http://localhost literal must NOT be seeded"
+        );
+
+        // SILENT: a non-literal (variable read from config) is never a literal
+        // source, regardless of its runtime value.
+        let nonliteral = r#"
+import requests
+def go(cfg):
+    url = cfg.endpoint
+    requests.request("GET", url)
+"#;
+        let tree = parse_file(nonliteral, Language::Python).expect("python fixture parses");
+        assert!(
+            rule.check(nonliteral, &tree).is_empty(),
+            "a non-literal URL variable must NOT be seeded"
+        );
+    }
+
+    /// The bare any-literal `"..."` source (regex: None) must behave IDENTICALLY
+    /// to before this change — every string literal is still seeded, so the
+    /// hardcoded-secret rule fires on ANY literal reaching the sink.
+    #[test]
+    fn bare_literal_string_source_still_seeds_any_literal() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(
+            r#"
+id: hardcoded-any-literal
+mode: taint
+languages: [python]
+severity: WARNING
+message: m
+pattern-sources:
+  - pattern: |
+      "..."
+pattern-sinks:
+  - pattern: jwt.sign($PAYLOAD, $SECRET)
+"#,
+        );
+        // A non-http literal (would fail the requests regex) still fires here,
+        // proving regex: None preserves the any-literal behavior.
+        let fire = r#"
+import jwt
+def make(payload):
+    return jwt.sign(payload, "https://not-a-url-just-a-secret")
+"#;
+        let tree = parse_file(fire, Language::Python).expect("python fixture parses");
+        assert_eq!(
+            rule.check(fire, &tree).len(),
+            1,
+            "bare any-literal source must still seed any string literal"
         );
     }
 
