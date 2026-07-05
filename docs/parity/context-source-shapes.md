@@ -214,3 +214,137 @@ seeding, bound-parameter attribute-read source, nested-dict sink containment,
 list-literal source, keyword-argument focus) or engine-core propagation work —
 none is a one-recognizer extension, and each would over-match if forced into
 today's vocabulary.
+
+---
+
+# Ruby `mode: taint` registry skips
+
+Assessment of the seven Ruby `mode: taint` registry rules the bridge skipped.
+Same hard rule: a loaded rule must match what Semgrep matches, **not more**.
+
+Outcome: **2 of 7 implemented** (`avoid-tainted-http-request`,
+`md5-used-as-password`), 5 deferred with the concrete blocker each carries. Ruby
+load rate moves **85 → 87 / 92 (92.4% → 94.6%)**; overall **2100 → 2102 / 2144**.
+
+## Summary matrix
+
+| Rule | Source shape | Sink shape | Blocker | Status |
+|---|---|---|---|---|
+| `avoid-tainted-http-request` | `params` / `cookies` / `request.env` | `Net::HTTP.$X(...)` / `Net::HTTP::$METHOD.new(...)` + `metavariable-pattern` method enums | enumerate the `metavariable-pattern` alternation into concrete `Call`s | **IMPLEMENTED** |
+| `md5-used-as-password` | `Digest::MD5` (constant scope path) | `$FUNCTION(...)` + `metavariable-regex (?i).*password.*` | recognize a Ruby `Const::Const` source | **IMPLEMENTED** |
+| `avoid-tainted-ftp-call` | `params` / `cookies` / `request.env` | `Net::FTP.$X(...)` **and** `$FTP.$METHOD(...)` gated by `pattern-inside: $FTP = Net::FTP.$OPEN(...)` | receiver-TYPE provenance on a SINK | deferred |
+| `check-redirect-to` | `params` / `cookies` / `request.env` | `redirect_to $X` focus, minus a `metavariable-regex`-gated `permit` sanitizer | metavariable-regex-gated sanitizer | deferred |
+| `check-render-local-file-include` | `params[...]` | `render` with focus on the `file:`/`inline:`/`template:`/`action:` kwarg or first positional | keyword-argument-position sink | deferred |
+| `divide-by-zero` | integer-literal metavariable (`$VAR` + `metavariable-regex ^\d*(?!\.)$`) | `$NUMER` inside `pattern-inside: $NUMER / 0` | numeric-literal source + arithmetic-predicate sink | deferred |
+| `rails-no-render-after-save` | `$T` inside `pattern-inside: $T.save` | `$T` inside `pattern-inside: render $T` | cross-pattern metavariable UNIFICATION + ordering | deferred |
+
+## Implemented — `avoid-tainted-http-request`
+
+**Shape.** Sources are the bare request accessors (already compile to
+`ParamName`/`Attribute`). The sink is a `pattern-either` of two `patterns:`
+AND-blocks, each a call whose callee carries ONE metavariable
+(`Net::HTTP.$X(...)`, `Net::HTTP::$METHOD.new(...)`) paired with a
+`metavariable-pattern` that ENUMERATES that metavariable into a fixed list of
+method / constant names via a nested `pattern-either:` of `pattern:` leaves.
+
+**Why tractable within the existing vocabulary.** The method/constant lists are
+finite and concrete, so we **enumerate** them: for each listed name we substitute
+it textually into the callee template and emit a concrete
+`Call { canonical }` (`Net::HTTP.get`, `Net::HTTP::Get.new`, …). Every canonical
+resolves through the Ruby engine's existing `resolve_callee` (a `scope_resolution`
+receiver stringifies to `Net::HTTP` / `Net::HTTP::Get`), so **no new
+`NodeMatcher` variant** and no engine change are needed — only a new bridge
+recognizer (`try_compile_ruby_metavar_pattern_enum_call_block`), gated Ruby +
+sink. The receiver AND method are both pinned, so the compiled sink is strictly
+≤ what Semgrep's bounded `metavariable-pattern` matches.
+
+**Faithfulness.** Fires on all 9 tainted `Net::HTTP` calls in the fixture (via
+the existing tainted-argument check); silent on the two literal-URL negatives
+(`Net::HTTP.get("example.com", …)`, `Net::HTTP::Get.new(uri)` with a literal
+`uri`). A bare `http.request(...)` on a block variable does NOT match (receiver
+is not `Net::HTTP`). Tests:
+`ruby_tainted_http_request_enumerates_concrete_call_sinks`,
+`ruby_tainted_http_request_fires_on_positives_only`.
+
+## Implemented — `md5-used-as-password`
+
+**Shape.** Source `Digest::MD5` (a bare `Const::Const` scope-resolution
+reference); sink `$FUNCTION(...)` gated by `metavariable-regex (?i).*password.*`
+(already compiles to a `CallRegex`). Only the SOURCE was blocking:
+`is_dotted_identifier` rejects the `::`.
+
+**Why tractable.** `compile_pattern` now recognizes a pure Ruby constant scope
+path (`is_ruby_constant_path`) as a Ruby SOURCE and compiles it to
+`Call { canonical: "Digest::MD5" }`; the Ruby engine's `match_source` matches a
+`scope_resolution` node by EXACT text. Taint then propagates through the
+constant's method reads (`Digest::MD5.hexdigest`, `md5 = Digest::MD5.new; dig =
+md5.hexdigest`) via the existing receiver-propagation path, reaching the
+password-named sink.
+
+**Faithfulness.** The exact-text discriminator keeps other digests silent:
+`Digest::SHA256.hexdigest`-derived values never taint, so the two SHA256
+negatives stay clean while both MD5 positives fire. Tests:
+`ruby_md5_used_as_password_compiles_to_intended_shapes`,
+`ruby_md5_used_as_password_fires_on_md5_only`.
+
+## Deferred — and the primitive each needs
+
+### `avoid-tainted-ftp-call`
+
+The `Net::FTP.$X(...)` arm alone would load (any method on the `Net::FTP`
+constant), but that catches only 2 of the 15 fixture positives. The other 13
+(`ftp.get(...)`, `ftp.put(...)`, `ftp.connect(...)`, …) come from the second
+sink `$FTP.$METHOD(...)` — a **metavariable receiver AND metavariable method**
+call, i.e. EVERY method call — gated ONLY by
+`pattern-inside: $FTP = Net::FTP.$OPEN(...)` (the receiver `$FTP` is an FTP
+instance). foxguard's Ruby engine has no receiver-TYPE provenance for sinks:
+without it, the sink degrades to "any method call with a tainted argument"
+(`puts(params[:x])` → false positive) — a catastrophic over-match. **Needs:**
+sink-side receiver provenance (`$FTP` bound to a `Net::FTP.open/new` result),
+the sink analogue of the Java `ReceiverProvenanceCall` source. Deferred.
+
+### `check-redirect-to`
+
+The sink (`redirect_to $X` focus) is expressible, but faithfulness turns on a
+`pattern-sanitizers` entry that the engine cannot express: `params.permit(...,
+$X, ...)` is a sanitizer **only when** a `metavariable-regex` on `$X` does NOT
+match `(host|port|(sub)?domain)`. The fixture's `ok` case
+`redirect_to params.permit(:page, :sort)` is sanitized (no host/port/domain)
+while the `ruleid` case `redirect_to params.permit(:domain)` is not — dropping
+the metavariable-regex-gated sanitizer fires on the `ok` case → over-match.
+(The sink's own `pattern-not-regex` also uses a negative lookbehind
+`(?<!permit)` the Rust regex crate rejects.) **Needs:** a metavariable-regex-gated
+sanitizer. Deferred.
+
+### `check-render-local-file-include`
+
+Source `params[...]` compiles (`Subscript`). The sink is a `render` call where
+the tainted value must sit in a SPECIFIC argument position — the `file:` /
+`inline:` / `template:` / `action:` keyword, or the first positional — with
+`focus-metavariable: $X`. The fixture's `ok` case
+`render :update, locals: { username: params[:username] }` puts tainted input in
+`locals:`, so a "tainted value in any `render` argument" sink over-matches it.
+`parse_command_call` deliberately refuses keyworded calls for exactly this
+reason. **Needs:** a keyword-argument-position sink matcher (fire on the value of
+named kwargs `file`/`inline`/`template`/`action` or the first positional only).
+Deferred.
+
+### `divide-by-zero`
+
+Not a dataflow shape. The "source" is an integer LITERAL
+(`$VAR` + `metavariable-regex ^\d*(?!\.)$` — itself a lookahead the Rust regex
+crate rejects) and the "sink" is a bare `$NUMER` gated by
+`pattern-inside: $NUMER / 0` — a syntactic "denominator is zero" arithmetic
+predicate misusing taint mode. foxguard has neither numeric-literal source
+seeding nor a binary-operator divide-by-zero sink node shape. Deferred.
+
+### `rails-no-render-after-save`
+
+A statement-ordering correctness rule. The source binds `$T` to the RECEIVER of
+a `$T.save` call; the sink binds the SAME `$T` inside `render $T`. Firing
+faithfully requires cross-pattern **metavariable unification** (the render target
+must be the exact object that was saved) plus **ordering** (render after save).
+foxguard's flow-insensitive taint engine has neither receiver-of-method-call
+source seeding nor metavariable unification across source/sink patterns:
+approximating it (taint any `.save` receiver, fire on any render whose argument
+references it) over-matches `render $T.attr` and render-before-save. Deferred.

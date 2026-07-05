@@ -4684,6 +4684,23 @@ fn compile_entry(
                     return;
                 }
             }
+            // ── Ruby metavariable-pattern-ENUMERATED call SINK shape ────────
+            //
+            // A `patterns:` AND-block pairing a single-metavariable callee
+            // (`Net::HTTP.$X(...)`, `Net::HTTP::$METHOD.new(...)`) with a
+            // `metavariable-pattern` that enumerates that metavariable into a
+            // fixed set of literal method/constant names (the
+            // `avoid-tainted-http-request` sink shape). We ENUMERATE the
+            // alternation and compile one concrete `Call { canonical }` per
+            // listed name (receiver AND method fixed) — strictly ≤ what Semgrep
+            // matches. Gated to Ruby + sink/sanitizer.
+            if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
+                if lang == Language::Ruby
+                    && try_compile_ruby_metavar_pattern_enum_call_block(v, role, out)
+                {
+                    return;
+                }
+            }
             // ── Regex-bounded bare-metavar callee SINK shape ────────────────
             //
             // A `patterns:` AND-block that pairs a bare-metavariable callee
@@ -6652,6 +6669,189 @@ fn collect_regex_callee_parts(
 /// Returns `false` (pushing nothing) when no bare-metavar callee is pinned by a
 /// `metavariable-regex` — preserving the existing refusal of an unpinned
 /// bare-metavar callee. Only the Sink/Sanitizer roles call this.
+/// Parse a Ruby call pattern `<callee>(...)` whose callee carries EXACTLY ONE
+/// Semgrep metavariable segment and is otherwise a concrete constant / dotted /
+/// scope path. Returns `(metavariable, prefix, suffix)` such that substituting a
+/// concrete name `N` for the metavariable yields the canonical callee
+/// `format!("{prefix}{N}{suffix}")`.
+///
+/// Examples:
+///   `Net::HTTP.$X(...)`           → ("$X", "Net::HTTP.", "")
+///   `Net::HTTP::$METHOD.new(...)` → ("$METHOD", "Net::HTTP::", ".new")
+///
+/// The prefix must end in `.` or `::` (so the metavariable is a method or
+/// constant SEGMENT of a concrete receiver, never the whole callee — a bare
+/// `$F(...)` is refused as over-broad). Prefix and suffix must be concrete
+/// (only `[A-Za-z0-9_:.]`), so a second metavariable disqualifies the shape.
+fn parse_single_metavar_callee(pat: &str) -> Option<(String, String, String)> {
+    let c = pat.trim();
+    let open = c.find('(')?;
+    if !c.ends_with(')') {
+        return None;
+    }
+    let callee = c[..open].trim();
+    if callee.matches('$').count() != 1 {
+        return None;
+    }
+    let dollar = callee.find('$')?;
+    let after = &callee[dollar + 1..];
+    let mv_len: usize = after
+        .chars()
+        .take_while(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || *ch == '_')
+        .map(|ch| ch.len_utf8())
+        .sum();
+    if mv_len == 0 {
+        return None;
+    }
+    let mv = format!("${}", &after[..mv_len]);
+    if !is_metavariable(&mv) {
+        return None;
+    }
+    let prefix = &callee[..dollar];
+    let suffix = &after[mv_len..];
+    if prefix.is_empty() || !(prefix.ends_with('.') || prefix.ends_with(':')) {
+        return None;
+    }
+    let concrete = |seg: &str| {
+        seg.chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':' || ch == '.')
+    };
+    if !concrete(prefix) || !concrete(suffix) {
+        return None;
+    }
+    Some((mv, prefix.to_string(), suffix.to_string()))
+}
+
+/// Collect the literal identifier / constant alternatives enumerated under a
+/// `metavariable-pattern` value, recursing through nested `patterns:` /
+/// `pattern-either:` lists down to leaf `pattern:` scalars. Non-identifier
+/// leaves are ignored (they are inexpressible; ignoring them under-approximates
+/// but never over-matches).
+fn collect_metavar_pattern_literals(node: &YamlValue, out: &mut Vec<String>) {
+    if let Some(seq) = node.as_sequence() {
+        for item in seq {
+            collect_metavar_pattern_literals(item, out);
+        }
+        return;
+    }
+    if let Some(map) = node.as_mapping() {
+        for (k, val) in map {
+            match k.as_str() {
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        let s = s.trim();
+                        if is_identifier(s) {
+                            out.push(s.to_string());
+                        }
+                    }
+                }
+                Some("patterns") | Some("pattern-either") => {
+                    collect_metavar_pattern_literals(val, out);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Try to recognise the Ruby "metavariable-pattern-enumerated call" SINK shape:
+/// a `patterns:` AND-block pairing a call whose callee carries a single
+/// metavariable segment (`Net::HTTP.$X(...)`, `Net::HTTP::$METHOD.new(...)`) with
+/// a `metavariable-pattern` that ENUMERATES that metavariable into a fixed set of
+/// literal method / constant names via a nested `pattern-either:` of `pattern:`
+/// leaves.
+///
+/// On recognition, enumerates one concrete [`GenericMatcher::Call`] per listed
+/// name (receiver AND method both fixed) and returns `true`. The exact-callee
+/// `Call` sink matching in [`taint_engine::match_call_sink`] then fires only when
+/// the resolved callee equals one enumerated name — strictly ≤ what Semgrep's
+/// bounded `metavariable-pattern` alternation matches, never broader. This is the
+/// sink shape used by `avoid-tainted-http-request`
+/// (`Net::HTTP.$X(...)` / `Net::HTTP::$METHOD.new(...)`).
+///
+/// Returns `false` (pushing nothing) when there is no single-metavariable callee
+/// paired with an enumerated `metavariable-pattern`, leaving the caller to fall
+/// through to graceful degradation. Only the Sink/Sanitizer roles call this — a
+/// call argument is a data-flow destination, not a taint origin.
+fn try_compile_ruby_metavar_pattern_enum_call_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+    // (metavariable, prefix, suffix) for each single-metavar callee pattern.
+    let mut callees: Vec<(String, String, String)> = Vec::new();
+    // (metavariable, enumerated names) for each metavariable-pattern.
+    let mut enums: Vec<(String, Vec<String>)> = Vec::new();
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        if map.len() != 1 {
+            continue;
+        }
+        let (k, val) = map.iter().next().expect("len == 1");
+        match k.as_str() {
+            Some("pattern") => {
+                if let Some(s) = val.as_str() {
+                    if let Some(parts) = parse_single_metavar_callee(s) {
+                        callees.push(parts);
+                    }
+                }
+            }
+            Some("metavariable-pattern") => {
+                if let Some(mm) = val.as_mapping() {
+                    let mv = mm
+                        .get(YamlValue::from("metavariable"))
+                        .and_then(|x| x.as_str());
+                    if let Some(mv) = mv {
+                        let mut names = Vec::new();
+                        for key in ["patterns", "pattern-either", "pattern"] {
+                            if let Some(sub) = mm.get(YamlValue::from(key)) {
+                                collect_metavar_pattern_literals(sub, &mut names);
+                            }
+                        }
+                        if !names.is_empty() {
+                            enums.push((mv.to_string(), names));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if callees.is_empty() || enums.is_empty() {
+        return false;
+    }
+
+    let before = out.len();
+    for (mv, prefix, suffix) in &callees {
+        let Some((_, names)) = enums.iter().find(|(m, _)| m == mv) else {
+            continue;
+        };
+        for name in names {
+            if !is_identifier(name) {
+                continue;
+            }
+            let canonical = format!("{prefix}{name}{suffix}");
+            let dup = out
+                .iter()
+                .any(|m| matches!(m, GenericMatcher::Call { canonical: c, .. } if c == &canonical));
+            if !dup {
+                out.push(GenericMatcher::Call {
+                    description: describe(&canonical, role),
+                    canonical,
+                });
+            }
+        }
+    }
+
+    out.len() > before
+}
+
 fn try_compile_regex_constrained_callee_block(
     v: &YamlValue,
     role: MatcherRole,
@@ -8119,6 +8319,28 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
         };
     }
 
+    // ── Ruby constant scope-resolution SOURCE: `Digest::MD5` ────────────────
+    //
+    // The `md5-used-as-password` rule names its source as the bare constant path
+    // `Digest::MD5` (a `Const::Const` reference whose `.hexdigest`/`.new` output
+    // is the weak password hash). `is_dotted_identifier` rejects the `::`, so it
+    // would otherwise skip and the rule loses all its sources. We compile it to a
+    // `Call { canonical }` source; the Ruby engine matches a `scope_resolution`
+    // node by EXACT text, so `Digest::SHA256` stays silent (the md5
+    // discriminator) — the taint then propagates through the constant's method
+    // reads. Source role only — a constant reference is a taint origin, not a
+    // data-flow destination; gated to Ruby (constant `::` paths are Ruby syntax).
+    if lang == Language::Ruby {
+        if let MatcherRole::Source = role {
+            if is_ruby_constant_path(pat) {
+                return Some(GenericMatcher::Call {
+                    canonical: pat.to_string(),
+                    description: describe(pat, role),
+                });
+            }
+        }
+    }
+
     // ── Paren-less "command" call: `echo $...VARS`, `send_file ...` ──────
     //
     // Ruby and PHP allow calling a function/command without parentheses:
@@ -9103,6 +9325,29 @@ fn is_identifier(s: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// True when `s` is a pure Ruby constant scope-resolution path: two or more
+/// `Const` segments joined by `::`, each starting with an uppercase letter and
+/// containing only identifier characters (`Digest::MD5`, `Net::HTTP`,
+/// `A::B::C`). Rejects anything carrying a method call, subscript, dot, space,
+/// or a lowercase-headed segment — those are not bare constant references.
+fn is_ruby_constant_path(s: &str) -> bool {
+    let p = s.trim();
+    if !p.contains("::") {
+        return false;
+    }
+    if p.contains('(') || p.contains(')') || p.contains('[') || p.contains(' ') || p.contains('.') {
+        return false;
+    }
+    let segments: Vec<&str> = p.split("::").collect();
+    if segments.len() < 2 {
+        return false;
+    }
+    segments.iter().all(|seg| {
+        seg.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
 /// True when `s` is a PHP variable: `$` followed by a valid identifier.
 ///
 /// Examples: `$_GET`, `$_POST`, `$request`, `$cmd`.
@@ -9442,6 +9687,254 @@ end
             "description should mention source"
         );
     }
+
+    // ── Ruby registry-rule taint skips: faithfulness gate ────────────────────
+    //
+    // These four tests load the ACTUAL `md5-used-as-password` and
+    // `avoid-tainted-http-request` registry rules (via the real
+    // `parse_taint_rule` → `compiled()` → `check()` path the CLI uses) and run
+    // them against the registry `.rb` fixtures. Each rule is gated on:
+    //   1. COMPILES to the intended matcher shapes,
+    //   2. FIRES on every `ruleid` positive, and
+    //   3. stays SILENT on every `ok` negative / near-miss (no over-match).
+
+    /// `md5-used-as-password` source `Digest::MD5` compiles to a `Call`
+    /// scope-path source, and its `$FUNCTION(...)` + `(?i).*password.*` sink to a
+    /// `CallRegex` — the intended shapes.
+    #[test]
+    fn ruby_md5_used_as_password_compiles_to_intended_shapes() {
+        let rule = compiled(
+            r#"
+id: md5-used-as-password
+mode: taint
+languages: [ruby]
+severity: WARNING
+message: m
+pattern-sources:
+- pattern: Digest::MD5
+pattern-sinks:
+- patterns:
+  - pattern: $FUNCTION(...);
+  - metavariable-regex:
+      metavariable: $FUNCTION
+      regex: (?i)(.*password.*)
+"#,
+        );
+        assert_eq!(rule.lang, Language::Ruby);
+        assert_eq!(rule.spec.sources.len(), 1, "one Digest::MD5 source");
+        match &rule.spec.sources[0] {
+            GenericMatcher::Call { canonical, .. } => assert_eq!(canonical, "Digest::MD5"),
+            other => panic!("expected Call source, got {other:?}"),
+        }
+        assert_eq!(rule.spec.sinks.len(), 1, "one password CallRegex sink");
+        assert!(
+            matches!(rule.spec.sinks[0], GenericMatcher::CallRegex { .. }),
+            "expected CallRegex sink, got {:?}",
+            rule.spec.sinks[0]
+        );
+    }
+
+    /// `md5-used-as-password` fires on the two MD5 positives and stays silent on
+    /// the two SHA256 negatives (the discriminator keeps other digests silent).
+    #[test]
+    fn ruby_md5_used_as_password_fires_on_md5_only() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(
+            r#"
+id: md5-used-as-password
+mode: taint
+languages: [ruby]
+severity: WARNING
+message: m
+pattern-sources:
+- pattern: Digest::MD5
+pattern-sinks:
+- patterns:
+  - pattern: $FUNCTION(...);
+  - metavariable-regex:
+      metavariable: $FUNCTION
+      regex: (?i)(.*password.*)
+"#,
+        );
+        let src = r#"
+require 'digest'
+
+def ex1(user, pwtext)
+  user.set_password Digest::MD5.hexdigest pwtext
+end
+
+def ex2(user, pwtext)
+  md5 = Digest::MD5.new
+  md5.update pwtext
+  dig = md5.hexdigest
+  user.set_password dig
+end
+
+def ok1(user, pwtext)
+  user.set_password Digest::SHA256.hexdigest pwtext
+end
+
+def ok2(user, pwtext)
+  sha = Digest::SHA256.new
+  sha.update pwtext
+  dig = sha.hexdigest
+  user.set_password dig
+end
+"#;
+        let tree = parse_file(src, Language::Ruby).expect("parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            2,
+            "MD5→set_password must fire twice (ex1, ex2), SHA256 silent; got {:?}",
+            findings.iter().map(|f| f.line).collect::<Vec<_>>()
+        );
+    }
+
+    /// `avoid-tainted-http-request` sinks enumerate to CONCRETE `Call` matchers
+    /// (receiver + method fixed), one per listed method / constant.
+    #[test]
+    fn ruby_tainted_http_request_enumerates_concrete_call_sinks() {
+        let rule = compiled(RUBY_TAINTED_HTTP_RULE);
+        assert_eq!(rule.lang, Language::Ruby);
+        assert!(
+            rule.spec
+                .sinks
+                .iter()
+                .all(|m| matches!(m, GenericMatcher::Call { .. })),
+            "every enumerated sink must be a concrete Call, got {:?}",
+            rule.spec.sinks
+        );
+        let canon: Vec<&str> = rule
+            .spec
+            .sinks
+            .iter()
+            .filter_map(|m| match m {
+                GenericMatcher::Call { canonical, .. } => Some(canonical.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            canon.contains(&"Net::HTTP.get"),
+            "has Net::HTTP.get: {canon:?}"
+        );
+        assert!(
+            canon.contains(&"Net::HTTP::Get.new"),
+            "has Net::HTTP::Get.new: {canon:?}"
+        );
+        assert!(
+            canon.contains(&"Net::HTTP.start") && canon.contains(&"Net::HTTP.post_form"),
+            "has method-list entries: {canon:?}"
+        );
+        // No receiver-agnostic broadening leaked in.
+        assert_eq!(
+            canon.len(),
+            34,
+            "15 constructor + 19 method canonicals: {canon:?}"
+        );
+    }
+
+    /// `avoid-tainted-http-request` fires on every tainted `Net::HTTP` call in
+    /// the fixture and stays silent on the two literal-URL negatives.
+    #[test]
+    fn ruby_tainted_http_request_fires_on_positives_only() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(RUBY_TAINTED_HTTP_RULE);
+        let src = r#"
+require 'net/http'
+
+def foo
+  url = params[:url]
+  Net::HTTP.get(url, "/index.html")
+  Net::HTTP.get_response(params[:url])
+  uri = URI(params[:url])
+  Net::HTTP.post(uri)
+  Net::HTTP.post_form(URI(params[:url]))
+  uri = URI(params[:server])
+  req = Net::HTTP::Get.new uri
+  Net::HTTP.start(uri.host, uri.port) do |http|
+    req = Net::HTTP::Get.new uri
+    resp = http.request request
+  end
+  Net::HTTP::Get.new(params[:url])
+  Net::HTTP::Post.new(URI(params[:url]))
+
+  Net::HTTP.get("example.com", "/index.html")
+  uri = URI("example.com/index.html")
+  Net::HTTP::Get.new(uri)
+end
+"#;
+        let tree = parse_file(src, Language::Ruby).expect("parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            9,
+            "9 tainted Net::HTTP calls fire, 2 literal-URL calls stay silent; got {:?}",
+            findings.iter().map(|f| f.line).collect::<Vec<_>>()
+        );
+    }
+
+    /// The full registry `avoid-tainted-http-request` rule text (both sink arms
+    /// with their enumerated `metavariable-pattern` method / constant lists).
+    const RUBY_TAINTED_HTTP_RULE: &str = r#"
+id: avoid-tainted-http-request
+mode: taint
+languages: [ruby]
+severity: WARNING
+message: m
+pattern-sources:
+- pattern: params
+- pattern: cookies
+- pattern: request.env
+pattern-sinks:
+- pattern-either:
+  - patterns:
+    - pattern: Net::HTTP::$METHOD.new(...)
+    - metavariable-pattern:
+        metavariable: $METHOD
+        patterns:
+        - pattern-either:
+          - pattern: Copy
+          - pattern: Delete
+          - pattern: Get
+          - pattern: Head
+          - pattern: Lock
+          - pattern: Mkcol
+          - pattern: Move
+          - pattern: Options
+          - pattern: Patch
+          - pattern: Post
+          - pattern: Propfind
+          - pattern: Proppatch
+          - pattern: Put
+          - pattern: Trace
+          - pattern: Unlock
+  - patterns:
+    - pattern: Net::HTTP.$X(...)
+    - metavariable-pattern:
+        metavariable: $X
+        patterns:
+        - pattern-either:
+          - pattern: get
+          - pattern: get2
+          - pattern: head
+          - pattern: head2
+          - pattern: options
+          - pattern: patch
+          - pattern: post
+          - pattern: post2
+          - pattern: post_form
+          - pattern: put
+          - pattern: request
+          - pattern: request_get
+          - pattern: request_head
+          - pattern: request_post
+          - pattern: send_request
+          - pattern: trace
+          - pattern: get_print
+          - pattern: get_response
+          - pattern: start
+"#;
 
     // ── `pattern-not` enforcement in taint `patterns:` AND-blocks ────────────
     //
