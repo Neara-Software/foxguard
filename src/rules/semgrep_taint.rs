@@ -4178,6 +4178,19 @@ fn compile_entry(
                     return;
                 }
             }
+            // ── Go `[]byte("$F")` byte-slice-literal SOURCE shape ───────────
+            //
+            // The `hardcoded-jwt-key` rule names its source as
+            // `pattern-inside: []byte("$F")` — a hardcoded byte-slice key. None
+            // of the generic shapes recognise a `pattern-inside`-only literal
+            // source, so it would compile to nothing and skip. We compile it to
+            // a `LiteralString` (seed every Go string literal); the specific
+            // `.SignedString(...)` sink keeps it precise.
+            if let MatcherRole::Source = role {
+                if try_compile_go_bytes_literal_source_block(v, lang, out) {
+                    return;
+                }
+            }
             // ── String-literal-matching-regex SOURCE shape ──────────────────
             //
             // The `requests` cleartext-transport family
@@ -5730,6 +5743,30 @@ fn compile_focus_call_callee(
             });
             return;
         }
+        // Deep field-access ellipsis chain `$OBJ. ... .$METHOD(...)` (Semgrep's
+        // `. ... .` deep wildcard): the FINAL dotted segment is a metavariable
+        // method, pinned by a `metavariable-regex`. The Go
+        // `gorm-dangerous-method-usage` sink `$GORM. ... .$METHOD($VALUE)` uses
+        // this form. The intervening chain is any receiver, so we enumerate the
+        // anchored alternation of the method pin into one `MethodName` per
+        // alternative (`Order`, `Exec`, `Raw`, …) — a method-name-bounded sink
+        // that fires only for those method names with a tainted argument. An
+        // unpinned final metavariable (no anchored-alternation regex) yields
+        // nothing, staying FP-safe.
+        if callee.contains("...") {
+            let last = callee.rsplit('.').next().unwrap_or("").trim();
+            if is_metavariable(last) {
+                if let Some(names) = regex_alternatives_for(last, metavar_regexes) {
+                    for name in names {
+                        out.push(GenericMatcher::MethodName {
+                            method: name.clone(),
+                            description: describe(&name, role),
+                        });
+                    }
+                }
+                return;
+            }
+        }
     }
 
     // Case 2: `$FUNC(...)` — pure-metavariable callee. Pin via its regex → one
@@ -6853,6 +6890,70 @@ fn is_ellipsis_string_literal(pat: &str) -> bool {
     t == "\"...\"" || t == "'...'"
 }
 
+/// True when `pat` is a Go byte-slice conversion of an ANY-string-literal
+/// metavariable — `[]byte("$F")` / `[]byte("...")` (and the back-quoted
+/// variants). The Go `hardcoded-jwt-key` rule expresses its taint SOURCE this
+/// way (`pattern-inside: []byte("$F")` — "a hardcoded `[]byte("...")` literal
+/// is the untrusted key material"). The wrapped literal is any string (the
+/// `$F` / `...` placeholder is not a concrete value), so this compiles to a
+/// [`GenericMatcher::LiteralString`] (seed every string literal); the specific
+/// `.SignedString(...)` sink bounds it. A concrete inner value (`[]byte("abc")`)
+/// is NOT this shape (that would be a literal-value match) and returns `false`.
+fn is_go_bytes_string_literal_source(pat: &str) -> bool {
+    let t = pat.trim();
+    let Some(inner) = t.strip_prefix("[]byte(").and_then(|s| s.strip_suffix(')')) else {
+        return false;
+    };
+    let inner = inner.trim();
+    let content = if let Some(c) = inner.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        c
+    } else if let Some(c) = inner.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+        c
+    } else {
+        return false;
+    };
+    let content = content.trim();
+    content == "..." || is_metavariable(content)
+}
+
+/// Try to recognise the Go `[]byte("$F")` byte-slice-literal SOURCE shape inside
+/// a `patterns:` source block, where it appears as a `pattern-inside:` (the
+/// `hardcoded-jwt-key` form) or a bare `pattern:`. On recognition pushes one
+/// [`GenericMatcher::LiteralString`] (any string literal) and returns `true`.
+/// Gated to Go + Source role. Returns `false` (pushing nothing) for any other
+/// shape, leaving the caller to fall through to graceful degradation.
+fn try_compile_go_bytes_literal_source_block(
+    v: &YamlValue,
+    lang: Language,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    if lang != Language::Go {
+        return false;
+    }
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            if matches!(k.as_str(), Some("pattern") | Some("pattern-inside")) {
+                if let Some(text) = val.as_str() {
+                    if is_go_bytes_string_literal_source(text) {
+                        out.push(GenericMatcher::LiteralString {
+                            description: "hardcoded `[]byte(\"...\")` string literal".to_string(),
+                            regex: None,
+                        });
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<GenericMatcher> {
     let mut pat = pattern.trim();
     if pat.is_empty() {
@@ -7080,6 +7181,16 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
     // Gated to Go: this colon syntax is Go-specific (Java uses the
     // parenthesised `(Type $MV)` form handled above).
     if lang == Language::Go {
+        // Go `[]byte("$F")` byte-slice-literal source (also reachable as a bare
+        // `pattern:`): a hardcoded byte-slice key is any string literal.
+        if let MatcherRole::Source = role {
+            if is_go_bytes_string_literal_source(pat) {
+                return Some(GenericMatcher::LiteralString {
+                    description: "hardcoded `[]byte(\"...\")` string literal".to_string(),
+                    regex: None,
+                });
+            }
+        }
         if let Some((type_text, metavar, remainder)) = parse_go_typed_metavar(pat) {
             let type_name = normalize_go_type(type_text);
             match role {
@@ -16516,5 +16627,262 @@ pattern-sinks:
             "an assigned-value focus must NOT compile a TaintedSubscriptKey sink"
         );
         assert!(out2.is_empty());
+    }
+
+    // ── Go `hardcoded-jwt-key` (`[]byte("$F")` literal source → SignedString) ─
+    //
+    // The registry `hardcoded-jwt-key` rule's source is a hardcoded byte-slice
+    // literal (`pattern-inside: []byte("$F")`) flowing into a JWT signer
+    // (`$TOKEN.SignedString($F)`). These exercise the whole
+    // `parse_taint_rule -> compiled() -> check()` path.
+
+    const GO_HARDCODED_JWT_RULE: &str = r#"
+id: hardcoded-jwt-key
+mode: taint
+languages: [go]
+severity: WARNING
+message: A hard-coded credential was detected.
+pattern-sources:
+- patterns:
+  - pattern-inside: |
+      []byte("$F")
+pattern-sinks:
+- patterns:
+  - pattern-either:
+    - pattern-inside: |
+        $TOKEN.SignedString($F)
+  - focus-metavariable: $F
+"#;
+
+    #[test]
+    fn go_hardcoded_jwt_key_compiles_literal_source_and_signedstring_sink() {
+        let rule = compiled(GO_HARDCODED_JWT_RULE);
+        assert!(
+            rule.spec
+                .sources
+                .iter()
+                .any(|s| matches!(s, GenericMatcher::LiteralString { regex: None, .. })),
+            "source should compile to a LiteralString (any string literal), got {:?}",
+            rule.spec.sources
+        );
+        assert!(
+            rule.spec.sinks.iter().any(|s| matches!(
+                s,
+                GenericMatcher::MethodName { method, .. } if method == "SignedString"
+            )),
+            "sink should compile to MethodName{{SignedString}}, got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    #[test]
+    fn go_hardcoded_jwt_key_fires_on_var_and_inline_literals() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_HARDCODED_JWT_RULE);
+        // Both fixture positives: a `[]byte("...")` bound to a var and flowed to
+        // SignedString, and an inline `[]byte("...")` argument.
+        let src = r#"
+package main
+func Signin(token T) {
+    var jwtKey = []byte("my_secret_key")
+    tokenString, _ := token.SignedString(jwtKey)
+    _ = tokenString
+    tokenString2, _ := token.SignedString([]byte("my_secret_key"))
+    _ = tokenString2
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            2,
+            "both a var-bound and an inline hardcoded []byte key must fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn go_hardcoded_jwt_key_silent_on_env_key_and_clean_code() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_HARDCODED_JWT_RULE);
+        // Near-miss discriminator: the key comes from the environment (a
+        // non-literal), so SignedString must NOT fire; and unrelated clean code
+        // with a string literal not reaching the signer stays silent.
+        let src = r#"
+package main
+import "os"
+func Signin(token T) {
+    jwtKey := []byte(os.Getenv("JWT_KEY"))
+    tokenString, _ := token.SignedString(jwtKey)
+    _ = tokenString
+    msg := "hello world"
+    _ = msg
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "an env-derived signing key and an unrelated literal must not fire, got {findings:?}"
+        );
+    }
+
+    // ── Go `gorm-dangerous-method-usage` (request → dangerous GORM method) ────
+    //
+    // Source: a value read off an `*http.Request`-typed parameter. Sink: a call
+    // to a dangerous GORM query method (`$GORM. ... .$METHOD($VALUE)` with
+    // `$METHOD` pinned to `Order|Exec|Raw|Group|Having|Distinct|Select|Pluck`)
+    // carrying a tainted argument. The deep-wildcard chain + method-name regex
+    // is the shape that was previously skipped.
+
+    const GO_GORM_RULE: &str = r#"
+id: gorm-dangerous-method-usage
+mode: taint
+languages: [go]
+severity: WARNING
+message: Detected usage of dangerous method $METHOD.
+pattern-sources:
+- patterns:
+  - pattern-either:
+    - pattern: |
+        ($REQUEST : http.Request).$ANYTHING
+    - pattern: |
+        ($REQUEST : *http.Request).$ANYTHING
+  - metavariable-regex:
+      metavariable: $ANYTHING
+      regex: ^(BasicAuth|Body|Cookie|Cookies|Form|FormValue|GetBody|Host|MultipartReader|ParseForm|ParseMultipartForm|PostForm|PostFormValue|Referer|RequestURI|Trailer|TransferEncoding|UserAgent|URL)$
+pattern-sinks:
+- patterns:
+  - pattern-inside: |
+      import ("gorm.io/gorm")
+      ...
+  - patterns:
+    - pattern-inside: |
+        func $VAL(..., $GORM *gorm.DB,... ) {
+          ...
+        }
+    - pattern-either:
+      - pattern: |
+          $GORM. ... .$METHOD($VALUE)
+      - pattern: |
+          $DB := $GORM. ... .$ANYTHING(...)
+          ...
+          $DB. ... .$METHOD($VALUE)
+  - focus-metavariable: $VALUE
+  - metavariable-regex:
+      metavariable: $METHOD
+      regex: ^(Order|Exec|Raw|Group|Having|Distinct|Select|Pluck)$
+pattern-sanitizers:
+- pattern-either:
+  - pattern: strconv.Atoi(...)
+  - pattern: |
+      ($X: bool)
+"#;
+
+    #[test]
+    fn go_gorm_compiles_enumerated_method_name_sinks_and_typed_source() {
+        let rule = compiled(GO_GORM_RULE);
+        assert!(
+            rule.spec.sources.iter().any(|s| matches!(
+                s,
+                GenericMatcher::TypedName { type_name, .. } if type_name == "http.Request"
+            )),
+            "source should compile to TypedName{{http.Request}}, got {:?}",
+            rule.spec.sources
+        );
+        for want in [
+            "Order", "Exec", "Raw", "Group", "Having", "Distinct", "Select", "Pluck",
+        ] {
+            assert!(
+                rule.spec.sinks.iter().any(|s| matches!(
+                    s,
+                    GenericMatcher::MethodName { method, .. } if method == want
+                )),
+                "sink should include MethodName{{{want}}}, got {:?}",
+                rule.spec.sinks
+            );
+        }
+        // Precision: the broad `Find`/`Table` methods (present in the fixture but
+        // NOT in the regex set) must NOT be sinks.
+        assert!(
+            !rule.spec.sinks.iter().any(|s| matches!(
+                s,
+                GenericMatcher::MethodName { method, .. } if method == "Find" || method == "Table"
+            )),
+            "non-listed methods must not become sinks, got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    #[test]
+    fn go_gorm_fires_on_request_tainted_order() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_GORM_RULE);
+        // testInjection: r.Cookie(...) → .Order(param).  testInjection2:
+        // r.URL.Query().Get(...) → .Order(param + " " + "ASC").
+        let src = r#"
+package main
+import (
+    "net/http"
+    "gorm.io/gorm"
+)
+func testInjection(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+    param := r.Cookie("foo")
+    table := db.Table("users")
+    var u User
+    table.Order(param).Find(&u)
+}
+func testInjection2(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+    param := r.URL.Query().Get("orderBy")
+    table := db.Table("users")
+    var u User
+    table.Order(param + " " + "ASC").Find(&u)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            2,
+            "both request-tainted .Order(...) calls must fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn go_gorm_silent_on_constant_local_and_bool_comparison() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(GO_GORM_RULE);
+        // testNoInjection: constant arg. testNoInjection2: a local string var.
+        // testNoInjection3: a boolean comparison `(param != "param")` — the taint
+        // must stop at the `!=` predicate (the `($X: bool)` sanitizer's intent).
+        let src = r#"
+package main
+import (
+    "net/http"
+    "gorm.io/gorm"
+)
+func testNoInjection(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+    table := db.Table("users")
+    var u User
+    table.Order("email").Find(&u)
+}
+func testNoInjection2(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+    table := db.Table("users")
+    var orderBy = "email"
+    var u User
+    table.Order(orderBy).Find(&u)
+}
+func testNoInjection3(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+    param := r.URL.Query().Get("orderBy")
+    table := db.Table("users")
+    var u User
+    table.Order((param != "param") + " " + "ASC").Find(&u)
+}
+"#;
+        let tree = parse_file(src, Language::Go).expect("go fixture parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "constant / local-var / bool-comparison args must not fire, got {findings:?}"
+        );
     }
 }

@@ -1183,13 +1183,30 @@ fn expression_taint(
         }
     }
 
-    // Binary `+` (string concat) / other binary ops: if any operand is
-    // tainted, the result is. Mirrors the JS engine.
+    // Binary `+` (string concat) / arithmetic ops: if any operand is tainted,
+    // the result is. A COMPARISON / logical operator (`==`, `!=`, `<`, `<=`,
+    // `>`, `>=`, `&&`, `||`) yields a boolean predicate, NOT the operand's
+    // data — taint does not flow through it (a tainted string compared with
+    // `!=` produces a clean `bool`). This mirrors the `($X : bool)` sanitizer
+    // that Semgrep taint rules such as `gorm-dangerous-method-usage` use to
+    // stop taint at a boolean comparison, and prevents the false positive of a
+    // `(tainted != "x")` predicate flowing into a downstream sink.
     if expr.kind() == "binary_expression" {
-        let mut cursor = expr.walk();
-        for child in expr.named_children(&mut cursor) {
-            if let Some(result) = expression_taint(child, ctx, state) {
-                return Some(result);
+        let is_comparison = expr
+            .child_by_field_name("operator")
+            .map(|op| {
+                matches!(
+                    node_text(op, ctx.source),
+                    "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||"
+                )
+            })
+            .unwrap_or(false);
+        if !is_comparison {
+            let mut cursor = expr.walk();
+            for child in expr.named_children(&mut cursor) {
+                if let Some(result) = expression_taint(child, ctx, state) {
+                    return Some(result);
+                }
             }
         }
     }
@@ -1198,6 +1215,21 @@ fn expression_taint(
     if expr.kind() == "type_assertion_expression" {
         if let Some(operand) = expr.child_by_field_name("operand") {
             if let Some(result) = expression_taint(operand, ctx, state) {
+                return Some(result);
+            }
+        }
+    }
+
+    // Type conversion `[]byte("secret")`, `string(tainted)`: propagate taint
+    // from the converted operand. Go parses a conversion whose target is a type
+    // literal (`[]byte`, `string`) as a `type_conversion_expression` — distinct
+    // from the `call_expression` conversion handled below — so it needs its own
+    // arm. Recurse into the converted expression (the non-type named child);
+    // the `slice_type` / `type_identifier` child carries no taint.
+    if expr.kind() == "type_conversion_expression" {
+        let mut cursor = expr.walk();
+        for child in expr.named_children(&mut cursor) {
+            if let Some(result) = expression_taint(child, ctx, state) {
                 return Some(result);
             }
         }
@@ -1672,6 +1704,48 @@ fn match_source(
             NodeMatcher::ParamName { .. } => {
                 // Seeded at function entry, not matched on expressions.
             }
+            // String-literal source — the ONLY Go registry rule with this shape
+            // is `hardcoded-jwt-key`, whose source is `[]byte("$F")` (a hardcoded
+            // byte-slice signing key). To stay faithful, the Go engine seeds ONLY
+            // a `[]byte("literal")` CONVERSION whose operand is a string literal —
+            // NOT a bare literal that merely appears somewhere. This is the whole
+            // point: `[]byte(os.Getenv("KEY"))` must NOT fire (its inner `"KEY"`
+            // is an env-var *name*, not the key), so seeding every string literal
+            // would over-match on exactly the canonical near-miss. An optional
+            // content `regex` further constrains the wrapped literal's text.
+            NodeMatcher::LiteralString { description, regex } => {
+                if node.kind() != "type_conversion_expression" {
+                    continue;
+                }
+                let Some(ty) = node.child_by_field_name("type") else {
+                    continue;
+                };
+                if node_text(ty, source).replace(|c: char| c.is_whitespace(), "") != "[]byte" {
+                    continue;
+                }
+                let Some(operand) = node.child_by_field_name("operand") else {
+                    continue;
+                };
+                if !matches!(
+                    operand.kind(),
+                    "interpreted_string_literal" | "raw_string_literal"
+                ) {
+                    continue;
+                }
+                match regex {
+                    None => return Some(description.clone()),
+                    Some(re) => {
+                        let text = node_text(operand, source);
+                        let inner = text.trim_matches(|c| c == '"' || c == '`');
+                        if let Ok(compiled) = crate::rules::semgrep_compat::compile_regex(re) {
+                            if compiled.is_match(inner) {
+                                return Some(description.clone());
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
             NodeMatcher::MethodName { .. }
             | NodeMatcher::CallRegex { .. }
             | NodeMatcher::MethodNameRegex { .. }
@@ -1687,9 +1761,6 @@ fn match_source(
             | NodeMatcher::TypedName { .. }
             // Java-only typed-assignment sink; no-op in source position here.
             | NodeMatcher::TypedAssignTarget { .. }
-            // Ellipsis-string source `"..."`; no Go registry rule uses this
-            // source shape, so the Go engine does not seed string literals.
-            | NodeMatcher::LiteralString { .. }
             // PHP-only loose-equality comparison sink; no-op in the Go engine.
             | NodeMatcher::LooseEquality { .. }
             // PHP-only tainted class-name / subscript-key sinks; no-op in the
