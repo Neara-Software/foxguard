@@ -12,10 +12,10 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 | Rule files scanned | 2070 |
 | Files with YAML parse errors | 0 |
 | Total rules | 2144 |
-| Rules loaded OK | 2095 (97.7%) |
-| Rules skipped | 49 (2.3%) |
+| Rules loaded OK | 2096 (97.8%) |
+| Rules skipped | 48 (2.2%) |
 
-**Headline load rate: 97.7%** (2095 / 2144 rules).
+**Headline load rate: 97.8%** (2096 / 2144 rules).
 
 ## Skip-reason histogram
 
@@ -23,8 +23,8 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 48 | 98.0% | 2.2% |
-| `generic mode (languages: [generic])` | 1 | 2.0% | 0.0% |
+| `mode: taint (unsupported shape)` | 47 | 97.9% | 2.2% |
+| `generic mode (languages: [generic])` | 1 | 2.1% | 0.0% |
 
 ## Priority order — operator/feature backlog
 
@@ -32,9 +32,9 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 
 | Rank | Capability to add | Rules unlocked |
 |---:|---|---:|
-| 1 | `mode: taint (unsupported shape)` | 48 |
+| 1 | `mode: taint (unsupported shape)` | 47 |
 
-Operator/feature gaps account for **48 rules** (2.2% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **47 rules** (2.2% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
 
 ## Priority order — missing language grammars
 
@@ -63,7 +63,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 | ruby | 92 | 85 | 7 | 92.4% |
 | php | 63 | 59 | 4 | 93.7% |
 | solidity | 50 | 49 | 1 | 98.0% |
-| csharp | 48 | 44 | 4 | 91.7% |
+| csharp | 48 | 45 | 3 | 93.8% |
 | dockerfile | 39 | 39 | 0 | 100.0% |
 | ocaml | 34 | 34 | 0 | 100.0% |
 | scala | 23 | 23 | 0 | 100.0% |
@@ -84,7 +84,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 ## Top skip reasons per language
 
 - **apex**: `mode: taint (unsupported shape)` (1)
-- **csharp**: `mode: taint (unsupported shape)` (4)
+- **csharp**: `mode: taint (unsupported shape)` (3)
 - **generic**: `generic mode (languages: [generic])` (1)
 - **go**: `mode: taint (unsupported shape)` (4)
 - **java**: `mode: taint (unsupported shape)` (6)

@@ -1702,7 +1702,11 @@ fn match_source(
             // First-parameter signature source / concat-in-call sink are
             // C#-only; carried in the spec but no-op here.
             | NodeMatcher::FirstParamSource { .. }
-            | NodeMatcher::CallArgConcat { .. } => {
+            | NodeMatcher::CallArgConcat { .. }
+            // Constructor-argument / property-assignment sinks are C#-only;
+            // carried in the spec but no-op here.
+            | NodeMatcher::ConstructorArgSink { .. }
+            | NodeMatcher::PropertyAssignSink { .. } => {
                 // Sink-only matcher; MemberAssign is JS-specific; BinopFormat is
                 // matched on binary-expression nodes, not as a source.
             }
