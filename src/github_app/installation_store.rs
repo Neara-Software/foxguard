@@ -147,6 +147,14 @@ impl InstallationStore {
         self.save()
     }
 
+    /// The on-disk path this store persists to. Used by the webhook
+    /// receiver to name the configured location when a persist fails,
+    /// so an operator can see *which* path (e.g. a read-only
+    /// `/var/lib/foxguard`) could not be written.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     #[cfg(test)]
     fn get(&self, installation_id: u64) -> Option<&StoredInstallation> {
         self.registry
@@ -350,5 +358,96 @@ mod tests {
     #[test]
     fn rejects_traversal_paths() {
         assert!(InstallationStore::open(PathBuf::from("../installations.json")).is_err());
+    }
+
+    #[test]
+    fn save_creates_missing_parent_directories() {
+        // Reproduces production root-cause #1: the configured store path
+        // (e.g. `/var/lib/foxguard/installations.json`) may live under a
+        // directory that does not exist yet. `save()` must create the
+        // parent chain rather than failing with `NotFound`.
+        let base = std::env::temp_dir().join(format!(
+            "foxguard-install-store-{}-{}",
+            std::process::id(),
+            unix_now().unwrap_or_default()
+        ));
+        // Two levels of not-yet-existing parents to prove `create_dir_all`
+        // (not just a single `create_dir`) is used.
+        let path = base.join("nested").join("dir").join("installations.json");
+        assert!(!base.exists(), "precondition: base dir must not exist yet");
+
+        let mut store = match InstallationStore::open(path.clone()) {
+            Ok(store) => store,
+            Err(error) => panic!("store should open even without parent dir: {error}"),
+        };
+        if let Err(error) = store.upsert(InstallationMetadataInput {
+            installation_id: 7,
+            account_login: Some("acme".to_string()),
+            account_id: Some(1),
+            account_type: Some("Organization".to_string()),
+            repository_selection: Some("all".to_string()),
+            repositories: vec!["acme/api".to_string()],
+        }) {
+            let _ = std::fs::remove_dir_all(&base);
+            panic!("save() should create missing parent dirs and persist: {error}");
+        }
+
+        assert!(path.exists(), "installations.json should have been written");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn round_trip_record_repositories_then_reload() {
+        // Task test #2: record an installation + repositories, save, load
+        // from the same path, and assert the persisted data matches.
+        let (_dir, path) = store_path();
+        let mut store = match InstallationStore::open(path.clone()) {
+            Ok(store) => store,
+            Err(error) => panic!("store should open: {error}"),
+        };
+        if let Err(error) = store.upsert(InstallationMetadataInput {
+            installation_id: 100,
+            account_login: Some("octo-org".to_string()),
+            account_id: Some(5),
+            account_type: Some("Organization".to_string()),
+            repository_selection: Some("selected".to_string()),
+            repositories: vec!["octo-org/app".to_string()],
+        }) {
+            panic!("upsert should persist: {error}");
+        }
+        if let Err(error) = store.add_repositories(100, ["octo-org/service".to_string()]) {
+            panic!("add_repositories should persist: {error}");
+        }
+
+        let reloaded = match InstallationStore::open(path) {
+            Ok(store) => store,
+            Err(error) => panic!("store should reload: {error}"),
+        };
+        let installation = match reloaded.get(100) {
+            Some(installation) => installation,
+            None => panic!("installation should survive a save/load round-trip"),
+        };
+        assert_eq!(installation.installation_id, 100);
+        assert_eq!(installation.account_login.as_deref(), Some("octo-org"));
+        assert_eq!(installation.account_id, Some(5));
+        assert_eq!(installation.account_type.as_deref(), Some("Organization"));
+        assert_eq!(
+            installation.repository_selection.as_deref(),
+            Some("selected")
+        );
+        assert!(installation.repositories.contains("octo-org/app"));
+        assert!(installation.repositories.contains("octo-org/service"));
+    }
+
+    #[test]
+    fn path_accessor_reports_configured_store_path() {
+        // The operator-facing path is used when logging persistence
+        // failures so the operator knows which location is unwritable.
+        let (_dir, path) = store_path();
+        let store = match InstallationStore::open(path.clone()) {
+            Ok(store) => store,
+            Err(error) => panic!("store should open: {error}"),
+        };
+        assert_eq!(store.path(), path.as_path());
     }
 }

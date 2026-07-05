@@ -37,7 +37,7 @@ use foxguard::Finding;
 use serde::Deserialize;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 /// Hard cap on incoming webhook body size. GitHub's largest legitimate
@@ -64,6 +64,10 @@ struct AppState {
     /// API quota.
     installation_token_locks: Arc<tokio::sync::Mutex<HashMap<u64, Arc<tokio::sync::Mutex<()>>>>>,
     installations: Arc<Mutex<InstallationStore>>,
+    /// The on-disk path the install store persists to, captured at
+    /// startup so a persistence failure can be logged with the exact
+    /// location an operator needs to fix (e.g. a read-only volume).
+    installations_path: Arc<Path>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,13 +142,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let credentials = AppCredentials::from_env()?;
     let review = GitHubReviewClient::new(credentials.api_base_url())?;
+    let installations = InstallationStore::from_env_or_default()?;
+    let installations_path: Arc<Path> = Arc::from(installations.path());
+    info!(path = %installations_path.display(), "installation store ready");
     let state = AppState {
         webhook_secret: secret.into_bytes(),
         auth: GitHubAppAuthClient::new(credentials)?,
         review,
         installation_tokens: Arc::new(tokio::sync::Mutex::new(InstallationTokenCache::new())),
         installation_token_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-        installations: Arc::new(Mutex::new(InstallationStore::from_env_or_default()?)),
+        installations: Arc::new(Mutex::new(installations)),
+        installations_path,
     };
 
     let app = Router::new()
@@ -237,7 +245,18 @@ async fn webhook(
                     let persisted = match persist_installation_event(&state, &payload) {
                         Ok(persisted) => persisted,
                         Err(error) => {
-                            warn!(delivery, installation_id = installation.id, %error, "failed to persist installation metadata");
+                            // Surface at error level with the configured
+                            // path: a persistent failure here (e.g. a
+                            // read-only or unwritable store directory)
+                            // means install state is silently lost across
+                            // restarts, and an operator must see it.
+                            error!(
+                                delivery,
+                                installation_id = installation.id,
+                                path = %state.installations_path.display(),
+                                %error,
+                                "failed to persist installation metadata"
+                            );
                             false
                         }
                     };
