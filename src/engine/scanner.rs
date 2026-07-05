@@ -1420,6 +1420,96 @@ fn scan_files(
             }
             prepared_files.insert(path, prepared);
         }
+
+        // ── Bounded multi-hop composition (fixpoint) ──────────────────
+        // Mirror of the Go block above for Java. Java uses its OWN
+        // name-based, same-directory summary machinery (not the shared
+        // `TaintLanguageAdapter` path), so composition lives in
+        // `java_taint::compose_cross_file_summaries` — but the scanner-side
+        // fixpoint is identical: compose per-file summaries one hop per round
+        // so a chain A→f→g→sink — where the MIDDLE helper `f` forwards its
+        // param into a same-package helper `g` that sinks it — is captured.
+        // Resolution is same-directory (all Java files in a directory are a
+        // same-package proxy), matching the single-hop Java pass. Summaries
+        // grow monotonically over a finite lattice, so the loop reaches a
+        // fixpoint; MAX_MULTIHOP_ROUNDS is the hard backstop.
+        // See docs/taint-tracking.md, "Bounded multi-hop cross-file taint".
+        if !java_summaries.is_empty() {
+            const MAX_MULTIHOP_ROUNDS: usize = 5;
+            let allowed_rule_ids: std::collections::HashSet<String> = java_rule_specs
+                .iter()
+                .map(|(id, _)| id.to_string())
+                .collect();
+            // Build a directory→canonical-paths index: all Java files in a
+            // directory are treated as the same package and resolve each other.
+            let mut dir_index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+            for (path, _) in &java_files {
+                if let Some(prepared) = prepared_files.get(path) {
+                    if let Some(dir) = path.parent() {
+                        dir_index
+                            .entry(dir.to_path_buf())
+                            .or_default()
+                            .push(prepared.canonical_path.clone());
+                    }
+                }
+            }
+
+            for _round in 0..MAX_MULTIHOP_ROUNDS {
+                let snapshot = java_summaries.clone();
+                let mut changed = false;
+                for (path, _) in &java_files {
+                    let Some(prepared) = prepared_files.get(path) else {
+                        continue;
+                    };
+                    let canonical = prepared.canonical_path.clone();
+                    // Same-package siblings (excluding self).
+                    let same_package_paths: Vec<PathBuf> = path
+                        .parent()
+                        .and_then(|dir| dir_index.get(dir))
+                        .map(|siblings| {
+                            siblings
+                                .iter()
+                                .filter(|p| **p != canonical)
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if same_package_paths.is_empty() {
+                        continue;
+                    }
+                    let composed = java_taint::compose_cross_file_summaries(
+                        prepared.tree.root_node(),
+                        &prepared.source,
+                        None,
+                        &java_rule_specs,
+                        &same_package_paths,
+                        &snapshot,
+                        &allowed_rule_ids,
+                    );
+                    if composed.is_empty() {
+                        continue;
+                    }
+                    let entry = java_summaries.entry(canonical).or_default();
+                    for new_summary in composed {
+                        match entry.iter_mut().find(|s| s.name == new_summary.name) {
+                            Some(existing) => {
+                                if existing.merge_from(&new_summary) {
+                                    changed = true;
+                                }
+                            }
+                            None => {
+                                entry.push(new_summary);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
         has_java_cross_file = !java_summaries.is_empty();
         cross_file_summaries.extend(java_summaries);
     }

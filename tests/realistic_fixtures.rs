@@ -373,6 +373,45 @@ fn realistic_go_multihop_sanitizer_breaks_chain() {
     assert_fixture("go_multihop_sanitized", 0, &[]);
 }
 
+/// Bounded multi-hop chain where the MIDDLE helper itself makes the
+/// same-package (same-directory) cross-file call. Three-file Java chain:
+/// SearchHandler.search() (source) → Service.process() → QueryHelper.runQuery()
+/// (executeQuery sink), where `Service.process` forwards its argument to
+/// `QueryHelper.runQuery` in a THIRD file of the same directory. Java uses its
+/// OWN name-based, same-directory summary machinery (not the shared adapter),
+/// but the scanner-side fixpoint is the same: the chain is only found once
+/// `Service.process`'s summary is composed one hop deeper against
+/// `QueryHelper.runQuery`'s summary. The concatenation in the sink file also
+/// trips the conservative `java/no-sql-injection` regex.
+#[test]
+fn realistic_java_multihop_composed() {
+    assert_fixture("java_multihop", 2, &[("java/taint-sql-injection", 1)]);
+}
+
+/// The Java chain above must only resolve on a full-directory scan: scanning
+/// any single file in isolation finds no taint finding (the sink file still
+/// trips the single-file regex heuristic `java/no-sql-injection`, but no
+/// `*/taint-*` rule fires because no source is present in any single file).
+#[test]
+fn realistic_java_multihop_single_file_finds_no_taint() {
+    assert_fixture("java_multihop/SearchHandler.java", 0, &[]);
+    assert_fixture("java_multihop/Service.java", 0, &[]);
+    assert_fixture("java_multihop/QueryHelper.java", 1, &[]);
+}
+
+/// Negative multi-hop: identical shape to `java_multihop` but the middle helper
+/// breaks the chain. Java's built-in taint rules ship NO configured sanitizers
+/// (every `TaintSpec` has `sanitizers: vec![]`), so — unlike the Python/JS/Go
+/// negatives that route the value through a real sanitizer call — this fixture
+/// breaks the chain by replacing the tainted parameter with a constant before
+/// the cross-file call. The composition is taint-flow-sensitive, so the clean
+/// argument records no sink flow and the chain BREAKS: no taint finding on a
+/// directory scan (only the sink file's regex hit remains).
+#[test]
+fn realistic_java_multihop_break_breaks_chain() {
+    assert_fixture("java_multihop_broken", 1, &[]);
+}
+
 #[test]
 fn realistic_gin_app() {
     // Three planted vulnerabilities (command injection, SQL
