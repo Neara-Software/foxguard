@@ -45,8 +45,9 @@ use crate::rules::common::AliasTable;
 use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary};
 use crate::rules::taint_engine::{
     analyze_function_generic, attribution_hint_for_sink, cross_file_taint_finding,
-    extract_cross_file_summary_for_function, match_call_sink, node_text, taint_finding_for_node,
-    AnalysisContext, ReturnSummary, TaintLanguageAdapter, TaintState,
+    extract_cross_file_summary_for_function, extract_cross_file_summary_for_function_cf,
+    match_call_sink, node_text, taint_finding_for_node, AnalysisContext, ReturnSummary,
+    TaintLanguageAdapter, TaintState,
 };
 pub use crate::rules::taint_engine::{NodeMatcher, TaintFinding, TaintSpec};
 use std::collections::HashSet;
@@ -72,11 +73,15 @@ use tree_sitter::Node;
 /// argument at that parameter index. This intentionally over-approximates,
 /// the same way the Go/Java/Ruby cross-file passes do.
 ///
+/// Bounded multi-hop IS modeled: a helper `f` that forwards its parameter into
+/// another same-directory helper `g` which sinks it (`A → f → g → sink`) is
+/// captured by [`compose_cross_file_summaries`], the per-file step of the
+/// scanner's bounded multi-hop fixpoint (see `docs/taint-tracking.md`).
+///
 /// **Not modeled:** PHP namespaces (`\App\Helpers\run_cmd`), Composer
 /// autoloading / `require`/`include` across directories, instance dispatch by
-/// declared class type, method overriding, and multi-hop chains (a helper that
-/// itself calls another cross-file helper). These need a PHP symbol/namespace
-/// table the engine does not build.
+/// declared class type, method overriding, and cross-file chains deeper than the
+/// hop cap. These need a PHP symbol/namespace table the engine does not build.
 pub struct CrossFileInfo<'a> {
     pub same_package_paths: &'a [PathBuf],
     pub summaries: &'a CrossFileSummaryMap,
@@ -182,6 +187,65 @@ fn collect_param_names(func_node: Node<'_>, source: &str) -> Vec<String> {
         }
     }
     names
+}
+
+/// Re-derive a file's cross-file summaries with same-directory call resolution
+/// enabled, composing the current summary map one hop deeper.
+///
+/// This is the PHP counterpart of
+/// [`crate::rules::go_taint::compose_cross_file_summaries`] and the per-file step
+/// of the scanner's **bounded multi-hop** fixpoint. PHP's intra-file engine is
+/// adapter-based and already routes cross-file call resolution through
+/// [`PhpTaintAdapter::dispatch_walk_node`] whenever the analysis context carries
+/// a [`CrossFileInfo`], so composition reuses the shared
+/// [`extract_cross_file_summary_for_function_cf`] with that context supplied: a
+/// parameter that only reaches a sink *through* a same-directory helper (the
+/// chain `A → f → g → sink`) is captured.
+///
+/// The scanner unions the returned flows into the existing summaries via
+/// [`FunctionTaintSummary::merge_from`] and repeats until a fixpoint (no change)
+/// or the hop bound is reached. `summaries` is a read-only snapshot from the
+/// previous round, so each round adds exactly one hop; monotone growth over a
+/// finite lattice guarantees termination, and the scanner's round cap is a hard
+/// backstop against mutually-recursive helpers.
+pub fn compose_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+    same_package_paths: &[PathBuf],
+    summaries: &CrossFileSummaryMap,
+    allowed_rule_ids: &HashSet<String>,
+) -> Vec<FunctionTaintSummary> {
+    let cross_file = CrossFileInfo {
+        same_package_paths,
+        summaries,
+        allowed_rule_ids,
+    };
+
+    let mut out = Vec::new();
+    collect_function_defs(root, &mut |func_node| {
+        let Some(name_node) = func_node.child_by_field_name("name") else {
+            return;
+        };
+        let func_name = node_text(name_node, source).to_string();
+        let param_names = collect_param_names(func_node, source);
+
+        if let Some(summary) =
+            extract_cross_file_summary_for_function_cf::<PhpTaintAdapter, CrossFileInfo<'_>>(
+                func_node,
+                &func_name,
+                &param_names,
+                source,
+                aliases,
+                rule_specs,
+                Some(&cross_file),
+            )
+        {
+            out.push(summary);
+        }
+    });
+    out
 }
 
 /// Pass 2 cross-file resolution: re-run the intra-file taint walk over every
@@ -1722,6 +1786,81 @@ mod tests {
         assert!(
             findings.is_empty(),
             "clean literal argument must not fire cross-file: {findings:?}"
+        );
+    }
+
+    // ── bounded multi-hop composition ────────────────────────────────────
+
+    #[test]
+    fn compose_lifts_forwarded_param_to_cross_file_sink() {
+        // Middle helper `forward` forwards its parameter into a same-directory
+        // helper `run_cmd` that sinks it; composing against `run_cmd`'s summary
+        // must lift the cross-file sink into `forward`'s params_to_sink.
+        let sink_src = "<?php\nfunction run_cmd($arg) {\n  system($arg);\n}\n";
+        let middle_src = "<?php\nfunction forward($term) {\n  run_cmd($term);\n}\n";
+        let specs = php_taint_rule_specs();
+        let sink_path = PathBuf::from("command_helper.php");
+        let mut map = CrossFileSummaryMap::new();
+        map.insert(sink_path.clone(), summaries(sink_src));
+
+        assert!(
+            summaries(middle_src)
+                .iter()
+                .find(|s| s.name == "forward")
+                .is_none_or(|s| s.params_to_sink.is_empty()),
+            "base summary of forward must not record a sink flow"
+        );
+
+        let mid_tree = parse_file(middle_src, Language::Php).expect("parse mid");
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let composed = compose_cross_file_summaries(
+            mid_tree.root_node(),
+            middle_src,
+            None,
+            &specs,
+            std::slice::from_ref(&sink_path),
+            &map,
+            &allowed,
+        );
+        let forward = composed
+            .iter()
+            .find(|s| s.name == "forward")
+            .expect("forward should gain a composed summary");
+        assert!(
+            forward
+                .params_to_sink
+                .iter()
+                .any(|f| f.param_index == 0 && f.sink_rule_id == "php/taint-command-injection"),
+            "param 0 should reach the cross-file sink: {forward:?}"
+        );
+    }
+
+    #[test]
+    fn compose_is_taint_sensitive_across_the_hop() {
+        // The middle helper passes a clean constant to the cross-file call, so
+        // the composed summary must NOT record a sink flow.
+        let sink_src = "<?php\nfunction run_cmd($arg) {\n  system($arg);\n}\n";
+        let middle_src =
+            "<?php\nfunction forward($term) {\n  $safe = \"constant\";\n  run_cmd($safe);\n}\n";
+        let specs = php_taint_rule_specs();
+        let sink_path = PathBuf::from("command_helper.php");
+        let mut map = CrossFileSummaryMap::new();
+        map.insert(sink_path.clone(), summaries(sink_src));
+
+        let mid_tree = parse_file(middle_src, Language::Php).expect("parse mid");
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let composed = compose_cross_file_summaries(
+            mid_tree.root_node(),
+            middle_src,
+            None,
+            &specs,
+            std::slice::from_ref(&sink_path),
+            &map,
+            &allowed,
+        );
+        assert!(
+            composed.iter().all(|s| s.params_to_sink.is_empty()),
+            "a clean (constant) argument must not compose a sink flow: {composed:?}"
         );
     }
 }

@@ -35,11 +35,11 @@
 //! (`system(x)` and `system x`) parse identically as `call` + `argument_list`.
 
 use crate::rules::common::AliasTable;
-use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary};
+use crate::rules::cross_file::{CrossFileSummaryMap, FunctionTaintSummary, ParamSinkFlow};
 use crate::rules::taint_engine::{
     analyze_function_generic, attribution_hint_for_sink, cross_file_taint_finding,
     extract_cross_file_summary_for_function, match_call_sink, node_text, taint_finding_for_node,
-    AnalysisContext, TaintLanguageAdapter, TaintState,
+    AnalysisContext, ReturnSummary, TaintLanguageAdapter, TaintState,
 };
 pub use crate::rules::taint_engine::{NodeMatcher, TaintFinding, TaintSpec};
 use std::collections::HashSet;
@@ -938,13 +938,16 @@ fn leftmost_receiver_text<'a>(mut node: Node<'_>, source: &'a str) -> Option<&'a
 //   over-approximates: `helper.run(x)`, `Helper.run(x)`, and a bare
 //   `run(x)` all resolve to *any* same-package `run` summary regardless of
 //   the receiver.
+// * **Bounded multi-hop IS modeled.** A helper `f` that forwards its parameter
+//   into another same-directory helper `g` which sinks it (`A → f → g → sink`)
+//   is captured by [`compose_cross_file_summaries`], the per-file step of the
+//   scanner's bounded multi-hop fixpoint (see `docs/taint-tracking.md`).
 // * **What is NOT modeled:** instance-vs-class dispatch, modules/mixins,
 //   method aliasing, blocks/procs passed as taint carriers, keyword/splat
 //   argument reordering (only positional `identifier` params are
 //   summarized, matching the intra-file seeding), `require`-based
-//   resolution across directories, and multi-hop chains (a helper that
-//   itself calls another cross-file helper). These need a Ruby symbol table
-//   the engine does not build.
+//   resolution across directories, and cross-file chains deeper than the hop
+//   cap. These need a Ruby symbol table the engine does not build.
 
 /// Extract cross-file taint summaries for every method definition in `root`.
 ///
@@ -1175,6 +1178,194 @@ fn lookup_cross_file_summary<'a>(
         }
     }
     None
+}
+
+/// Re-derive a file's cross-file summaries with same-directory call resolution
+/// enabled, composing the current summary map one hop deeper.
+///
+/// This is the Ruby counterpart of
+/// [`crate::rules::java_taint::compose_cross_file_summaries`] and the per-file
+/// step of the scanner's **bounded multi-hop** fixpoint. The Ruby intra-file
+/// engine is adapter-based but does NOT route cross-file calls through the
+/// adapter (its cross-file resolution lives in the bespoke
+/// [`resolve_cross_file_scope`]), so composition mirrors that bespoke path:
+/// each parameter is seeded one at a time as a synthetic source, taint is
+/// propagated through assignments, and every helper call that lands in a
+/// sibling summary lifts that sibling's `params_to_sink` into THIS parameter's
+/// flows — e.g. `def forward(x); run_query(x); end` where the sibling
+/// `run_query` sinks its argument gains `forward`'s `params_to_sink` entry (the
+/// `A → f → g → sink` hop).
+///
+/// The scanner unions the returned flows into the existing summaries via
+/// [`FunctionTaintSummary::merge_from`] and repeats until a fixpoint (no change)
+/// or the hop bound is reached. `summaries` is a read-only snapshot from the
+/// previous round, so each round adds exactly one hop; monotone growth over a
+/// finite lattice guarantees termination, and the scanner's round cap is a hard
+/// backstop against mutually-recursive helpers.
+pub fn compose_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    _aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+    same_package_paths: &[PathBuf],
+    summaries: &CrossFileSummaryMap,
+    allowed_rule_ids: &HashSet<String>,
+) -> Vec<FunctionTaintSummary> {
+    let cross_file = CrossFileInfo {
+        same_package_paths,
+        summaries,
+        allowed_rule_ids,
+    };
+
+    // Union sanitizers from every rule so a value cleaned before it reaches the
+    // helper (e.g. `Shellwords.escape`) is not treated as tainted across the hop.
+    let mut sanitizers = Vec::new();
+    for (_, rule_spec) in rule_specs {
+        sanitizers.extend(rule_spec.sanitizers.iter().cloned());
+    }
+
+    let mut out = Vec::new();
+    collect_method_defs(root, &mut |method_node| {
+        let Some(method_name) = method_node
+            .child_by_field_name("name")
+            .map(|n| node_text(n, source).to_string())
+        else {
+            return;
+        };
+        let param_names = method_param_names(method_node, source);
+        if let Some(summary) = compose_ruby_method(
+            method_node,
+            &method_name,
+            &param_names,
+            source,
+            &sanitizers,
+            &cross_file,
+        ) {
+            out.push(summary);
+        }
+    });
+    out
+}
+
+/// Compose one method's cross-file `params_to_sink` flows: seed each parameter
+/// as a source, propagate intra-file taint, and record a flow whenever a tainted
+/// argument reaches a sibling helper's recorded sink. Returns `None` when no
+/// parameter reaches a cross-file sink.
+fn compose_ruby_method(
+    method_node: Node<'_>,
+    method_name: &str,
+    param_names: &[String],
+    source: &str,
+    sanitizers: &[NodeMatcher],
+    cross_file: &CrossFileInfo<'_>,
+) -> Option<FunctionTaintSummary> {
+    if param_names.is_empty() {
+        return None;
+    }
+    let body = method_node.child_by_field_name("body")?;
+    let empty_summary = ReturnSummary::new();
+
+    let mut params_to_sink: Vec<ParamSinkFlow> = Vec::new();
+    for (param_idx, param_name) in param_names.iter().enumerate() {
+        let synthetic = TaintSpec {
+            sources: vec![NodeMatcher::ParamName {
+                names: vec![param_name.clone()],
+                description: format!("parameter '{param_name}'"),
+            }],
+            sinks: vec![],
+            sanitizers: sanitizers.to_vec(),
+        };
+        let ctx: RubyCtx<'_> = AnalysisContext {
+            source,
+            spec: &synthetic,
+            aliases: None,
+            summaries: &empty_summary,
+            cross_file: None,
+            sink_to_rules: None,
+            label_policy: None,
+        };
+
+        let mut state = TaintState::default();
+        if let Some(params) = method_node.child_by_field_name("parameters") {
+            seed_param_sources(params, ctx.source, ctx.spec, &mut state);
+        }
+        for _ in 0..3 {
+            propagate_assignments_only(body, &ctx, &mut state);
+        }
+
+        compose_walk_cross_file_calls(
+            body,
+            &ctx,
+            cross_file,
+            &state,
+            param_idx,
+            &mut params_to_sink,
+        );
+    }
+
+    if params_to_sink.is_empty() {
+        return None;
+    }
+    Some(FunctionTaintSummary {
+        name: method_name.to_string(),
+        params_to_return: Vec::new(),
+        params_to_sink,
+    })
+}
+
+/// Walk the scope body for `call` nodes and, for each that resolves to a sibling
+/// summary with a tainted argument, record a composed [`ParamSinkFlow`] for
+/// `param_idx`. Nested method scopes are skipped (analyzed independently).
+fn compose_walk_cross_file_calls(
+    node: Node<'_>,
+    ctx: &RubyCtx<'_>,
+    cross_file: &CrossFileInfo<'_>,
+    state: &TaintState,
+    param_idx: usize,
+    out: &mut Vec<ParamSinkFlow>,
+) {
+    if RubyTaintAdapter::is_nested_scope(node.kind()) {
+        return;
+    }
+    if node.kind() == "call" {
+        if let Some(method_name) = node
+            .child_by_field_name("method")
+            .map(|n| node_text(n, ctx.source))
+        {
+            if let Some(summary) = lookup_cross_file_summary(cross_file, method_name) {
+                if let Some(args) = node.child_by_field_name("arguments") {
+                    let mut cursor = args.walk();
+                    let arg_nodes: Vec<Node<'_>> = args.named_children(&mut cursor).collect();
+                    for flow in &summary.params_to_sink {
+                        if !cross_file.allowed_rule_ids.contains(&flow.sink_rule_id) {
+                            continue;
+                        }
+                        if flow.param_index >= arg_nodes.len() {
+                            continue;
+                        }
+                        let arg = arg_nodes[flow.param_index];
+                        if expression_taint(arg, ctx, state).is_none() {
+                            continue;
+                        }
+                        let dup = out.iter().any(|f| {
+                            f.param_index == param_idx && f.sink_rule_id == flow.sink_rule_id
+                        });
+                        if !dup {
+                            out.push(ParamSinkFlow {
+                                param_index: param_idx,
+                                sink_rule_id: flow.sink_rule_id.clone(),
+                                sink_description: flow.sink_description.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        compose_walk_cross_file_calls(child, ctx, cross_file, state, param_idx, out);
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -1610,6 +1801,99 @@ end
         assert!(
             found.iter().all(|s| s.name != "log"),
             "method with no param flow should not be summarized: {found:?}"
+        );
+    }
+
+    // ── bounded multi-hop composition ────────────────────────────────────
+
+    const COMPOSE_SINK_SRC: &str = r#"
+class CommandHelper
+  def run_cmd(arg)
+    system(arg)
+  end
+end
+"#;
+
+    #[test]
+    fn compose_lifts_forwarded_param_to_cross_file_sink() {
+        // Middle helper `forward` forwards its parameter into a same-directory
+        // helper `run_cmd` that sinks it; composing against `run_cmd`'s summary
+        // must lift the cross-file sink into `forward`'s params_to_sink.
+        let middle_src = r#"
+class Service
+  def forward(term)
+    run_cmd(term)
+  end
+end
+"#;
+        let specs = ruby_taint_rule_specs();
+        let sink_path = PathBuf::from("command_helper.rb");
+        let mut map = CrossFileSummaryMap::new();
+        map.insert(sink_path.clone(), summaries(COMPOSE_SINK_SRC));
+
+        assert!(
+            summaries(middle_src)
+                .iter()
+                .find(|s| s.name == "forward")
+                .is_none_or(|s| s.params_to_sink.is_empty()),
+            "base summary of forward must not record a sink flow"
+        );
+
+        let mid_tree = parse_file(middle_src, Language::Ruby).expect("parse mid");
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let composed = compose_cross_file_summaries(
+            mid_tree.root_node(),
+            middle_src,
+            None,
+            &specs,
+            std::slice::from_ref(&sink_path),
+            &map,
+            &allowed,
+        );
+        let forward = composed
+            .iter()
+            .find(|s| s.name == "forward")
+            .expect("forward should gain a composed summary");
+        assert!(
+            forward
+                .params_to_sink
+                .iter()
+                .any(|f| f.param_index == 0 && f.sink_rule_id == "rb/taint-command-injection"),
+            "param 0 should reach the cross-file sink: {forward:?}"
+        );
+    }
+
+    #[test]
+    fn compose_is_taint_sensitive_across_the_hop() {
+        // The middle helper passes a clean constant to the cross-file call, so
+        // the composed summary must NOT record a sink flow.
+        let middle_src = r#"
+class Service
+  def forward(term)
+    safe = "constant"
+    run_cmd(safe)
+  end
+end
+"#;
+        let specs = ruby_taint_rule_specs();
+        let sink_path = PathBuf::from("command_helper.rb");
+        let mut map = CrossFileSummaryMap::new();
+        map.insert(sink_path.clone(), summaries(COMPOSE_SINK_SRC));
+
+        let mid_tree = parse_file(middle_src, Language::Ruby).expect("parse mid");
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let composed = compose_cross_file_summaries(
+            mid_tree.root_node(),
+            middle_src,
+            None,
+            &specs,
+            std::slice::from_ref(&sink_path),
+            &map,
+            &allowed,
+        );
+        assert!(
+            composed.iter().all(|s| s.params_to_sink.is_empty()),
+            "a clean (constant) argument must not compose a sink flow: {composed:?}"
         );
     }
 }

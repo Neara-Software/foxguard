@@ -1185,12 +1185,16 @@ fn node_text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
 //   of the receiver's declared type. Argument count is only used as a positional
 //   bound (the flow's parameter index must be a valid argument index), not as a
 //   strict overload discriminator.
+// * **Bounded multi-hop IS modeled.** A helper `f` that forwards its parameter
+//   into another same-directory helper `g` which sinks it (`A → f → g → sink`)
+//   is captured by [`compose_cross_file_summaries`], the per-file step of the
+//   scanner's bounded multi-hop fixpoint (see `docs/taint-tracking.md`).
 // * **What is NOT modeled:** `using`/namespace resolution across directories,
 //   type-based instance dispatch through interfaces or subclasses, overload
 //   resolution by parameter *type* (only positional arity is honored), partial
-//   classes split across files, extension methods, and multi-hop chains (a
-//   helper that itself calls another cross-file helper). These need a C#
-//   type/symbol table the engine does not build.
+//   classes split across files, extension methods, and cross-file chains deeper
+//   than the hop cap. These need a C# type/symbol table the engine does not
+//   build.
 
 /// Extract cross-file taint summaries for every method / local function in
 /// `root`.
@@ -1455,6 +1459,169 @@ fn lookup_cross_file_summary<'a>(
         }
     }
     None
+}
+
+/// Re-derive a file's cross-file summaries with same-directory call resolution
+/// enabled, composing the current summary map one hop deeper.
+///
+/// This is the C# counterpart of [`crate::rules::java_taint::compose_cross_file_summaries`]
+/// and the per-file step of the scanner's **bounded multi-hop** fixpoint.
+///
+/// C# uses its OWN name-based, same-directory summary machinery (not the shared
+/// `TaintLanguageAdapter` path Python/Go/JS use), so composition is implemented
+/// directly here, mirroring the Java engine. For each method we seed one
+/// parameter at a time as a synthetic source and propagate intra-file taint. We
+/// then resolve every helper-method call that lands in a sibling summary: when a
+/// tainted argument hits a param the sibling records in `params_to_sink`, THIS
+/// parameter reaches that sink one hop deeper — e.g. `Forward(p)` whose body is
+/// `Helper.RunQuery(p)` where the sibling `RunQuery` sinks its argument gains
+/// `Forward`'s `params_to_sink` entry.
+///
+/// The scanner unions the returned flows into the existing summaries via
+/// [`FunctionTaintSummary::merge_from`] and repeats until a fixpoint (no change)
+/// or the hop bound is reached. `summaries` is a read-only snapshot from the
+/// previous round, so each round adds exactly one hop; monotone growth over a
+/// finite lattice guarantees termination, and the scanner's round cap is a hard
+/// backstop against mutually-recursive helpers.
+pub fn compose_cross_file_summaries(
+    root: Node<'_>,
+    source: &str,
+    _aliases: Option<&AliasTable>,
+    rule_specs: &[(&str, TaintSpec)],
+    same_package_paths: &[PathBuf],
+    summaries: &CrossFileSummaryMap,
+    allowed_rule_ids: &HashSet<String>,
+) -> Vec<FunctionTaintSummary> {
+    let cross_file = CrossFileInfo {
+        same_package_paths,
+        summaries,
+        allowed_rule_ids,
+    };
+
+    let mut out = Vec::new();
+    walk_tree(root, source, &mut |node, src| {
+        if node.kind() != "method_declaration" && node.kind() != "local_function_statement" {
+            return;
+        }
+        let Some(method_name) = node
+            .child_by_field_name("name")
+            .map(|n| node_text(n, src).to_string())
+        else {
+            return;
+        };
+        let param_names = csharp_method_param_names(node, src);
+        if let Some(summary) = compose_csharp_method(
+            node,
+            &method_name,
+            &param_names,
+            src,
+            rule_specs,
+            &cross_file,
+        ) {
+            out.push(summary);
+        }
+    });
+    out
+}
+
+/// Compose one method's cross-file `params_to_sink` flows: seed each parameter
+/// as a source, propagate intra-file taint, and record a flow whenever a tainted
+/// argument reaches a sibling helper's recorded sink. Returns `None` when no
+/// parameter reaches a cross-file sink (the base summary already owns the
+/// direct-sink and `params_to_return` facts).
+fn compose_csharp_method(
+    method_node: Node<'_>,
+    method_name: &str,
+    param_names: &[String],
+    source: &str,
+    rule_specs: &[(&str, TaintSpec)],
+    cross_file: &CrossFileInfo<'_>,
+) -> Option<FunctionTaintSummary> {
+    if param_names.is_empty() {
+        return None;
+    }
+    let body = find_scope_body(method_node).unwrap_or(method_node);
+
+    // Sanitizers from every rule are unioned so a value cleaned before it
+    // reaches the helper (e.g. `int.Parse`, `HttpUtility.HtmlEncode`) is not
+    // treated as tainted across the hop.
+    let mut sanitizers = Vec::new();
+    for (_, rule_spec) in rule_specs {
+        sanitizers.extend(rule_spec.sanitizers.iter().cloned());
+    }
+
+    let mut params_to_sink: Vec<ParamSinkFlow> = Vec::new();
+    for (param_idx, param_name) in param_names.iter().enumerate() {
+        let synthetic = TaintSpec {
+            sources: vec![NodeMatcher::ParamName {
+                names: vec![param_name.clone()],
+                description: format!("parameter '{param_name}'"),
+            }],
+            sinks: vec![],
+            sanitizers: sanitizers.clone(),
+        };
+
+        let mut state = TaintState::default();
+        collect_param_sources(method_node, source, &synthetic, &mut state);
+        for _ in 0..3 {
+            propagate_assignments(body, source, &synthetic, &mut state);
+        }
+
+        walk_scope_nodes(body, source, &mut |node, src| {
+            if node.kind() != "invocation_expression" {
+                return;
+            }
+            let Some(func) = node.child_by_field_name("function") else {
+                return;
+            };
+            let Some(callee) = final_name_segment(func, src) else {
+                return;
+            };
+            let Some(summary) = lookup_cross_file_summary(cross_file, callee) else {
+                return;
+            };
+            let Some(args) = node.child_by_field_name("arguments") else {
+                return;
+            };
+            let mut cursor = args.walk();
+            let arg_nodes: Vec<Node<'_>> = args
+                .named_children(&mut cursor)
+                .filter(|n| n.kind() == "argument")
+                .collect();
+
+            for flow in &summary.params_to_sink {
+                if !cross_file.allowed_rule_ids.contains(&flow.sink_rule_id) {
+                    continue;
+                }
+                if flow.param_index >= arg_nodes.len() {
+                    continue;
+                }
+                let arg = arg_nodes[flow.param_index];
+                if expression_taint(arg, src, &synthetic, &state).is_none() {
+                    continue;
+                }
+                let dup = params_to_sink
+                    .iter()
+                    .any(|f| f.param_index == param_idx && f.sink_rule_id == flow.sink_rule_id);
+                if !dup {
+                    params_to_sink.push(ParamSinkFlow {
+                        param_index: param_idx,
+                        sink_rule_id: flow.sink_rule_id.clone(),
+                        sink_description: flow.sink_description.clone(),
+                    });
+                }
+            }
+        });
+    }
+
+    if params_to_sink.is_empty() {
+        return None;
+    }
+    Some(FunctionTaintSummary {
+        name: method_name.to_string(),
+        params_to_return: Vec::new(),
+        params_to_sink,
+    })
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -1746,6 +1913,110 @@ class Handler {
         assert!(findings[0]
             .sink_description
             .contains("via cross-file call to RunQuery"));
+    }
+
+    // ── bounded multi-hop composition ────────────────────────────────────
+
+    const COMPOSE_SINK_SRC: &str = r#"
+using System.Data.SqlClient;
+class QueryHelper {
+    public static void RunQuery(string term) {
+        var cmd = new SqlCommand("SELECT * FROM users WHERE name = '" + term + "'");
+        cmd.ExecuteReader();
+    }
+}
+"#;
+
+    #[test]
+    fn compose_lifts_forwarded_param_to_cross_file_sink() {
+        // Middle helper `Forward` forwards its parameter into a same-directory
+        // helper `RunQuery` that sinks it. Its base summary records nothing;
+        // composing it against `RunQuery`'s summary must lift the cross-file
+        // sink into `Forward`'s own params_to_sink (the A->f->g->sink hop).
+        let middle_src = r#"
+class Service {
+    public static void Forward(string term) {
+        QueryHelper.RunQuery(term);
+    }
+}
+"#;
+        let specs = csharp_taint_rule_specs();
+        let sink_tree = parse_file(COMPOSE_SINK_SRC, Language::CSharp).expect("parse sink");
+        let sink_path = PathBuf::from("QueryHelper.cs");
+        let mut map = CrossFileSummaryMap::new();
+        map.insert(
+            sink_path.clone(),
+            extract_cross_file_summaries(sink_tree.root_node(), COMPOSE_SINK_SRC, None, &specs),
+        );
+
+        let mid_tree = parse_file(middle_src, Language::CSharp).expect("parse mid");
+        assert!(
+            extract_cross_file_summaries(mid_tree.root_node(), middle_src, None, &specs)
+                .iter()
+                .find(|s| s.name == "Forward")
+                .is_none_or(|s| s.params_to_sink.is_empty()),
+            "base summary of Forward must not record a sink flow"
+        );
+
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let composed = compose_cross_file_summaries(
+            mid_tree.root_node(),
+            middle_src,
+            None,
+            &specs,
+            std::slice::from_ref(&sink_path),
+            &map,
+            &allowed,
+        );
+        let forward = composed
+            .iter()
+            .find(|s| s.name == "Forward")
+            .expect("Forward should gain a composed summary");
+        assert!(
+            forward
+                .params_to_sink
+                .iter()
+                .any(|f| f.param_index == 0 && f.sink_rule_id == "csharp/taint-sql-injection"),
+            "param 0 should reach the cross-file sink: {forward:?}"
+        );
+    }
+
+    #[test]
+    fn compose_is_taint_sensitive_across_the_hop() {
+        // The middle helper passes a clean constant to the cross-file call, so
+        // the composed summary must NOT record a sink flow.
+        let middle_src = r#"
+class Service {
+    public static void Forward(string term) {
+        string safe = "constant";
+        QueryHelper.RunQuery(safe);
+    }
+}
+"#;
+        let specs = csharp_taint_rule_specs();
+        let sink_tree = parse_file(COMPOSE_SINK_SRC, Language::CSharp).expect("parse sink");
+        let sink_path = PathBuf::from("QueryHelper.cs");
+        let mut map = CrossFileSummaryMap::new();
+        map.insert(
+            sink_path.clone(),
+            extract_cross_file_summaries(sink_tree.root_node(), COMPOSE_SINK_SRC, None, &specs),
+        );
+
+        let mid_tree = parse_file(middle_src, Language::CSharp).expect("parse mid");
+        let allowed: HashSet<String> = specs.iter().map(|(id, _)| id.to_string()).collect();
+        let composed = compose_cross_file_summaries(
+            mid_tree.root_node(),
+            middle_src,
+            None,
+            &specs,
+            std::slice::from_ref(&sink_path),
+            &map,
+            &allowed,
+        );
+        assert!(
+            composed.iter().all(|s| s.params_to_sink.is_empty()),
+            "a clean (constant) argument must not compose a sink flow: {composed:?}"
+        );
     }
 
     #[test]
