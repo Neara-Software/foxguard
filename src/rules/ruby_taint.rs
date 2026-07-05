@@ -921,6 +921,8 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             // First-parameter signature source / concat-in-call sink are
             // C#-only; carried in the spec but no-op here.
             | NodeMatcher::FirstParamSource { .. }
+            // Python-only MCP decorated-parameter source; no-op for Ruby.
+            | NodeMatcher::DecoratedParamSource { .. }
             | NodeMatcher::CallArgConcat { .. }
             // C#-only (constructor-arg/property-assign) and Java-only
             // (method-arg/receiver-provenance) sinks; carried but no-op here.

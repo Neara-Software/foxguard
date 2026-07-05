@@ -482,8 +482,58 @@ impl<'a> TaintLanguageAdapter<CrossFileInfo<'a>> for PyTaintAdapter {
 
     fn seed_params(func_node: Node<'_>, ctx: &PyCtx<'_>, state: &mut TaintState) {
         if let Some(params) = func_node.child_by_field_name("parameters") {
-            seed_param_sources(params, ctx.source, ctx.spec, state);
+            let decorators = decorator_method_names(func_node, ctx.source);
+            seed_param_sources(params, ctx.source, ctx.spec, state, &decorators);
         }
+    }
+}
+
+/// Collect the final method-name segment of each *call* decorator on
+/// `func_node` (a `function_definition`). For `@mcp.tool()` this yields
+/// `["tool"]`; for `@app.route("/x")` → `["route"]`. Only CALL decorators are
+/// reported (Semgrep's `@$SERVER.tool()` shape requires the call), and only the
+/// callee's final `.name` segment is kept, so `@$SERVER.tool()` binds any
+/// `<recv>.tool(...)` decorator regardless of the receiver.
+fn decorator_method_names(func_node: Node<'_>, source: &str) -> Vec<String> {
+    let Some(parent) = func_node.parent() else {
+        return Vec::new();
+    };
+    if parent.kind() != "decorated_definition" {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    let mut cursor = parent.walk();
+    for child in parent.children(&mut cursor) {
+        if child.kind() != "decorator" {
+            continue;
+        }
+        // The decorator's payload is its first named child (the `@`-prefixed
+        // expression): a `call`, `attribute`, or `identifier`.
+        let mut dcur = child.walk();
+        let expr = child.named_children(&mut dcur).next();
+        let Some(expr) = expr else { continue };
+        if expr.kind() != "call" {
+            continue;
+        }
+        let Some(callee) = expr.child_by_field_name("function") else {
+            continue;
+        };
+        if let Some(name) = callee_final_name(callee, source) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The final name segment of a call callee: for an `attribute` (`mcp.tool`) the
+/// `.attribute` field (`tool`); for a bare `identifier` (`tool`) its text.
+fn callee_final_name(callee: Node<'_>, source: &str) -> Option<String> {
+    match callee.kind() {
+        "identifier" => Some(node_text(callee, source).to_string()),
+        "attribute" => callee
+            .child_by_field_name("attribute")
+            .map(|a| node_text(a, source).to_string()),
+        _ => None,
     }
 }
 
@@ -504,7 +554,13 @@ fn analyze_function(func_node: Node<'_>, ctx: &PyCtx<'_>, findings: &mut Vec<Tai
     analyze_function_generic::<PyTaintAdapter, _>(func_node, ctx, findings);
 }
 
-fn seed_param_sources(params: Node<'_>, source: &str, spec: &TaintSpec, state: &mut TaintState) {
+fn seed_param_sources(
+    params: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
+    state: &mut TaintState,
+    decorators: &[String],
+) {
     let mut cursor = params.walk();
     for child in params.children(&mut cursor) {
         let param_name = match child.kind() {
@@ -528,14 +584,29 @@ fn seed_param_sources(params: Node<'_>, source: &str, spec: &TaintSpec, state: &
         };
 
         for matcher in &spec.sources {
-            if let NodeMatcher::ParamName { names, description } = matcher {
-                if names.iter().any(|n| n == param_name)
-                    || crate::rules::taint_engine::param_names_are_wildcard(names)
-                {
+            match matcher {
+                NodeMatcher::ParamName { names, description } => {
+                    if names.iter().any(|n| n == param_name)
+                        || crate::rules::taint_engine::param_names_are_wildcard(names)
+                    {
+                        let line = child.start_position().row + 1;
+                        state.taint(param_name.to_string(), description.clone(), line);
+                        break;
+                    }
+                }
+                // Seed the parameter ONLY when the enclosing function carries a
+                // `<x>.<decorator>(...)` decorator (the MCP `@$SERVER.tool()`
+                // discriminator). An undecorated function's parameters are never
+                // seeded — the whole point of this matcher.
+                NodeMatcher::DecoratedParamSource {
+                    decorator,
+                    description,
+                } if decorators.iter().any(|d| d == decorator) => {
                     let line = child.start_position().row + 1;
                     state.taint(param_name.to_string(), description.clone(), line);
                     break;
                 }
+                _ => {}
             }
         }
     }
@@ -1632,6 +1703,10 @@ fn match_source(
                 // ParamName matchers are applied when seeding the state
                 // from the function's parameter list, not when walking
                 // expressions.
+            }
+            NodeMatcher::DecoratedParamSource { .. } => {
+                // Applied when seeding decorated-function parameters (see
+                // `seed_param_sources`), not when walking expressions.
             }
             NodeMatcher::LiteralString { description, regex } => {
                 // Ellipsis-string source `"..."`: any string literal is a taint
