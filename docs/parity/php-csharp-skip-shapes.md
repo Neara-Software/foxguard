@@ -277,6 +277,72 @@ captured multi-statement `pattern-inside` region would over-match badly. **Needs
 a typestate/object-configuration primitive** ("a call on an object previously
 configured unsafely"). Deferred.
 
+> **2026-07-05 re-investigation (typestate-sink feasibility, empirical).**
+> Re-examined end-to-end: to gate the synthesized any-method-call sink faithfully,
+> the only available machinery is the sink-side `pattern-inside` /
+> `pattern-not-inside` post-filter (`self.insides.sink` / `self.negatives.sink` →
+> `CompiledAstPattern::contains_range` / `overlaps_range`), which is built on the
+> generic AST search matcher `match_single_pattern`. **That matcher cannot match
+> any of the shapes these three gates are built from.** Probed directly
+> (`CompiledAstPattern::new(pat, CSharp)` → `match_single_pattern` against the
+> rule's own `.cs` fixture, both LoadBad and LoadGood scopes):
+>
+> | C# pattern | node parses? | `match_single_pattern` matches |
+> |---|---|---|
+> | `xmlDoc.Load(input)` (fully concrete) | yes | **2** |
+> | `xmlDoc.$M(input)` (metavar METHOD, concrete arg) | yes | **2** |
+> | `xmlDoc.Load($Y)` (metavar ARGUMENT) | yes | **0** |
+> | `$X.Load(input)` (metavar RECEIVER) | yes | **0** |
+> | `$X.Load(...)` (ellipsis args) | yes | **0** |
+> | `new XmlUrlResolver()` (object-creation, concrete) | yes | **0** |
+> | `new $T()` (object-creation, metavar type) | yes | **0** |
+> | `xmlDoc.XmlResolver = new XmlUrlResolver()` (assignment) | yes | **0** |
+> | `$X.XmlResolver = $Y` (metavar assignment) | yes | **0** |
+>
+> The pattern *parses* (`pattern_node()` is `Some`) in every case, but the C# AST
+> search matcher returns **zero** for metavariable arguments, ellipsis args,
+> object-creation (`new …`), and assignment expressions — precisely the node
+> shapes every one of these `pattern-inside` / `pattern-not-inside` gate regions
+> is built from:
+> - `XmlDocument $X = new XmlDocument(...); … $X.XmlResolver = new XmlUrlResolver(...); …`
+>   — object-creation + ellipsis + metavar assignment (all 0).
+> - `XmlReaderSettings $RS = new …; … $RS.DtdProcessing = DtdProcessing.Parse; …`
+>   — same.
+> - `$READER.DtdProcessing = DtdProcessing.Prohibit; …` (the `pattern-not-inside`
+>   hardening for `xmltextreader`) — metavar assignment (0).
+>
+> Consequence — **no faithful middle exists**:
+> 1. *Capture the `pattern-inside` into `insides.sink`* → `contains_range` is
+>    always `false` (the region never matches) → the post-filter suppresses
+>    **every** finding → the rule loads but fires **never** (useless under-match).
+>    Symmetrically, the `xmltextreader` `pattern-not-inside` would `overlaps_range`
+>    → always `false` → never excludes the safe fixture, so it provides no
+>    discrimination either way.
+> 2. *Drop the `pattern-inside`* → the synthesized any-method-call sink
+>    (`$OBJ.$METHOD(...)`) fires on **every** method call in **every** C# file
+>    (catastrophic over-match).
+>
+> The blocker is therefore **not** merely "no typestate primitive" — it is that
+> the C# generic AST search matcher does not support metavariable-receiver /
+> metavariable-argument / ellipsis-argument / object-creation / assignment
+> patterns, so the containment gate that any faithful typestate sink would lean on
+> is a **no-op for exactly the regions these rules need** (structurally the same
+> dead-end as the PHP `pattern-inside` blocker above, though the root cause differs:
+> PHP patterns parse as inline text and match nothing; C# patterns parse fine but
+> the matcher lacks these shapes). **Faithful discrimination between the unsafely-
+> configured parser (`LoadBad`) and the safely-configured one (`LoadGood` /
+> `ReaderGood`) — gate #3 — cannot be achieved.**
+>
+> A separate, independent blocker for `xmlreadersettings-unsafe-parser-override`:
+> the registry ships **no `.cs` fixture** for it (only the `.yaml`), so its
+> positive/negative behaviour cannot be verified against the rule's own fixture at
+> all — a faithful implementation is unverifiable even in principle here.
+>
+> **Needs** (still all missing): C# AST search support for metavariable-receiver,
+> metavariable/ellipsis-argument, object-creation, and assignment patterns
+> (prerequisite for the containment gate), **and then** a typestate/object-
+> configuration sink primitive on top. Both genuinely absent. Deferred.
+
 ### `csharp-sqli` — typed-string source ✅ + two regex-pinned sink forms ✅ (NOW LOADS as of 2026-07-05 — sink primitive shipped; historical analysis retained below)
 Source is `patterns: [pattern: (string $X), pattern-not: "..."]` — a C# **typed
 metavariable** source ("any non-literal string is tainted"). The C# `(Type $MV)`
@@ -317,7 +383,7 @@ rule now loads.**
 | ~~C# `(Type $MV)` typed-metavariable source~~ ✅ DONE 2026-07-05 | (source primitive only — reused by `xpath-injection`) | `TypedName`, C#-gated. NB: `csharp-sqli` was still skipped at the time (its sink was the blocker); its sink primitive has since landed and the rule now loads (2026-07-05) |
 | ~~Signature-param source + concat-in-call sink~~ ✅ DONE 2026-07-05 | `xpath-injection` (loaded) | `FirstParamSource` + `CallArgConcat{method}`, C#-gated; concat-only enforced at sink |
 | ~~Constructor-arg + property-assignment sinks w/ metavariable-regex enumeration~~ ✅ DONE 2026-07-05 | `csharp-sqli` (loaded) | `ConstructorArgSink` + `PropertyAssignSink` — `new SqlCommand(focus arg)` / `$cmd.CommandText = focus` enumerated from `^(SqlCommand\|CommandText\|…)$` |
-| Typestate / object-configuration sink | 3 C# XXE rules | "call on an object configured unsafely earlier" |
+| Typestate / object-configuration sink | 3 C# XXE rules | "call on an object configured unsafely earlier". **Blocked one level deeper (2026-07-05):** the containment gate any faithful version leans on is a no-op — the C# AST search matcher (`match_single_pattern`) returns 0 for metavar-receiver / metavar-arg / ellipsis-arg / `new …` / assignment patterns, i.e. every shape these rules' `pattern-inside`/`pattern-not-inside` regions are built from (probe table in the C# deferral above). So C# AST search for those shapes is the true prerequisite; the typestate sink sits on top. `xmlreadersettings-unsafe-parser-override` additionally ships no `.cs` fixture. |
 | **PHP AST `pattern:`/`pattern-inside` search matching** (prerequisite) | `doctrine-orm`, `laravel-sql-injection`, `laravel-api-route`, `laravel-unsafe-validator` | **The real blocker.** PHP patterns are never wrapped in `<?php` by `prepare_pattern_for_grammar`, so they parse as inline text and match nothing (verified: `pattern: system($x)` → 0 findings on `system($x);`; Python identical → 1). Every sink-side `pattern-inside` post-filter (`contains_range`) is a no-op for PHP, so QueryBuilder scoping is unenforceable. The `->`/`::` lexical gap is trivial by comparison. |
 | Arg-position-aware `CallArgSink{method, arg_index}` sink | `laravel-sql-injection` (also needed) | Sink-side dual of `CallArgSource`. Laravel pins the focus to a specific arg position (`whereRaw($SQL,...)`=0, `find($ID,$COLUMNS)`=1); `MethodName` fires on taint in *any* arg and flags the rule's own `where('name',$tainted)` / `selectRaw(…,[$tainted])` negatives. |
 | Multi-statement trailing-`...` containment region | `doctrine-orm` (also needed) | Doctrine's `pattern-inside: $Q = $X->createQueryBuilder(); ...` binds a *later* sink statement; needs a region that spans subsequent statements. |

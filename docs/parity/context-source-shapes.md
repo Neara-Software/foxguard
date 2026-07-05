@@ -506,6 +506,65 @@ enumeration). The JS engine already matches `MemberAssign` with a tainted RHS.
 Faithful: fires only on `<expr>.innerHTML|outerHTML = tainted`, silent on a
 constant RHS and on any other (non-enumerated) property.
 
+### Java XXE factory rules — `by-side-effect` sanitizer / typestate (DEFERRED 2026-07-05)
+
+**Rules.** `transformerfactory-dtds-not-disabled`,
+`documentbuilderfactory-disallow-doctype-decl-missing`,
+`saxparserfactory-disallow-doctype-decl-missing` — the three Java XXE `mode: taint`
+registry rules. All three model an XML parser **factory** as a typestate object:
+it is created (`DocumentBuilderFactory.newInstance()`), optionally **hardened**
+(`setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)` /
+`setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")`), then **used**
+(`.newDocumentBuilder()` / `.newSAXParser()` / `.newTransformer(...)`). The finding
+should fire iff the factory reaches its `.new*()` use **without** an intervening
+hardening call.
+
+**Semgrep shape.** `pattern-sources: { by-side-effect: true, pattern: $FACTORY = …newInstance(); }`
+(plus a `pattern-not-inside` excluding factories hardened in a `static {}` block);
+`pattern-sanitizers: { by-side-effect: true, … setFeature/setAttribute … }`;
+`pattern-sinks: $FACTORY.new*()`. The whole precision of the rules is the
+safe/unsafe discrimination: their own fixtures document the hardened
+`Good*Factory*` variants as **ok** and the bare `Bad*Factory*` variants as
+**ruleid**.
+
+**Why deferred — the `by-side-effect` sanitizer is the missing typestate
+primitive.** foxguard treats the `by-side-effect: true` flag as a **no-op marker**
+(`semgrep_taint.rs`, `~L4638`) and compiles the companion `pattern:` through the
+ordinary **value-passing** path. That path can only express "a value that flows
+*through* a sanitizer expression is clean" (`java_taint.rs::expression_taint` returns
+`None` when the node itself is a sanitizer call). It has **no** way to express
+"executing statement `factory.setFeature(…)` clears the taint on the *variable*
+`factory` from here on": a hardening call is a standalone statement, not an
+assignment, so it never touches the variable's entry in `TaintState`. `TaintState::clear`
+fires **only** on clean re-assignment (`x = cleanValue`), never for a side-effecting
+method call on `x`. Furthermore the Java engine accumulates taint over three fixed
+passes and *then* scans sinks against a single final state
+(`analyze_scope`) — it is **not statement-order flow-sensitive** for sanitization,
+so even a hypothetical "clear on hardening call" would still need lexical
+before/after ordering the architecture does not track.
+
+Net effect if forced: a hardened factory stays tainted, so the `.new*()` sink fires
+on **both** the safe fixture (`GoodDocumentBuilderFactory`, hardening present) and
+the unsafe one (`BadDocumentBuilderFactory`) — over-matching the rules' own
+documented negatives (faithfulness gate #3 fails). Over-matching is worse than
+skipping, so the rules stay skipped.
+
+Secondary blockers (each independently prevents even loading, but subordinate to
+the sanitizer gap): the source `$FACTORY = X.newInstance();` (assignment-form
+`by-side-effect` source) does not compile, and the sink `$FACTORY.newDocumentBuilder();`
+(metavariable receiver + concrete method + no args) does not compile — reported as
+"unsupported pattern shape" / "no expressible matchers". The engine *does* already
+gate a sink on a tainted **receiver** (`find_sinks` →
+`read_object_receiver_taint`), so receiver-taint sink semantics are present; the
+receiver-clearing **sanitizer** is the piece that is absent.
+
+**Needs.** A `by-side-effect` sanitizer primitive that removes a variable from the
+tainted state at the point of a hardening call, applied **flow-sensitively** (only
+sinks lexically after the hardening call are cleared) — i.e. the same
+typestate/object-configuration machinery the C# XXE rules need (see
+`php-csharp-skip-shapes.md`), plus an assignment-form `by-side-effect` source and a
+metavar-receiver/concrete-method/no-arg sink shape. All genuinely missing. Deferred.
+
 ## Bottom line
 
 The two clean, provably-faithful wins are shipped (one new source primitive,
