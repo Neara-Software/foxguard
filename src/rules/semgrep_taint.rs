@@ -439,7 +439,6 @@ struct TaintNegatives {
     /// `pattern-not` matchers compiled from `pattern-sources` blocks.
     /// Collected (so we stop dropping them) but enforcement is deferred
     /// until findings carry source byte offsets.
-    #[allow(dead_code)]
     source: Vec<crate::rules::semgrep_compat::CompiledAstPattern>,
 }
 
@@ -470,7 +469,6 @@ struct TaintInsides {
     /// `pattern-inside` matchers compiled from `pattern-sources` blocks.
     /// Collected (so we stop dropping them) but enforcement is deferred
     /// until findings carry source byte offsets.
-    #[allow(dead_code)]
     source: Vec<crate::rules::semgrep_compat::CompiledAstPattern>,
 }
 
