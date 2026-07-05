@@ -104,28 +104,107 @@ PHP delta is the stable measure.
 
 ## Deferred — PHP
 
+> **2026-07-05 re-investigation (focus-call-sink w/ pattern-inside).** Both rules
+> were re-examined end-to-end (recognizer feasibility + empirical probing of the
+> sink-side `pattern-inside` post-filter). The `->`/`::` lexical gap is indeed
+> trivial; the faithful scoping is **not achievable**, for a newly-pinned-down
+> and decisive reason: **foxguard has no working AST `pattern:` search matching
+> for PHP at all**, and every `pattern-inside` enforcement path is built on top
+> of it. Both remain deferred; the precise blockers are sharpened below.
+
+#### THE decisive shared blocker — PHP AST search matching is a no-op
+The *only* mechanism that could enforce a sink-side `pattern-inside` is the
+post-filter in `semgrep_taint.rs` (`self.insides.sink` + `CompiledAstPattern::
+contains_range`). That containment test calls `match_single_pattern` — the same
+generic AST search matcher used by SEARCH-mode `pattern:` rules. **That matcher
+returns zero matches for every PHP pattern.** Verified through the proven public
+loader (`parse_semgrep_str`) + `Rule::check`:
+
+| language | rule `pattern:` | source | findings |
+|---|---|---|---|
+| php | `system($x)` | `system($x);` | **0** |
+| php | `system(...)` | `system($x);` | **0** |
+| php | `$O->whereRaw($A)` | `$foo->whereRaw($y);` | **0** |
+| php | `DB::table(...)->whereRaw($A, ...)` | `DB::table('o')->whereRaw($t);` | **0** |
+| python (control) | `system(...)` | `system(x)` | **1** |
+
+Root cause: `prepare_pattern_for_grammar` (`semgrep_compat.rs`) wraps Go patterns
+in a synthetic package/func but leaves every other language — PHP included —
+**bare**. A bare PHP pattern (`system($x)`, no `<?php`) is parsed by
+tree-sitter-php as inline **text/HTML**, so `first_meaningful_node` yields a
+`text` node that matches no real code node. PHP is supported today only via (a)
+its dedicated taint engine (`php_taint.rs`, which never routes through the AST
+search matcher) and (b) `pattern-regex` rules — **not** AST `pattern:`/`pattern-
+inside` matching.
+
+Consequence for any focus-call-sink recognizer that captures the `pattern-inside`
+into `insides.sink`: the post-filter keeps a finding only when its sink is
+*contained* by a matched region, and **no PHP region ever matches**, so it
+suppresses **every** finding — the rule would load but fire **never** (a useless
+under-match). The alternative — dropping the `pattern-inside` — makes the generic
+`MethodName{where|select|from|join|set|…}` sinks fire on every object in any
+codebase (catastrophic over-match). There is no faithful middle. Enforcing the
+scoping first requires **PHP AST search-pattern support** (wrap PHP patterns in
+`<?php`, verify metavariable/ellipsis handling, re-validate the whole PHP search
+surface) — a large, cross-cutting infrastructure primitive, categorically beyond
+the `->`/`::` lexical gap.
+
 ### `doctrine-orm-dangerous-query` — focus arg in `$QUERY->METHOD(...)` + scope
 Sink is `focus-metavariable: $SINK` over a `pattern-either` of ~25
 `$QUERY->where(...,$SINK,...)` / `->select(...)` / `->join(...)` QueryBuilder
-methods, **bounded** by `pattern-inside: $Q = $X->createQueryBuilder(); ...`.
-Two blockers: (1) the focus-call-sink recognizer only handles `.`-dotted method
-receivers, not PHP `->`; (2) even with a `->` extension the compiled sinks would
-be `MethodName{where}`, `MethodName{select}`, `MethodName{from}`, … which fire on
-**any** object's `->select(...)` — the `createQueryBuilder` `pattern-inside` (the
-only thing tying it to Doctrine) is dropped by that recognizer path, and the
-focused arg-position relaxes to "any tainted arg". **Would over-match → deferred.**
-Needs: PHP `->` focus-call support *plus* faithful sink-side `pattern-inside`
-scoping for that recognizer (not just the graceful-degradation path).
+methods, **bounded** by two `pattern-inside`s: `$Q = $X->createQueryBuilder();
+...` and `$Q = new QueryBuilder(...); ...`. Note `$Q` is **not** unified with the
+`$QUERY` receiver — the bound is merely "somewhere earlier in this scope a query
+builder was created". The `...,$SINK,...` focus IS faithful as "any argument", so
+arg-position is *not* a blocker here (unlike Laravel). Blockers, in order:
+1. **(decisive)** The `createQueryBuilder` `pattern-inside` is the *only* thing
+   tying these otherwise-universal method names to Doctrine, and it cannot be
+   enforced — see the shared blocker above (PHP AST search is a no-op, so
+   `contains_range` never fires). Without it the compiled sinks
+   `MethodName{where}`, `MethodName{select}`, `MethodName{from}`,
+   `MethodName{set}`, `MethodName{join}`, … match **every** `->where()/->select()/
+   …` on any object anywhere. Catastrophic over-match.
+2. **(second-order, only relevant if #1 is fixed)** The bound is **multi-
+   statement** (`$Q = …createQueryBuilder();` *then* `...`) and the sink call sits
+   in a *later* statement of the same block (see the rule's own `.php` fixture:
+   the `->where('email = '.$input)` is chained several statements after the
+   assignment). Even with working PHP AST search, a statement-sequence pattern
+   with a trailing `...` whose matched *region must span through subsequent
+   statements* is a separate, unproven containment shape.
+3. **(source side)** The taint source is `sprintf(...)` (compiles as `Call`) OR
+   `"...".$SMTH` — a **string concatenation whose left operand is a literal**, as
+   a *source*. There is no concat-literal source matcher; only the `sprintf` arm
+   would compile, under-matching the `'email = '.$input` positive.
+**Needs**: PHP AST search-pattern support (unlocks the `pattern-inside`) + a
+multi-statement trailing-`...` containment region + a concat-literal source. All
+three are genuinely missing. Deferred.
 
-### `laravel-sql-injection` — focus `$SQL` bounded by chained-receiver call
-Sink is nested `patterns:` binding `$SQL`/`$COLUMN`/… each bounded by
+### `laravel-sql-injection` — focus `$SQL`/`$COLUMN`/… bounded by `DB::table(...)` chain
+Sink is a `pattern-either` of nested `patterns:` binding `$SQL`/`$EXPRESSION`/
+`$COLUMNS`/`$COLUMN`/`$QUERY`, each bounded by
 `pattern-inside: DB::table(...)->whereRaw($SQL, ...)` (and ~90 sibling
-Query-Builder methods). The bounding context is a **chained** static-call
-receiver `DB::table(...)->whereRaw(...)`, which the focus-call recognizer
-explicitly rejects (it refuses chained receivers so it never mistakes the inner
-call for the sink). Dropping the `pattern-inside` leaves a bare `$SQL` metavar =
-universal sink. **Needs**: chained-receiver focus-call sink support with faithful
-`pattern-inside` scoping. Deferred (would over-match otherwise).
+Query-Builder methods). **Two independent, each-decisive blockers:**
+1. **Pattern-inside unenforceable** — same shared blocker (PHP AST search no-op).
+   The bound `DB::table(...)->METHOD(...)` is the only thing distinguishing these
+   from generic `->get()/->where()/->min()/->value()/…` calls; it cannot be
+   enforced, and these method names are ubiquitous. Over-match.
+2. **Arg-position precision missing — blocks even if #1 were fixed.** The focus is
+   pinned to a *specific argument position* (`whereRaw($SQL, ...)` = arg 0;
+   `find($ID, $COLUMNS)` = arg 1; `where($COLUMN, ...)` = arg 0), and the rule's
+   own `.php` fixture encodes this as its negatives:
+   `DB::table('users')->where('name', $tainted)` (**ok** — taint in arg 1) and
+   `->selectRaw('… ? …', [$tainted])` (**ok** — taint in the bindings arg). The
+   only sink primitive available is `MethodName`, which fires on taint in **any**
+   argument — so it flags **both documented negatives**. There is no
+   `CallArgSink{method, arg_index}` (the sink-side dual of the existing
+   `CallArgSource`). And a working `pattern-inside: DB::table(...)->where($COLUMN,
+   ...)` would **not** rescue this: that region also *contains*
+   `->where('name', $tainted)`, so `contains_range` keeps it. Faithful arg-position
+   requires the engine to check *which* argument carries taint against a required
+   index — a new primitive + engine change.
+**Needs**: PHP AST search-pattern support **and** an arg-position-aware
+`CallArgSink{method, arg_index}` sink primitive. Deferred (would over-match on the
+rule's own negatives otherwise).
 
 ### `laravel-unsafe-validator` — multi-part typed/property source + `::` sink
 Source is a union of a typed param `Request $R` (focus), a `$this->$PROPERTY`
@@ -208,5 +287,8 @@ regex + sanitizers to stay precise. Deferred.
 | ~~Focus-arg-of-call **source**~~ ✅ DONE 2026-07-05 | `use_weak_rng_for_keygeneration` (loaded) | `NodeMatcher::CallArgSource{method,arg_index}`; sink via C#-gated `new Type(...)`→`Call{canonical}` |
 | ~~C# `(Type $MV)` typed-metavariable source~~ ✅ DONE 2026-07-05 | `csharp-sqli` (loaded) | `TypedName`, C#-gated |
 | Typestate / object-configuration sink | 3 C# XXE rules | "call on an object configured unsafely earlier" |
-| PHP `->` + `::` call support in focus-call sink w/ faithful `pattern-inside` scoping | `doctrine-orm`, `laravel-sql-injection`, `laravel-api-route`, `laravel-unsafe-validator` | the `->`/`::` lexical gap is easy; the faithful scoping is the hard part |
+| **PHP AST `pattern:`/`pattern-inside` search matching** (prerequisite) | `doctrine-orm`, `laravel-sql-injection`, `laravel-api-route`, `laravel-unsafe-validator` | **The real blocker.** PHP patterns are never wrapped in `<?php` by `prepare_pattern_for_grammar`, so they parse as inline text and match nothing (verified: `pattern: system($x)` → 0 findings on `system($x);`; Python identical → 1). Every sink-side `pattern-inside` post-filter (`contains_range`) is a no-op for PHP, so QueryBuilder scoping is unenforceable. The `->`/`::` lexical gap is trivial by comparison. |
+| Arg-position-aware `CallArgSink{method, arg_index}` sink | `laravel-sql-injection` (also needed) | Sink-side dual of `CallArgSource`. Laravel pins the focus to a specific arg position (`whereRaw($SQL,...)`=0, `find($ID,$COLUMNS)`=1); `MethodName` fires on taint in *any* arg and flags the rule's own `where('name',$tainted)` / `selectRaw(…,[$tainted])` negatives. |
+| Multi-statement trailing-`...` containment region | `doctrine-orm` (also needed) | Doctrine's `pattern-inside: $Q = $X->createQueryBuilder(); ...` binds a *later* sink statement; needs a region that spans subsequent statements. |
+| Concat-literal source (`"...".$SMTH`) | `doctrine-orm` (also needed) | A string concat whose left operand is a literal, as a taint *source*. |
 | Signature-param source (bare, no focus) + concat-argument sink | `xpath-injection` | |
