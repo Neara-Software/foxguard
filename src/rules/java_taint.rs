@@ -889,6 +889,24 @@ fn propagate_assignments(
             }
         }
 
+        // Enhanced-for `for (Type v : collection)`: iterating a tainted
+        // collection yields tainted elements, so seed the loop variable when the
+        // iterated expression carries taint. This carries taint through the
+        // cookie loop `for (Cookie c : request.getCookies())` in the
+        // `tainted-session-from-http-request` fixture.
+        if node.kind() == "enhanced_for_statement" {
+            if let (Some(name_node), Some(iterable)) = (
+                node.child_by_field_name("name"),
+                node.child_by_field_name("value"),
+            ) {
+                let name = node_text(name_node, src).to_string();
+                match expression_taint(iterable, src, spec, policy, state) {
+                    Some(info) => state.taint(name, bump_hops(info)),
+                    None => state.clear(&name),
+                }
+            }
+        }
+
         if node.kind() == "assignment_expression" {
             let Some(left) = node.child_by_field_name("left") else {
                 return;
@@ -938,12 +956,23 @@ fn find_sinks(
     } else {
         HashMap::new()
     };
+    let has_method_arg_sink = spec
+        .sinks
+        .iter()
+        .any(|m| matches!(m, NodeMatcher::MethodArgSink { .. }));
 
     walk_scope_nodes(scope, source, &mut |node, src| {
         // Typed-assignment / declaration sinks fire on declaration and
         // assignment nodes, which the call-only walk below never inspects.
         if has_typed_assign {
             check_typed_assign_sink(node, src, spec, policy, state, &local_types, out);
+        }
+
+        // Positional-argument sinks (`setAttribute($NAME, $VALUE)` focus
+        // `$VALUE`) fire only when the argument at the focused index is tainted,
+        // which the any-argument sink path below cannot express.
+        if has_method_arg_sink {
+            check_method_arg_sinks(node, src, spec, policy, state, out);
         }
 
         if node.kind() != "method_invocation" && node.kind() != "object_creation_expression" {
@@ -1038,6 +1067,64 @@ fn check_typed_assign_sink(
         }
     }
     out.push(taint_finding_for_node(node, info, sink_description));
+}
+
+/// Fire a [`NodeMatcher::MethodArgSink`] sink when `node` is a call to one of
+/// the matcher's `methods` AND the argument at the focused `arg_index` carries
+/// taint — the positional-`focus-metavariable` sink
+/// `request.getSession().setAttribute($NAME, $VALUE)` (focus `$VALUE`).
+///
+/// Faithful by construction: only the argument at `arg_index` is checked, so a
+/// tainted argument at any OTHER position (e.g. a tainted session KEY at index
+/// 0) does NOT fire. The receiver context is a droppable narrowing (see the
+/// matcher docs), so the sink is bounded by the method-name set and the focused
+/// argument position.
+fn check_method_arg_sinks(
+    node: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
+    policy: Option<&LabelPolicy>,
+    state: &TaintState,
+    out: &mut Vec<TaintFinding>,
+) {
+    if node.kind() != "method_invocation" {
+        return;
+    }
+    let Some(method) = call_method_name(node, source) else {
+        return;
+    };
+    let Some(args) = node.child_by_field_name("arguments") else {
+        return;
+    };
+    let mut cursor = args.walk();
+    let arg_nodes: Vec<Node<'_>> = args.named_children(&mut cursor).collect();
+
+    for matcher in &spec.sinks {
+        let NodeMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } = matcher
+        else {
+            continue;
+        };
+        if !methods.iter().any(|m| m == method) {
+            continue;
+        }
+        let Some(arg) = arg_nodes.get(*arg_index) else {
+            continue;
+        };
+        let Some(info) = expression_taint(*arg, source, spec, policy, state) else {
+            continue;
+        };
+        if let Some(p) = policy {
+            let labels = info.labels.clone().unwrap_or_default();
+            if !p.sink_requires.eval(&labels) {
+                continue;
+            }
+        }
+        out.push(taint_finding_for_node(node, info, description.clone()));
+    }
 }
 
 /// Build a map from local-variable name to its declared type text for every
@@ -1234,6 +1321,36 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
     }
     let method = call_method_name(node, source)?;
     let receiver = call_receiver_text(node, source)?;
+
+    // Receiver-provenance source `$MD.digest(...)` where `$MD` was initialized by
+    // `MessageDigest.getInstance("MD5")` (the `md5-used-as-password` rule). The
+    // `.digest()` call on an MD5-provenance receiver is the taint origin; a
+    // receiver initialized with a strong algorithm (`"SHA-256"`) does NOT match,
+    // so the digest bytes stay clean.
+    for matcher in &spec.sources {
+        if let NodeMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method: call_method,
+            description,
+        } = matcher
+        {
+            if method == call_method
+                && receiver_has_init_provenance(
+                    node,
+                    receiver,
+                    init_receiver,
+                    init_method,
+                    init_arg,
+                    source,
+                )
+            {
+                return Some(description.clone());
+            }
+        }
+    }
+
     spec.sources.iter().find_map(|matcher| {
         if let NodeMatcher::Call {
             canonical,
@@ -1246,6 +1363,115 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
         }
         None
     })
+}
+
+/// The nearest enclosing method/constructor/lambda scope of `node`, found by
+/// climbing the parent chain. `None` when `node` has no scope ancestor.
+fn enclosing_scope(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = node.parent();
+    while let Some(n) = current {
+        if is_scope_node(n.kind()) {
+            return Some(n);
+        }
+        current = n.parent();
+    }
+    None
+}
+
+/// True when the plain-identifier `receiver` variable is declared in `node`'s
+/// enclosing scope with an initializer call
+/// `init_receiver.init_method("init_arg")` — the provenance link the
+/// `ReceiverProvenanceCall` source requires. The `init_arg` string literal is
+/// the discriminator (MD5 vs a strong algorithm), and both the init receiver
+/// (matched by final `.`-segment) and the first string-literal argument must
+/// match exactly.
+fn receiver_has_init_provenance(
+    node: Node<'_>,
+    receiver: &str,
+    init_receiver: &str,
+    init_method: &str,
+    init_arg: &str,
+    source: &str,
+) -> bool {
+    // A dotted or expression receiver (`a.b.digest()`) is not a plain local
+    // variable and cannot carry a tracked initializer.
+    if !is_plain_identifier(receiver) {
+        return false;
+    }
+    let Some(scope) = enclosing_scope(node) else {
+        return false;
+    };
+    let body = find_scope_body(scope).unwrap_or(scope);
+    let mut found = false;
+    walk_scope_nodes(body, source, &mut |n, src| {
+        if found || n.kind() != "variable_declarator" {
+            return;
+        }
+        let Some(name_node) = n.child_by_field_name("name") else {
+            return;
+        };
+        if node_text(name_node, src) != receiver {
+            return;
+        }
+        let Some(value) = n.child_by_field_name("value") else {
+            return;
+        };
+        if init_call_matches(value, init_receiver, init_method, init_arg, src) {
+            found = true;
+        }
+    });
+    found
+}
+
+/// True when `node` is a call `init_receiver.init_method(...)` whose first
+/// string-literal argument (quotes stripped) equals `init_arg`. The receiver is
+/// matched by its final `.`-segment so both `MessageDigest.getInstance(...)` and
+/// `java.security.MessageDigest.getInstance(...)` match `MessageDigest`.
+fn init_call_matches(
+    node: Node<'_>,
+    init_receiver: &str,
+    init_method: &str,
+    init_arg: &str,
+    source: &str,
+) -> bool {
+    if node.kind() != "method_invocation" {
+        return false;
+    }
+    if call_method_name(node, source) != Some(init_method) {
+        return false;
+    }
+    let Some(receiver) = call_receiver_text(node, source) else {
+        return false;
+    };
+    if type_final_segment(receiver) != init_receiver {
+        return false;
+    }
+    let Some(args) = node.child_by_field_name("arguments") else {
+        return false;
+    };
+    let mut cursor = args.walk();
+    for arg in args.named_children(&mut cursor) {
+        if arg.kind() == "string_literal" {
+            let text = node_text(arg, source);
+            let inner = text
+                .strip_prefix('"')
+                .and_then(|t| t.strip_suffix('"'))
+                .unwrap_or(text);
+            return inner == init_arg;
+        }
+    }
+    false
+}
+
+/// True when `s` is a single plain Java identifier (no dots, no call/index
+/// punctuation) — a local variable name that can carry a tracked initializer.
+fn is_plain_identifier(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains('.')
+        && !s.contains('(')
+        && !s.contains('[')
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
 }
 
 fn is_sanitizer_call(node: Node<'_>, source: &str, spec: &TaintSpec) -> bool {

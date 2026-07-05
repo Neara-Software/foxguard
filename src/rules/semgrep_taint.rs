@@ -349,6 +349,18 @@ enum GenericMatcher {
         description: String,
     },
 
+    /// Matches a call to one of `methods` whose argument at position `arg_index`
+    /// is tainted — the positionally-precise Semgrep `focus-metavariable` sink
+    /// (`tainted-session-from-http-request`'s
+    /// `request.getSession().$FUNC($NAME, $VALUE)` + `focus: $VALUE`). See
+    /// [`crate::rules::taint_engine::NodeMatcher::MethodArgSink`]. Compiled solely
+    /// for the Java engine; other engines carry it but no-op it.
+    MethodArgSink {
+        methods: Vec<String>,
+        arg_index: usize,
+        description: String,
+    },
+
     /// Match a PROPERTY-ASSIGNMENT sink — an assignment `<expr>.<Prop> = <RHS>`
     /// whose property name is in `property_names` and whose RHS carries taint.
     /// Compiled (C# only) from the `csharp-sqli` sink arm
@@ -359,6 +371,20 @@ enum GenericMatcher {
     /// engines carry it but no-op it.
     PropertyAssignSink {
         property_names: Vec<String>,
+        description: String,
+    },
+
+    /// Matches a `.method(...)` call whose receiver was initialized by
+    /// `init_receiver.init_method("init_arg")` — the binding-linked Semgrep
+    /// source (`md5-used-as-password`'s
+    /// `$MD = MessageDigest.getInstance("MD5"); ... $MD.digest(...)`). See
+    /// [`crate::rules::taint_engine::NodeMatcher::ReceiverProvenanceCall`].
+    /// Compiled solely for the Java engine; other engines carry it but no-op it.
+    ReceiverProvenanceCall {
+        init_receiver: String,
+        init_method: String,
+        init_arg: String,
+        method: String,
         description: String,
     },
 }
@@ -581,6 +607,28 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             property_names: property_names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => python_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => python_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -745,6 +793,28 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
             property_names: property_names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => javascript_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => javascript_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -900,6 +970,28 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
             property_names: property_names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => go_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => go_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1053,6 +1145,28 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             description,
         } => java_taint::NodeMatcher::PropertyAssignSink {
             property_names: property_names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => java_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => java_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -1217,6 +1331,28 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             property_names: property_names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => c_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => c_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1372,6 +1508,28 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
             property_names: property_names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => kotlin_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => kotlin_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1525,6 +1683,28 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
             description,
         } => ruby_taint::NodeMatcher::PropertyAssignSink {
             property_names: property_names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => ruby_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => ruby_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -1691,6 +1871,28 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
             property_names: property_names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => csharp_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => csharp_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1842,6 +2044,28 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
             description,
         } => bash_taint::NodeMatcher::PropertyAssignSink {
             property_names: property_names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => bash_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => bash_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -2006,6 +2230,28 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
             property_names: property_names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => solidity_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => solidity_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2157,6 +2403,28 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
             description,
         } => scala_taint::NodeMatcher::PropertyAssignSink {
             property_names: property_names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => scala_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => scala_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -2312,6 +2580,28 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
             property_names: property_names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => apex_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => apex_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2465,6 +2755,28 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
             property_names: property_names.clone(),
             description: description.clone(),
         },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => swift_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => swift_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2609,6 +2921,28 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
             description,
         } => php_taint::NodeMatcher::PropertyAssignSink {
             property_names: property_names.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::MethodArgSink {
+            methods,
+            arg_index,
+            description,
+        } => php_taint::NodeMatcher::MethodArgSink {
+            methods: methods.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::ReceiverProvenanceCall {
+            init_receiver,
+            init_method,
+            init_arg,
+            method,
+            description,
+        } => php_taint::NodeMatcher::ReceiverProvenanceCall {
+            init_receiver: init_receiver.clone(),
+            init_method: init_method.clone(),
+            init_arg: init_arg.clone(),
+            method: method.clone(),
             description: description.clone(),
         },
     }
@@ -4244,6 +4578,22 @@ fn compile_entry(
                     return;
                 }
             }
+            // ── Receiver-provenance SOURCE shape (Java `md5-used-as-password`) ─
+            //
+            // A `pattern-inside` binding a metavariable `$MD` to an initializer
+            // call `MessageDigest.getInstance("MD5")`, paired with a
+            // `pattern: $MD.digest(...)`. Semgrep means "the `.digest()` output
+            // of an MD5-initialized MessageDigest is the source". The generic
+            // shapes cannot express the receiver-provenance link, so the block
+            // otherwise compiles to nothing and the rule is rejected. We compile
+            // a `ReceiverProvenanceCall`; the Java engine fires the source only
+            // on a `.digest()` call whose receiver's in-scope initializer
+            // matches (the `"MD5"` literal is the discriminator). Java + source.
+            if let MatcherRole::Source = role {
+                if lang == Language::Java && try_compile_receiver_provenance_source_block(v, out) {
+                    return;
+                }
+            }
             // ── Focus-on-call-argument SINK shape (the sink-side analog of the
             //    parameter-as-source shape) ──────────────────
             //
@@ -4268,6 +4618,22 @@ fn compile_entry(
             // call's arguments), gated by the method-name `metavariable-regex`
             // where present. Sink/sanitizer only — a call argument is a data-flow
             // destination, not a taint origin.
+            // ── Positional-argument SINK shape (Java
+            //    `tainted-session-from-http-request`) ──────────────────────────
+            //
+            // `request.getSession().$FUNC($NAME, $VALUE)` + a `$FUNC`
+            // `metavariable-regex` alternation + `focus-metavariable: $VALUE`.
+            // Semgrep means "only a tainted VALUE at the focused position is the
+            // sink" — a tainted KEY must NOT fire. The generic any-argument focus
+            // recognizer below would drop the positional constraint (broadening),
+            // so we claim it first and compile a positionally-precise
+            // `MethodArgSink`. Gated to Java (the only rule with this shape) +
+            // sink/sanitizer.
+            if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
+                if lang == Language::Java && try_compile_method_arg_sink_block(v, role, out) {
+                    return;
+                }
+            }
             if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
                 if try_compile_focus_call_sink_block(v, role, lang, out) {
                     return;
@@ -5221,6 +5587,350 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
     }
     pieces.push(&s[start..]);
     pieces
+}
+
+/// Try to recognise the positional-`focus-metavariable` SINK shape and, if
+/// found, push one [`GenericMatcher::MethodArgSink`] per focused argument
+/// position. Returns `true` on recognition.
+///
+/// The shape (the `tainted-session-from-http-request` sink):
+///
+/// ```yaml
+/// patterns:
+///   - pattern: (HttpServletRequest $REQ).getSession().$FUNC($NAME, $VALUE);
+///   - metavariable-regex: { metavariable: $FUNC, regex: ^(putValue|setAttribute)$ }
+///   - focus-metavariable: $VALUE
+/// ```
+///
+/// Recognition (deliberately narrow so it never claims an ordinary any-argument
+/// focus sink): the outer call's method must be a METAVARIABLE pinned by an
+/// anchored alternation of concrete names (`$FUNC` → `putValue`/`setAttribute`),
+/// the call must have ≥2 top-level arguments, and the `focus-metavariable` must
+/// name one of those argument positions. The compiled sink fires only when the
+/// argument at that position carries taint — strictly narrower than the
+/// any-argument `MethodName` the dropped-constraint fallback would produce.
+///
+/// Returns `false` (claiming nothing) for any other shape, leaving the caller to
+/// fall through to the ordinary focus-call / graceful-degradation extraction.
+fn try_compile_method_arg_sink_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+    let mut patterns: Vec<String> = Vec::new();
+    let mut focus: Vec<String> = Vec::new();
+    let mut pins: Vec<(String, String)> = Vec::new();
+    collect_method_arg_sink_parts(items, &mut patterns, &mut focus, &mut pins);
+
+    if patterns.is_empty() || focus.is_empty() {
+        return false;
+    }
+
+    let before = out.len();
+    for pat in &patterns {
+        let Some((method_seg, args)) = parse_outer_call(pat) else {
+            continue;
+        };
+        // The method must be a metavariable pinned to concrete names; a
+        // concrete-method focus sink is handled by the any-argument recognizer.
+        if !is_metavariable(&method_seg) {
+            continue;
+        }
+        let Some(methods) = regex_alternatives_for(&method_seg, &pins) else {
+            continue;
+        };
+        // Require a genuinely positional argument list (≥2 args).
+        if args.len() < 2 {
+            continue;
+        }
+        for f in &focus {
+            if let Some(idx) = args.iter().position(|a| a.trim() == f.as_str()) {
+                let desc = format!("tainted argument #{idx} into `{}(...)`", methods.join("|"));
+                out.push(GenericMatcher::MethodArgSink {
+                    methods: methods.clone(),
+                    arg_index: idx,
+                    description: describe(&desc, role),
+                });
+            }
+        }
+    }
+    out.len() > before
+}
+
+/// Walk a sink `patterns:` block (recursing into `pattern-either:`/`patterns:`)
+/// collecting non-metavariable `pattern:` call texts, `focus-metavariable`
+/// names, and `metavariable-regex` (metavariable, regex) pins for the
+/// positional-argument sink recogniser.
+fn collect_method_arg_sink_parts(
+    items: &[YamlValue],
+    patterns: &mut Vec<String>,
+    focus: &mut Vec<String>,
+    pins: &mut Vec<(String, String)>,
+) {
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("focus-metavariable") => {
+                    if let Some(s) = val.as_str() {
+                        let mv = s.trim();
+                        if is_metavariable(mv) {
+                            focus.push(mv.to_string());
+                        }
+                    }
+                }
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if !is_metavariable(t) {
+                            patterns.push(t.to_string());
+                        }
+                    }
+                }
+                Some("metavariable-regex") => {
+                    if let Some(mm) = val.as_mapping() {
+                        let mv = mm
+                            .get(YamlValue::from("metavariable"))
+                            .and_then(|x| x.as_str());
+                        let re = mm.get(YamlValue::from("regex")).and_then(|x| x.as_str());
+                        if let (Some(mv), Some(re)) = (mv, re) {
+                            pins.push((mv.to_string(), re.to_string()));
+                        }
+                    }
+                }
+                Some("pattern-either") | Some("patterns") => {
+                    if let Some(seq) = val.as_sequence() {
+                        collect_method_arg_sink_parts(seq, patterns, focus, pins);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Parse the OUTERMOST call of `pat`, returning its final method-name segment
+/// and its top-level (trimmed) argument texts. Handles a nested-receiver chain
+/// with its own parens (`(Type $R).getSession().$FUNC($A, $B)`): the argument
+/// list is the balanced group closing at the pattern's final `)`, and the method
+/// segment is the last `.`-separated token of the callee. Returns `None` when
+/// `pat` is not a call ending in `)`.
+fn parse_outer_call(pat: &str) -> Option<(String, Vec<String>)> {
+    let c = pat.trim().trim_end_matches(';').trim();
+    if !c.ends_with(')') {
+        return None;
+    }
+    let bytes = c.as_bytes();
+    let mut depth = 0i32;
+    let mut open = None;
+    for i in (0..bytes.len()).rev() {
+        match bytes[i] {
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let open = open?;
+    let callee = c[..open].trim();
+    let method = callee.rsplit('.').next()?.trim();
+    if method.is_empty() {
+        return None;
+    }
+    let args_str = &c[open + 1..c.len() - 1];
+    let args: Vec<String> = split_top_level_commas(args_str)
+        .iter()
+        .map(|s| s.trim().to_string())
+        .collect();
+    Some((method.to_string(), args))
+}
+
+/// Try to recognise the receiver-provenance SOURCE shape and, if found, push one
+/// [`GenericMatcher::ReceiverProvenanceCall`]. Returns `true` on recognition.
+///
+/// The shape (the `md5-used-as-password` source):
+///
+/// ```yaml
+/// patterns:
+///   - pattern-inside: |
+///       $TYPE $MD = MessageDigest.getInstance("MD5");
+///       ...
+///   - pattern: $MD.digest(...)
+/// ```
+///
+/// Recognition: a `pattern-inside` declaring a metavariable `$MD` initialized by
+/// a call `init_receiver.init_method("literal")`, paired with a `pattern:`
+/// `$MD.method(...)` whose receiver is that SAME metavariable. The compiled
+/// source fires on the `.method(...)` call only when the receiver's in-scope
+/// initializer matches — the string literal (`"MD5"`) is the discriminator.
+///
+/// Returns `false` (claiming nothing) for any other shape.
+fn try_compile_receiver_provenance_source_block(
+    v: &YamlValue,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+    let mut insides: Vec<String> = Vec::new();
+    let mut patterns: Vec<String> = Vec::new();
+    collect_provenance_parts(items, &mut insides, &mut patterns);
+
+    for inside in &insides {
+        let Some((var, init)) = parse_decl_init(inside) else {
+            continue;
+        };
+        let Some((init_receiver, init_method, init_arg)) = parse_init_call(&init) else {
+            continue;
+        };
+        for pat in &patterns {
+            let Some((recv_mv, method)) = parse_receiver_method_call(pat) else {
+                continue;
+            };
+            if recv_mv != var {
+                continue;
+            }
+            out.push(GenericMatcher::ReceiverProvenanceCall {
+                description: format!(
+                    "`.{method}()` on a `{init_receiver}.{init_method}(\"{init_arg}\")` value"
+                ),
+                init_receiver,
+                init_method,
+                init_arg,
+                method,
+            });
+            return true;
+        }
+    }
+    false
+}
+
+/// Walk a source `patterns:` block collecting `pattern-inside:` texts and
+/// non-metavariable `pattern:` texts for the receiver-provenance recogniser.
+fn collect_provenance_parts(
+    items: &[YamlValue],
+    insides: &mut Vec<String>,
+    patterns: &mut Vec<String>,
+) {
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("pattern-inside") => {
+                    if let Some(s) = val.as_str() {
+                        insides.push(s.to_string());
+                    }
+                }
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if !is_metavariable(t) {
+                            patterns.push(t.to_string());
+                        }
+                    }
+                }
+                Some("pattern-either") | Some("patterns") => {
+                    if let Some(seq) = val.as_sequence() {
+                        collect_provenance_parts(seq, insides, patterns);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Parse a `pattern-inside` declaration `$TYPE $MD = <init>;` (possibly followed
+/// by a `...` continuation on later lines), returning the declared metavariable
+/// `$MD` and the initializer text `<init>`. Requires a declaration LHS of at
+/// least two whitespace tokens whose last is a metavariable, and a single `=`
+/// (not `==`). Returns `None` otherwise.
+fn parse_decl_init(text: &str) -> Option<(String, String)> {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
+    // Locate the first `=` that is not part of `==`/`>=`/`<=`/`!=`.
+    let bytes = line.as_bytes();
+    let mut eq = None;
+    for i in 0..bytes.len() {
+        if bytes[i] == b'=' {
+            let prev = if i > 0 { bytes[i - 1] } else { b' ' };
+            let next = if i + 1 < bytes.len() {
+                bytes[i + 1]
+            } else {
+                b' '
+            };
+            if prev != b'=' && prev != b'<' && prev != b'>' && prev != b'!' && next != b'=' {
+                eq = Some(i);
+                break;
+            }
+        }
+    }
+    let eq = eq?;
+    let lhs = line[..eq].trim();
+    let rhs = line[eq + 1..].trim().trim_end_matches(';').trim();
+    let tokens: Vec<&str> = lhs.split_whitespace().collect();
+    if tokens.len() < 2 {
+        return None;
+    }
+    let var = *tokens.last()?;
+    if !is_metavariable(var) || rhs.is_empty() {
+        return None;
+    }
+    Some((var.to_string(), rhs.to_string()))
+}
+
+/// Parse an initializer call `Receiver.method("literal")`, returning the
+/// receiver's final `.`-segment, the method name, and the first string-literal
+/// argument (quotes stripped). Returns `None` when the callee is not a dotted
+/// `Receiver.method` of plain identifiers or the first argument is not a string
+/// literal.
+fn parse_init_call(init: &str) -> Option<(String, String, String)> {
+    let c = init.trim();
+    let open = c.find('(')?;
+    if !c.ends_with(')') {
+        return None;
+    }
+    let callee = c[..open].trim();
+    let (recv, method) = callee.rsplit_once('.')?;
+    let recv_seg = recv.rsplit('.').next()?.trim();
+    let method = method.trim();
+    if !is_identifier(recv_seg) || !is_identifier(method) {
+        return None;
+    }
+    let args = &c[open + 1..c.len() - 1];
+    let first = split_top_level_commas(args).into_iter().next()?;
+    let first = first.trim();
+    let inner = first.strip_prefix('"').and_then(|t| t.strip_suffix('"'))?;
+    if inner.is_empty() {
+        return None;
+    }
+    Some((recv_seg.to_string(), method.to_string(), inner.to_string()))
+}
+
+/// Parse a `$MV.method(...)` call, returning the receiver metavariable and the
+/// method name when the receiver is a bare metavariable and the method is a
+/// single plain identifier. Returns `None` otherwise.
+fn parse_receiver_method_call(pat: &str) -> Option<(String, String)> {
+    let c = pat.trim().trim_end_matches(';').trim();
+    let open = c.find('(')?;
+    let callee = c[..open].trim();
+    let (recv, method) = callee.split_once('.')?;
+    if is_metavariable(recv) && !method.contains('.') && is_identifier(method) {
+        Some((recv.to_string(), method.to_string()))
+    } else {
+        None
+    }
 }
 
 /// The PHP superglobals. When the base of a `$SUPER[$KEY] = …` assignment is one
@@ -16883,6 +17593,254 @@ func testNoInjection3(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
         assert!(
             findings.is_empty(),
             "constant / local-var / bool-comparison args must not fire, got {findings:?}"
+        );
+    }
+    // ── Java `md5-used-as-password` (receiver-provenance source) ─────────────
+    //
+    // Compile the REAL registry rule through `parse_taint_rule` and run it:
+    // `$MD.digest(...)` where `$MD = MessageDigest.getInstance("MD5")` flows into
+    // a `*password*` method. The SHA-256 near-miss must stay silent.
+
+    const MD5_RULE: &str = r#"
+id: md5-used-as-password
+languages: [java]
+severity: WARNING
+message: MD5 used as a password hash.
+mode: taint
+pattern-sources:
+- patterns:
+  - pattern-inside: |
+      $TYPE $MD = MessageDigest.getInstance("MD5");
+      ...
+  - pattern: $MD.digest(...);
+pattern-sinks:
+- patterns:
+  - pattern: $MODEL.$METHOD(...);
+  - metavariable-regex:
+      metavariable: $METHOD
+      regex: (?i)(.*password.*)
+"#;
+
+    #[test]
+    fn md5_rule_compiles_to_provenance_source_and_method_regex_sink() {
+        let rule = compiled(MD5_RULE);
+        assert!(
+            matches!(
+                rule.spec.sources.as_slice(),
+                [GenericMatcher::ReceiverProvenanceCall {
+                    init_receiver, init_method, init_arg, method, ..
+                }] if init_receiver == "MessageDigest"
+                    && init_method == "getInstance"
+                    && init_arg == "MD5"
+                    && method == "digest"
+            ),
+            "expected a ReceiverProvenanceCall source, got {:?}",
+            rule.spec.sources
+        );
+        assert!(
+            matches!(
+                rule.spec.sinks.as_slice(),
+                [GenericMatcher::MethodNameRegex { .. }]
+            ),
+            "expected a MethodNameRegex sink, got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    #[test]
+    fn md5_rule_fires_on_md5_digest_into_password() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MD5_RULE);
+        let src = r#"
+class UserController {
+    void addUser(UserModel user) throws Exception {
+        String salt = RandomUtil.createSalt();
+        MessageDigest md = MessageDigest.getInstance("MD5");
+        md.update(user.getPassword());
+        user.setPassword(md.digest(), salt);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "MD5 digest into setPassword must fire once, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn md5_rule_silent_on_sha256_near_miss() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MD5_RULE);
+        let src = r#"
+class UserController {
+    void addUserOk(UserModel user) throws Exception {
+        String salt = RandomUtil.createSalt();
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        md.update(user.getPassword());
+        user.setPassword(md.digest(), salt);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "SHA-256 digest must NOT fire (discriminator), got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn md5_rule_silent_on_unrelated_clean_code() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MD5_RULE);
+        let src = r#"
+class Foo {
+    void bar(String x) {
+        System.out.println(x);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java parses");
+        assert!(rule.check(src, &tree).is_empty());
+    }
+
+    // ── Java `tainted-session-from-http-request` (positional-arg sink) ───────
+    //
+    // Compile the REAL registry rule and run it: only a tainted session VALUE
+    // (the focused 2nd argument) fires; a tainted KEY with a literal value stays
+    // silent. Exercises the TypedName source, for-each cookie propagation, and
+    // the positional `MethodArgSink`.
+
+    const SESSION_RULE: &str = r#"
+id: tainted-session-from-http-request
+languages: [java]
+severity: WARNING
+message: Tainted input into a session command.
+mode: taint
+pattern-sources:
+- patterns:
+  - pattern-either:
+    - patterns:
+      - pattern: |
+          (HttpServletRequest $REQ).$FUNC(...)
+      - pattern-not: |
+          (HttpServletRequest $REQ).getSession()
+pattern-sinks:
+  - patterns:
+    - pattern: (HttpServletRequest $REQ).getSession().$FUNC($NAME, $VALUE);
+    - metavariable-regex:
+        metavariable: $FUNC
+        regex: ^(putValue|setAttribute)$
+    - focus-metavariable: $VALUE
+options:
+  interfile: true
+"#;
+
+    #[test]
+    fn session_rule_compiles_to_typedname_source_and_method_arg_sink() {
+        let rule = compiled(SESSION_RULE);
+        assert!(
+            rule.spec
+                .sources
+                .iter()
+                .any(|m| matches!(m, GenericMatcher::TypedName { type_name, .. }
+                    if type_name == "HttpServletRequest")),
+            "expected a TypedName(HttpServletRequest) source, got {:?}",
+            rule.spec.sources
+        );
+        assert!(
+            matches!(
+                rule.spec.sinks.as_slice(),
+                [GenericMatcher::MethodArgSink { methods, arg_index, .. }]
+                    if *arg_index == 1
+                        && methods.contains(&"setAttribute".to_string())
+                        && methods.contains(&"putValue".to_string())
+            ),
+            "expected a MethodArgSink(arg 1) sink, got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    #[test]
+    fn session_rule_fires_on_tainted_value_not_tainted_key_via_cookie_loop() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(SESSION_RULE);
+        // `param` is tainted via the cookie for-each loop; the tainted-KEY call
+        // (value is a literal) must NOT fire, the tainted-VALUE call must.
+        let src = r#"
+class T {
+    void doPost(HttpServletRequest request) throws Exception {
+        javax.servlet.http.Cookie[] theCookies = request.getCookies();
+        String param = "none";
+        if (theCookies != null) {
+            for (javax.servlet.http.Cookie theCookie : theCookies) {
+                param = java.net.URLDecoder.decode(theCookie.getValue(), "UTF-8");
+            }
+        }
+        request.getSession().setAttribute(param, "10340");
+        request.getSession().setAttribute("param", param);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "only the tainted-VALUE setAttribute must fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn session_rule_fires_on_tainted_value_via_header_path() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(SESSION_RULE);
+        let src = r#"
+class T {
+    void doPost(HttpServletRequest request) throws Exception {
+        String param = "";
+        java.util.Enumeration<String> headers = request.getHeaders("H");
+        if (headers != null && headers.hasMoreElements()) {
+            param = headers.nextElement();
+        }
+        param = java.net.URLDecoder.decode(param, "UTF-8");
+        String bar = org.owasp.esapi.ESAPI.encoder().encodeForHTML(param);
+        request.getSession().putValue(bar, "10340");
+        request.getSession().putValue(bar, bar);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "only the tainted-VALUE putValue must fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn session_rule_silent_on_clean_literal_decode() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(SESSION_RULE);
+        // `param` is decoded from a literal, never from the request — clean.
+        let src = r#"
+class T {
+    void doPost(HttpServletRequest request) throws Exception {
+        String param = java.net.URLDecoder.decode("hello", "UTF-8");
+        request.getSession().setAttribute("param", param);
+        request.getSession().setAttribute(param, "10340");
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a literal-derived value must NOT fire, got {findings:?}"
         );
     }
 }

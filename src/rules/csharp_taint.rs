@@ -1264,6 +1264,11 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 // Constructor-argument / property-assignment sinks — sink-only,
                 // enforced in `find_sinks`; never a source (no-op here).
             }
+            NodeMatcher::MethodArgSink { .. } | NodeMatcher::ReceiverProvenanceCall { .. } => {
+                // MethodArgSink is a Java-only positional-argument sink;
+                // ReceiverProvenanceCall is a Java-only provenance source. Both
+                // are carried in the spec but no-op in the C# engine.
+            }
         }
     }
     None
@@ -1390,6 +1395,10 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         // sink (`PropertyAssignSink`) matches assignment nodes, not calls.
         | NodeMatcher::ConstructorArgSink { .. }
         | NodeMatcher::PropertyAssignSink { .. }
+        // Java-only positional-argument sink / provenance source — not
+        // call matchers here.
+        | NodeMatcher::MethodArgSink { .. }
+        | NodeMatcher::ReceiverProvenanceCall { .. }
         // Ellipsis-string source `"..."` — not a call matcher.
         | NodeMatcher::LiteralString { .. } => false,
     }

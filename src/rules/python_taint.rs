@@ -1693,10 +1693,12 @@ fn match_source(
             // C#-only; carried in the spec but no-op here.
             | NodeMatcher::FirstParamSource { .. }
             | NodeMatcher::CallArgConcat { .. }
-            // Constructor-argument / property-assignment sinks are C#-only;
-            // carried in the spec but no-op here.
+            // C#-only (constructor-arg/property-assign) and Java-only
+            // (method-arg/receiver-provenance) sinks; carried but no-op here.
             | NodeMatcher::ConstructorArgSink { .. }
-            | NodeMatcher::PropertyAssignSink { .. } => {
+            | NodeMatcher::PropertyAssignSink { .. }
+            | NodeMatcher::MethodArgSink { .. }
+            | NodeMatcher::ReceiverProvenanceCall { .. } => {
                 // Sink-only matchers; MemberAssign is JS-specific.
             }
         }
