@@ -1256,6 +1256,10 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 // its bare-identifier reads then resolve through `state.info(...)`
                 // at the top of `expression_taint` (no-op here).
             }
+            NodeMatcher::DecoratedParamSource { .. } => {
+                // Python-only MCP decorated-parameter source; carried in the spec
+                // but never seeded by the C# engine (no-op here).
+            }
             NodeMatcher::CallArgConcat { .. } => {
                 // Concat-in-call sink — sink-only, enforced in `find_sinks`;
                 // never a source (no-op here).
@@ -1386,6 +1390,8 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         // First-parameter signature source — seeded by `collect_param_sources`,
         // never matched as a call sink/sanitizer.
         | NodeMatcher::FirstParamSource { .. }
+        // Python-only MCP decorated-parameter source; no-op for C#.
+        | NodeMatcher::DecoratedParamSource { .. }
         // Concat-in-call sink — enforced directly in `find_sinks`, not through
         // the generic call-matcher path.
         | NodeMatcher::CallArgConcat { .. }

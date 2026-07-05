@@ -199,6 +199,93 @@ the match to a named keyword.
 **Needs:** a list-literal (contains-value) source primitive + keyword-argument
 focus sink. Deferred.
 
+## MCP decorated-parameter sources (2026-07 pass) — IMPLEMENTED
+
+Two additional Python `mode: taint` skips — `mcp-ssrf-python` and
+`mcp-command-injection-python` — share one source shape: a parameter of a
+function **decorated by `@$SERVER.tool()`**:
+
+```yaml
+pattern-sources:
+  - patterns:
+      - pattern: |
+          @$SERVER.tool()
+          def $FUNC(..., $PARAM, ...):
+              ...
+      - focus-metavariable: $PARAM
+```
+
+The decorator is the whole discriminator: an MCP tool handler's parameters are
+untrusted, a plain helper's are not. The any-parameter wildcard
+(`ParamName[ANY_PARAM_WILDCARD]`) would DROP the decorator gate and seed every
+function's parameters (over-match); the source-side `pattern-inside` post-filter
+cannot rescue it either, because seeded parameters carry no `source_range` and
+the filter drops range-less findings.
+
+**Primitive added: `NodeMatcher::DecoratedParamSource { decorator }`.** The
+Python engine's `seed_param_sources` now seeds a parameter only when its
+enclosing `function_definition` is wrapped in a `decorated_definition` carrying a
+`@<recv>.<decorator>(...)` **call** decorator whose final method segment equals
+`decorator` (e.g. `tool`). `decorator_method_names` reads the decorators off the
+def's parent; `try_compile_decorated_param_source_block` recognises the shape and
+extracts the concrete method name (`decorator_method_from_signature`), scanning
+the `def`'s parameter list past the decorator's own `()`
+(`decorated_def_has_param`). The variant is source-only: carried by every
+engine's shared `NodeMatcher` but no-op outside Python.
+
+**Faithfulness (proven by tests in `semgrep_taint.rs`):**
+- `mcp_ssrf_fires_on_decorated_handler_param` — `@mcp.tool()` param → `requests.get`
+  fires.
+- `mcp_ssrf_silent_on_undecorated_function` — the identical body without `@…tool()`
+  is silent (the discriminator).
+- `mcp_ssrf_silent_on_wrong_decorator` — `@app.route(...)` (not `.tool()`) is silent.
+- `mcp_ssrf_silent_on_sanitized_and_hardcoded` — `urllib.parse.urlparse` sanitizer
+  and a no-param hardcoded fetch are silent.
+- `mcp_cmdinj_fires_on_os_system_and_eval` / `mcp_cmdinj_silent_on_sanitized_and_undecorated`
+  — `os.system`/`eval` fire; `shlex.quote` sanitizer and undecorated helper silent.
+
+**`mcp-command-injection-python` sink note (broader-but-precedented).** Its
+`os.system($SINK)`, `eval($SINK)`, `exec($SINK)` sinks are exact. Its
+`subprocess.run($SINK, ..., shell=True, ...)` (and `.call`/`.Popen`) arms compile
+to a broad `Call { subprocess.run }` that **drops the `shell=True` keyword
+constraint** — a tainted `subprocess.run(param, shell=False)` would also fire.
+This is NOT a new imprecision: the already-shipped, loaded sibling rule
+`llm-output-to-exec-python` uses the identical `subprocess.run($SINK, ...,
+shell=True)` focus-call sink with the same broadening. No `ok`-marked fixture
+line is a tainted subprocess call, so the broadening never contradicts the rule's
+own test fixture. A per-arm `shell=True` keyword-value enforcement would make it
+exact, but that is a global focus-call-sink change that would also narrow the
+shipped `llm-output-to-exec-python` — out of scope here.
+
+## Still deferred (this pass)
+
+### `subprocess-list-passed-as-string`
+
+Source `" ".join($LIST)` is a **method call on a specific string-literal
+receiver** (`" "`, a single space) with method `join`. No matcher expresses
+"call whose receiver is the string literal `" "` and whose method is `join`", and
+the receiver literal is the discriminator: the fixture's `ok` line passes the
+list directly (`subprocess.run([...], shell=True)`), and a `",".join(...)` (comma,
+not space) is likewise not the target. A generic "any `.join()` call" source would
+over-match. **Needs:** a literal-receiver method-call source primitive
+(`"<lit>".<method>(...)`). Deferred.
+
+### `hardcoded-token`
+
+Source is a bare string literal (`"..."` → foxguard's `LiteralString`), which
+alone is expressible. The whole discriminator lives in the **sink's dropped
+constraints**: the boto3 keyword name must match
+`(aws_session_token|aws_access_key_id|aws_secret_access_key)`
+(`metavariable-regex` on `$TOKEN`), and the value must look like a real key —
+`^AKI…` / `^[A-Za-z0-9/+=]+$` (`metavariable-pattern`) **and** pass an
+`entropy` analyzer (`metavariable-analysis`). The fixture's `ok` cases turn
+entirely on these: `aws_access_key_id="this-is-not-a-key"` (hyphens fail the
+value regex), `"XXXXXXXX"` / `"<your token here>"` (low entropy). foxguard drops
+`metavariable-regex`/`metavariable-pattern`/`metavariable-analysis` inside a taint
+sink, so a compiled sink would be "any keyword argument that is a string literal"
+— firing on every `ok` line → false positives. **Needs:** keyword-name-regex +
+value-regex + Shannon-entropy analysis enforceable inside a taint sink. Deferred.
+
 ## Bottom line
 
 The one clean, provably-faithful win (`avoid-sqlalchemy-text`) is shipped by

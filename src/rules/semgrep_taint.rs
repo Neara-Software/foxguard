@@ -328,6 +328,15 @@ enum GenericMatcher {
     /// solely for the C# engine; other engines carry it but no-op it.
     FirstParamSource { description: String },
 
+    /// Seed every parameter of a function decorated by a `<x>.<decorator>(...)`
+    /// call — the MCP-handler source `@$SERVER.tool() def $F(..., $PARAM, ...)`.
+    /// See [`crate::rules::taint_engine::NodeMatcher::DecoratedParamSource`].
+    /// Seeded by the Python engine; other engines carry it but no-op it.
+    DecoratedParamSource {
+        decorator: String,
+        description: String,
+    },
+
     /// Match a call to `method(...)` one of whose arguments is a string
     /// concatenation (`+`) carrying tainted data — the C# xpath-injection sink
     /// `$NAV.Compile("..." + $INPUT + "...")`. See
@@ -584,6 +593,13 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => python_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -770,6 +786,13 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => javascript_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -947,6 +970,13 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => go_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -1124,6 +1154,13 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => java_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -1308,6 +1345,13 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => c_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -1485,6 +1529,13 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => kotlin_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -1662,6 +1713,13 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => ruby_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -1848,6 +1906,13 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => csharp_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -2023,6 +2088,13 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => bash_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -2207,6 +2279,13 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => solidity_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -2382,6 +2461,13 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => scala_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -2557,6 +2643,13 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => apex_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -2732,6 +2825,13 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => swift_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -2900,6 +3000,13 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => php_taint::NodeMatcher::DecoratedParamSource {
+            decorator: decorator.clone(),
+            description: description.clone(),
+        },
         GenericMatcher::CallArgConcat {
             method,
             description,
@@ -4507,6 +4614,29 @@ fn compile_entry(
             // every function parameter as tainted (see
             // `taint_engine::param_names_are_wildcard`). Only meaningful as a
             // SOURCE — a parameter is a taint origin, not a destination.
+            // ── Decorated-parameter SOURCE shape (MCP handler) ──────────────
+            //
+            // The MCP rules name their source as a parameter of a function
+            // DECORATED by `@$SERVER.tool()`:
+            //
+            //   patterns:
+            //     - pattern: |
+            //         @$SERVER.tool()
+            //         def $FUNC(..., $PARAM, ...):
+            //             ...
+            //     - focus-metavariable: $PARAM
+            //
+            // The plain any-parameter wildcard would DROP the decorator gate and
+            // seed every function's parameters (over-match). We compile this to a
+            // `DecoratedParamSource { decorator }` so the engine seeds parameters
+            // ONLY inside functions carrying a matching `<x>.tool(...)` decorator.
+            // Tried before the generic param-source recogniser (whose signature
+            // scan would stumble on the decorator's own `()` argument list).
+            if let MatcherRole::Source = role {
+                if try_compile_decorated_param_source_block(v, out) {
+                    return;
+                }
+            }
             if let MatcherRole::Source = role {
                 if try_compile_param_source_block(v, out) {
                     return;
@@ -5026,6 +5156,97 @@ fn try_compile_param_source_block(v: &YamlValue, out: &mut Vec<GenericMatcher>) 
         description: "untrusted function parameter".to_string(),
     });
     true
+}
+
+/// Try to recognise the "decorated-parameter" SOURCE shape — a parameter of a
+/// function DECORATED by `@$SERVER.<METHOD>()` (the MCP `@$SERVER.tool()` rules):
+///
+/// ```yaml
+/// patterns:
+///   - pattern: |
+///       @$SERVER.tool()
+///       def $FUNC(..., $PARAM, ...):
+///           ...
+///   - focus-metavariable: $PARAM
+/// ```
+///
+/// Recognition requires all of:
+///   1. a focused/bare seed metavariable `$PARAM`;
+///   2. a `pattern:` whose text is a DECORATED function definition — its first
+///      line is a `@<recv>.<METHOD>(...)` decorator and a later line declares
+///      `def $F(...)` whose parameter list contains the seed; and
+///   3. a concrete decorator method name `<METHOD>` extracted from the `@...`
+///      line (the receiver may be a metavariable; the method must be concrete).
+///
+/// On success pushes a single [`GenericMatcher::DecoratedParamSource`] carrying
+/// that method name. Returns `false` (pushing nothing) for any other shape.
+fn try_compile_decorated_param_source_block(v: &YamlValue, out: &mut Vec<GenericMatcher>) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+
+    let mut seeds: Vec<String> = Vec::new();
+    let mut signature_texts: Vec<String> = Vec::new();
+    collect_param_source_parts(items, &mut seeds, &mut signature_texts);
+
+    if seeds.is_empty() || signature_texts.is_empty() {
+        return false;
+    }
+
+    // A signature must (a) declare a decorated def whose decorator yields a
+    // concrete method name, and (b) list the seed inside the def's parameter
+    // list (skipping the decorator's own `()`).
+    for sig in &signature_texts {
+        let Some(decorator) = decorator_method_from_signature(sig) else {
+            continue;
+        };
+        let has_param = seeds.iter().any(|seed| decorated_def_has_param(sig, seed));
+        if has_param {
+            let description = format!("parameter of `@…{decorator}()`-decorated handler");
+            out.push(GenericMatcher::DecoratedParamSource {
+                decorator,
+                description,
+            });
+            return true;
+        }
+    }
+    false
+}
+
+/// Extract the concrete decorator method name from a decorated-def pattern's
+/// leading `@<recv>.<METHOD>(...)` line. Returns `Some("tool")` for
+/// `@$SERVER.tool()`, `None` when there is no `@…` decorator line or the
+/// decorator has no `.<name>(` call form.
+fn decorator_method_from_signature(sig: &str) -> Option<String> {
+    let line = sig.lines().map(str::trim).find(|l| l.starts_with('@'))?;
+    // Strip the leading `@`, then take the callee text up to the first `(`.
+    let after_at = line[1..].trim_start();
+    let callee = after_at.split('(').next()?.trim();
+    // Require a call form: there must be a `(` after the callee.
+    if !after_at.contains('(') {
+        return None;
+    }
+    // The method name is the final dotted segment of the callee.
+    let name = callee.rsplit('.').next()?.trim();
+    if name.is_empty() || !name.chars().all(is_ident_char) {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+/// True when the decorated-def pattern `sig` lists `seed` in the parameter list
+/// of its `def`/`function`/`fun` line — the parameter list that FOLLOWS the
+/// decorator line, so the decorator's own `()` is not mistaken for the params.
+fn decorated_def_has_param(sig: &str, seed: &str) -> bool {
+    // Find the def line (the one introducing the parameter list). We reuse
+    // `signature_has_param` but anchored on the substring starting at the `def `
+    // (or other def keyword) so the decorator's parentheses are skipped.
+    let def_pos = ["def ", "function", "func ", "fun "]
+        .iter()
+        .filter_map(|kw| sig.find(kw))
+        .min();
+    let scan_from = def_pos.unwrap_or(0);
+    signature_has_param(&sig[scan_from..], seed)
 }
 
 /// Try to recognise the "string-literal-matching-regex" SOURCE shape in a
@@ -17841,6 +18062,262 @@ class T {
         assert!(
             findings.is_empty(),
             "a literal-derived value must NOT fire, got {findings:?}"
+        );
+    }
+
+    // ── MCP decorated-parameter source (`@$SERVER.tool()`) ────────────────────
+
+    const MCP_SSRF_RULE: &str = r#"
+id: mcp-ssrf-python
+mode: taint
+languages: [python]
+severity: ERROR
+message: MCP handler input flows into an HTTP request URL.
+pattern-sources:
+  - patterns:
+      - pattern: |
+          @$SERVER.tool()
+          def $FUNC(..., $PARAM, ...):
+              ...
+      - focus-metavariable: $PARAM
+pattern-sinks:
+  - patterns:
+      - pattern: requests.get($SINK, ...)
+      - focus-metavariable: $SINK
+  - patterns:
+      - pattern: requests.post($SINK, ...)
+      - focus-metavariable: $SINK
+  - patterns:
+      - pattern: urllib.request.urlopen($SINK)
+      - focus-metavariable: $SINK
+pattern-sanitizers:
+  - pattern: urllib.parse.urlparse(...)
+"#;
+
+    const MCP_CMDINJ_RULE: &str = r#"
+id: mcp-command-injection-python
+mode: taint
+languages: [python]
+severity: ERROR
+message: MCP handler input flows into a command execution sink.
+pattern-sources:
+  - patterns:
+      - pattern: |
+          @$SERVER.tool()
+          def $FUNC(..., $PARAM, ...):
+              ...
+      - focus-metavariable: $PARAM
+pattern-sinks:
+  - patterns:
+      - pattern: os.system($SINK)
+      - focus-metavariable: $SINK
+  - patterns:
+      - pattern: eval($SINK)
+      - focus-metavariable: $SINK
+  - patterns:
+      - pattern: exec($SINK)
+      - focus-metavariable: $SINK
+pattern-sanitizers:
+  - pattern: shlex.quote(...)
+"#;
+
+    #[test]
+    fn mcp_source_compiles_to_decorated_param_source() {
+        let rule = compiled(MCP_SSRF_RULE);
+        assert!(
+            rule.spec.sources.iter().any(
+                |m| matches!(m, GenericMatcher::DecoratedParamSource { decorator, .. }
+                    if decorator == "tool")
+            ),
+            "expected a DecoratedParamSource(tool) source, got {:?}",
+            rule.spec.sources
+        );
+        // Sinks must be concrete Call matchers for the HTTP funcs.
+        assert!(
+            rule.spec
+                .sinks
+                .iter()
+                .any(|m| matches!(m, GenericMatcher::Call { canonical, .. }
+                    if canonical == "requests.get")),
+            "expected a requests.get Call sink, got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    #[test]
+    fn mcp_ssrf_fires_on_decorated_handler_param() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MCP_SSRF_RULE);
+        let src = r#"
+import requests
+@mcp.tool()
+def fetch_url(url: str) -> str:
+    response = requests.get(url)
+    return response.text
+"#;
+        let tree = parse_file(src, Language::Python).expect("py parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "tainted MCP param must reach requests.get, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn mcp_ssrf_silent_on_undecorated_function() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MCP_SSRF_RULE);
+        // No `@x.tool()` decorator → the parameter is NOT an MCP source. The
+        // discriminator the rule relies on; must be silent even though `url`
+        // structurally reaches requests.get.
+        let src = r#"
+import requests
+def fetch_url(url: str) -> str:
+    response = requests.get(url)
+    return response.text
+"#;
+        let tree = parse_file(src, Language::Python).expect("py parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "undecorated function param must NOT fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn mcp_ssrf_silent_on_wrong_decorator() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MCP_SSRF_RULE);
+        // Decorated, but with `@app.route(...)`, not `.tool()` → not an MCP
+        // handler; the `tool` discriminator must keep it silent.
+        let src = r#"
+import requests
+@app.route("/x")
+def fetch_url(url: str) -> str:
+    response = requests.get(url)
+    return response.text
+"#;
+        let tree = parse_file(src, Language::Python).expect("py parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "non-tool decorator must NOT fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn mcp_ssrf_silent_on_sanitized_and_hardcoded() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MCP_SSRF_RULE);
+        // urlparse sanitizer + a no-param hardcoded fetch: both `ok` in fixture.
+        let src = r#"
+import requests
+import urllib.parse
+@mcp.tool()
+def safe_fetch(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    response = requests.get(parsed.geturl())
+    return response.text
+
+@mcp.tool()
+def hardcoded_fetch() -> str:
+    response = requests.get("https://api.example.com/data")
+    return response.text
+"#;
+        let tree = parse_file(src, Language::Python).expect("py parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "sanitized + hardcoded must NOT fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn mcp_cmdinj_fires_on_os_system_and_eval() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MCP_CMDINJ_RULE);
+        let src = r#"
+import os
+@mcp.tool()
+def run_command(cmd: str) -> str:
+    os.system(cmd)
+    return "done"
+
+@mcp.tool()
+def eval_expr(expr: str) -> str:
+    result = eval(expr)
+    return str(result)
+"#;
+        let tree = parse_file(src, Language::Python).expect("py parses");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            2,
+            "os.system(cmd) and eval(expr) must both fire, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn mcp_cmdinj_subprocess_shell_true_fires() {
+        use crate::engine::parser::parse_file;
+        // The real rule's subprocess sink `subprocess.run($SINK, ..., shell=True)`
+        // compiles to a broad `Call { subprocess.run }` (the `shell=True` keyword
+        // constraint is dropped, exactly as the already-shipped sibling rule
+        // `llm-output-to-exec-python` does). It fires on the fixture's shell=True
+        // positive; no fixture `ok` case is a tainted subprocess call, so this
+        // broadening never over-matches a fixture-marked-safe line.
+        let rule = compiled(
+            r#"
+id: mcp-command-injection-python
+mode: taint
+languages: [python]
+severity: ERROR
+message: m
+pattern-sources:
+  - patterns:
+      - pattern: |
+          @$SERVER.tool()
+          def $FUNC(..., $PARAM, ...):
+              ...
+      - focus-metavariable: $PARAM
+pattern-sinks:
+  - patterns:
+      - pattern: subprocess.run($SINK, ..., shell=True, ...)
+      - focus-metavariable: $SINK
+"#,
+        );
+        let src = "import subprocess\n@mcp.tool()\ndef f(command: str):\n    subprocess.run(command, shell=True)\n";
+        let tree = parse_file(src, Language::Python).unwrap();
+        assert_eq!(
+            rule.check(src, &tree).len(),
+            1,
+            "shell=True subprocess sink must fire on the tainted MCP param"
+        );
+    }
+
+    #[test]
+    fn mcp_cmdinj_silent_on_sanitized_and_undecorated() {
+        use crate::engine::parser::parse_file;
+        let rule = compiled(MCP_CMDINJ_RULE);
+        let src = r#"
+import os
+import shlex
+@mcp.tool()
+def safe_quoted(cmd: str) -> str:
+    safe_cmd = shlex.quote(cmd)
+    os.system(safe_cmd)
+    return "done"
+
+def helper(cmd: str) -> str:
+    os.system(cmd)
+    return "done"
+"#;
+        let tree = parse_file(src, Language::Python).expect("py parses");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "shlex-quoted + undecorated helper must NOT fire, got {findings:?}"
         );
     }
 }

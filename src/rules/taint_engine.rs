@@ -354,6 +354,38 @@ pub enum NodeMatcher {
     /// carry it in the spec but no-op it (only C# registry rules use this shape).
     FirstParamSource { description: String },
 
+    /// Seed EVERY parameter of a function that is DECORATED by a call whose
+    /// final method-name segment equals `decorator` — the Semgrep MCP-handler
+    /// source shape
+    ///
+    /// ```yaml
+    /// pattern-sources:
+    ///   - patterns:
+    ///       - pattern: |
+    ///           @$SERVER.tool()
+    ///           def $FUNC(..., $PARAM, ...):
+    ///               ...
+    ///       - focus-metavariable: $PARAM
+    /// ```
+    ///
+    /// where `@$SERVER.tool()` binds any `<recv>.tool(...)` decorator (`decorator
+    /// == "tool"`) and the focused `$PARAM` matches any parameter (`..., $PARAM,
+    /// ...`). The decorator is the precision anchor: parameters are seeded ONLY
+    /// inside functions carrying a matching decorator, so a plain (undecorated)
+    /// helper's parameters are never tainted.
+    ///
+    /// Faithfulness: this is NOT the any-parameter wildcard
+    /// ([`NodeMatcher::ParamName`] with the wildcard sentinel) — it seeds a
+    /// parameter only when its enclosing function is decorated by a
+    /// `<x>.<decorator>(...)` call, so `def helper(cmd): os.system(cmd)` with NO
+    /// `@x.tool()` decorator is silent (the discriminator the MCP rule relies on).
+    /// Source only — a parameter is a taint origin. Seeded by the Python engine
+    /// (the MCP rules are Python); other engines carry it in the spec but no-op it.
+    DecoratedParamSource {
+        decorator: String,
+        description: String,
+    },
+
     /// Match a CALL whose final method-name segment equals `method` AND one of
     /// whose arguments is a string CONCATENATION (`+`) that carries tainted
     /// data — the Semgrep C# xpath-injection sink
@@ -510,6 +542,7 @@ impl NodeMatcher {
             NodeMatcher::TaintedSubscriptKey { description, .. } => description,
             NodeMatcher::CallArgSource { description, .. } => description,
             NodeMatcher::FirstParamSource { description } => description,
+            NodeMatcher::DecoratedParamSource { description, .. } => description,
             NodeMatcher::CallArgConcat { description, .. } => description,
             NodeMatcher::ConstructorArgSink { description, .. } => description,
             NodeMatcher::PropertyAssignSink { description, .. } => description,
@@ -1720,6 +1753,12 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
         }
         NodeMatcher::FirstParamSource { description } => {
             format!("FPS|{description}")
+        }
+        NodeMatcher::DecoratedParamSource {
+            decorator,
+            description,
+        } => {
+            format!("DPS|{decorator}|{description}")
         }
         NodeMatcher::CallArgConcat {
             method,
