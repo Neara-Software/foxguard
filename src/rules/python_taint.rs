@@ -1496,6 +1496,16 @@ fn match_source(
                 // from the function's parameter list, not when walking
                 // expressions.
             }
+            NodeMatcher::LiteralString { description } => {
+                // Ellipsis-string source `"..."`: any string literal is a taint
+                // origin. Python string literals are `string` (and adjacent
+                // `concatenated_string`, e.g. `"a" "b"`). Matching ONLY these
+                // literal node kinds keeps the source faithful — an identifier,
+                // call result, or environment read is never seeded.
+                if matches!(node.kind(), "string" | "concatenated_string") {
+                    return Some(description.clone());
+                }
+            }
             NodeMatcher::MethodName { .. }
             | NodeMatcher::CallRegex { .. }
             | NodeMatcher::MethodNameRegex { .. }

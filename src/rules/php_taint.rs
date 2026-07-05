@@ -1518,7 +1518,10 @@ fn match_source(node: Node<'_>, source: &str, spec: &TaintSpec) -> Option<String
             // seeding, so it is a no-op here.
             | NodeMatcher::TypedName { .. }
             // Java-only typed-assignment sink; no-op in source position here.
-            | NodeMatcher::TypedAssignTarget { .. } => {
+            | NodeMatcher::TypedAssignTarget { .. }
+            // Ellipsis-string source `"..."`; no PHP registry rule uses this
+            // source shape, so the PHP engine does not seed string literals.
+            | NodeMatcher::LiteralString { .. } => {
                 // Sink-only matchers; BinopFormat is carried but not yet matched
                 // in the PHP engine (no-op).
             }

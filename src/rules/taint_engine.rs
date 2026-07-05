@@ -207,6 +207,27 @@ pub enum NodeMatcher {
         type_name: String,
         description: String,
     },
+
+    /// Match any STRING-LITERAL node as a taint SOURCE — the Semgrep
+    /// ellipsis-string source `"..."` ("a string literal is the taint
+    /// source"). Compiled from a bare `pattern-sources: - pattern: "..."`
+    /// entry, this seeds every string-literal expression as tainted; the
+    /// engine's existing propagation then carries that taint to the sink,
+    /// so a hardcoded literal reaching a JWT signer / crypto / credential
+    /// sink fires while a value read from the environment (a non-literal
+    /// identifier or call result) stays clean.
+    ///
+    /// Faithfulness (the whole point): this matches ONLY string-literal AST
+    /// nodes — never identifiers, calls, or other expressions — so a
+    /// hardcoded-secret rule fires on `sign(p, "secret")` but is silent on
+    /// `sign(p, secretFromEnv)`. The literal node kinds are grammar-specific
+    /// (`string`/`concatenated_string` in Python, `string`/`template_string`
+    /// in JS/TS); each engine that supports string-literal sources matches
+    /// its own kinds. Source only — a literal is a taint origin, not a
+    /// destination. Only the Python and JavaScript engines consult it today
+    /// (the only registry rules with this source shape target those langs);
+    /// other engines carry it in the spec but no-op it.
+    LiteralString { description: String },
 }
 
 impl NodeMatcher {
@@ -227,6 +248,7 @@ impl NodeMatcher {
             NodeMatcher::ReturnValue { description, .. } => description,
             NodeMatcher::TypedName { description, .. } => description,
             NodeMatcher::TypedAssignTarget { description, .. } => description,
+            NodeMatcher::LiteralString { description } => description,
         }
     }
 }
@@ -1339,6 +1361,9 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
             description,
         } => {
             format!("TAT|{type_name}|{description}")
+        }
+        NodeMatcher::LiteralString { description } => {
+            format!("LS|{description}")
         }
     }
 }
