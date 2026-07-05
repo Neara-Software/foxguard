@@ -1689,7 +1689,9 @@ fn match_source(
             | NodeMatcher::TypedAssignTarget { .. }
             // Ellipsis-string source `"..."`; no Go registry rule uses this
             // source shape, so the Go engine does not seed string literals.
-            | NodeMatcher::LiteralString { .. } => {
+            | NodeMatcher::LiteralString { .. }
+            // PHP-only loose-equality comparison sink; no-op in the Go engine.
+            | NodeMatcher::LooseEquality { .. } => {
                 // Sink-only matcher; MemberAssign is JS-specific; BinopFormat is
                 // matched on binary-expression nodes, not as a source.
             }

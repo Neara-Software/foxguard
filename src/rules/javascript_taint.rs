@@ -2008,7 +2008,10 @@ fn match_source(
             // seeding, so it is a no-op here.
             | NodeMatcher::TypedName { .. }
             // Java-only typed-assignment sink; no-op in source position here.
-            | NodeMatcher::TypedAssignTarget { .. } => {
+            | NodeMatcher::TypedAssignTarget { .. }
+            // PHP-only loose-equality comparison sink; a sink-only matcher the
+            // JS engine does not match (no-op).
+            | NodeMatcher::LooseEquality { .. } => {
                 // Sink-only matchers; BinopFormat sinks are carried in the spec
                 // but the JS engine does not yet match them as a source (no-op).
             }
