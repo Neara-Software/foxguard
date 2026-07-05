@@ -449,8 +449,16 @@ fn analyze_scope(
     // Three passes cover `source -> local -> derived -> sink` chains without
     // a fixed-point loop. Propagators run inside the loop so taint that flows
     // into a receiver via a `sb.Append(x)` mutation reaches downstream sinks.
+    //
+    // `seed_call_arg_sources` (focus-on-call-argument sources such as
+    // `NextBytes($KEY)`) runs INSIDE the loop, AFTER `propagate_assignments`:
+    // the focused buffer's own declaration (`byte[] key = new byte[16];`) is an
+    // untainted RHS, so `propagate_assignments` clears `key` each pass — the
+    // call-argument seeding must re-establish the fill-taint afterwards so it
+    // survives to the sink.
     for _ in 0..3 {
         propagate_assignments(body, source, spec, &mut state);
+        seed_call_arg_sources(body, source, spec, &mut state);
         apply_propagators(body, source, spec, propagators, &mut state);
     }
     find_sinks(body, source, spec, &state, out);
@@ -576,6 +584,105 @@ fn collect_param_sources(
             );
         }
     }
+}
+
+/// Seed taint from focus-on-call-argument sources
+/// ([`NodeMatcher::CallArgSource`]).
+///
+/// For each such source `{ method, arg_index }`, walk the scope for an
+/// `invocation_expression` whose callee's final method-name segment equals
+/// `method`, and seed the IDENTIFIER sitting in the `arg_index`-th argument as
+/// tainted. This is the source-side dual of the focus-on-call-argument sink: the
+/// buffer a weak RNG's `NextBytes(key)` fills becomes untrusted key material.
+///
+/// Faithfulness: seeds ONLY the focused argument position of a MATCHING call.
+/// `rng.NextBytes(key)` seeds `key`; an unrelated `otherCall(key)` seeds nothing;
+/// `rng.NextBytes(seed, key)` seeds only position-`arg_index`; and a buffer never
+/// passed to a matching call is not seeded. Only a bare-identifier argument is
+/// seeded (a literal / expression argument has no variable to taint).
+fn seed_call_arg_sources(scope: Node<'_>, source: &str, spec: &TaintSpec, state: &mut TaintState) {
+    let targets: Vec<(&str, usize, &str)> = spec
+        .sources
+        .iter()
+        .filter_map(|m| match m {
+            NodeMatcher::CallArgSource {
+                method,
+                arg_index,
+                description,
+            } => Some((method.as_str(), *arg_index, description.as_str())),
+            _ => None,
+        })
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+
+    let mut pending: Vec<(String, TaintInfo)> = Vec::new();
+    walk_scope_nodes(scope, source, &mut |node, src| {
+        if node.kind() != "invocation_expression" {
+            return;
+        }
+        let Some(func) = node.child_by_field_name("function") else {
+            return;
+        };
+        let Some(method_name) = final_name_segment(func, src) else {
+            return;
+        };
+        let Some(args) = call_arguments(node) else {
+            return;
+        };
+        for (method, arg_index, description) in &targets {
+            if method_name != *method {
+                continue;
+            }
+            if let Some(ident) = nth_argument_identifier(args, *arg_index, src) {
+                pending.push((
+                    ident.to_string(),
+                    TaintInfo {
+                        description: description.to_string(),
+                        line: node.start_position().row + 1,
+                        hops: 0,
+                    },
+                ));
+            }
+        }
+    });
+    for (name, info) in pending {
+        state.taint(name, info);
+    }
+}
+
+/// Return the bare-identifier name of the `index`-th argument (zero-based) of a
+/// C# `argument_list`, or `None` when that position is absent or is not a plain
+/// identifier. `argument_list` children are `argument` wrappers holding one
+/// named expression; commented-out / named-argument forms are handled by taking
+/// the wrapper's first named child.
+fn nth_argument_identifier<'a>(
+    arg_list: Node<'_>,
+    index: usize,
+    source: &'a str,
+) -> Option<&'a str> {
+    let mut cursor = arg_list.walk();
+    let mut position = 0usize;
+    for child in arg_list.children(&mut cursor) {
+        if child.kind() != "argument" {
+            continue;
+        }
+        if position == index {
+            let mut acursor = child.walk();
+            for expr in child.children(&mut acursor) {
+                if expr.is_named() {
+                    if expr.kind() == "identifier" {
+                        return Some(node_text(expr, source));
+                    }
+                    return None;
+                }
+            }
+            return None;
+        }
+        position += 1;
+    }
+    None
 }
 
 fn propagate_assignments(scope: Node<'_>, source: &str, spec: &TaintSpec, state: &mut TaintState) {
@@ -922,6 +1029,14 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 // sink-only, never a source, and the C# engine does not match
                 // them (no-op).
             }
+            NodeMatcher::CallArgSource { .. } => {
+                // Focus-on-call-argument source `NextBytes($KEY)` — NOT matched
+                // here as an *expression* source. It is seeded onto the focused
+                // argument's identifier by `seed_call_arg_sources`; once that
+                // identifier is in the taint state, its bare-identifier reads
+                // resolve through `state.info(...)` at the top of
+                // `expression_taint` (no-op here).
+            }
         }
     }
     None
@@ -1033,6 +1148,9 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         // PHP-only tainted class-name / subscript-key sinks — not call matchers.
         | NodeMatcher::TaintedCallee { .. }
         | NodeMatcher::TaintedSubscriptKey { .. }
+        // Focus-on-call-argument source — seeded by `seed_call_arg_sources`,
+        // never matched as a call sink/sanitizer.
+        | NodeMatcher::CallArgSource { .. }
         // Ellipsis-string source `"..."` — not a call matcher.
         | NodeMatcher::LiteralString { .. } => false,
     }

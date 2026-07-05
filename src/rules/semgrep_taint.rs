@@ -304,6 +304,23 @@ enum GenericMatcher {
         base: Option<String>,
         description: String,
     },
+
+    /// Matches a value written into the focused ARGUMENT POSITION of a named CALL
+    /// as a taint SOURCE — the Semgrep "focus a call argument" source
+    /// `pattern-inside: (System.Random $RNG).NextBytes($KEY); ...` + focus/bare
+    /// `pattern: $KEY` (the C# `use_weak_rng_for_keygeneration` rule: the buffer
+    /// filled by a weak RNG's `NextBytes(key)` becomes untrusted key material).
+    /// The SOURCE-position dual of the focus-on-call-argument SINK shape: the
+    /// engine SEEDS the identifier in the `arg_index`-th argument of a call whose
+    /// final method name equals `method`, and its normal propagation carries that
+    /// taint to the sink. Fires ONLY on the focused argument position of a
+    /// matching call. Source only. Seeded by the C# engine; other engines carry
+    /// it in the spec but no-op it.
+    CallArgSource {
+        method: String,
+        arg_index: usize,
+        description: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -487,6 +504,15 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => python_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -614,6 +640,15 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => javascript_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -732,6 +767,15 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => go_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -850,6 +894,15 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => java_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -975,6 +1028,15 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => c_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -1093,6 +1155,15 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => kotlin_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -1211,6 +1282,15 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => ruby_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -1338,6 +1418,15 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => csharp_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -1454,6 +1543,15 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => bash_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -1579,6 +1677,15 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => solidity_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -1695,6 +1802,15 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => scala_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -1811,6 +1927,15 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => apex_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -1927,6 +2052,15 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => swift_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -2036,6 +2170,15 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
                 description: description.clone(),
             }
         }
+        GenericMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => php_taint::NodeMatcher::CallArgSource {
+            method: method.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
     }
 }
 
@@ -3632,6 +3775,30 @@ fn compile_entry(
                     return;
                 }
             }
+            // ── Focus-on-call-argument SOURCE shape (the source-side dual of the
+            //    focus-on-call-argument SINK shape below) ──────────────────
+            //
+            // The C# `use_weak_rng_for_keygeneration` rule names a focused
+            // metavariable that is an ARGUMENT of a call given by a
+            // `pattern-inside` context:
+            //
+            //   patterns:
+            //     - pattern-inside: (System.Random $RNG).NextBytes($KEY); ...
+            //     - pattern: $KEY
+            //
+            // Semgrep means "the value written into the focused argument of this
+            // call is the taint source" — the buffer a weak RNG's `NextBytes`
+            // fills becomes untrusted key material. None of the generic source
+            // shapes express this (a bare `pattern: $KEY` is not a usable
+            // source), so the block compiles to nothing and the rule is rejected.
+            // We compile a `CallArgSource { method, arg_index }`; the C# engine
+            // seeds the identifier in that argument position of a matching call.
+            // Source role only — a call-argument fill is a taint origin.
+            if let MatcherRole::Source = role {
+                if try_compile_focus_call_source_block(v, out) {
+                    return;
+                }
+            }
             // ── Focus-on-call-argument SINK shape (the sink-side analog of the
             //    parameter-as-source shape) ──────────────────
             //
@@ -4367,6 +4534,227 @@ fn try_compile_focus_call_sink_block(
         compile_focus_call_callee(call, role, lang, &metavar_regexes, out);
     }
     out.len() > before
+}
+
+/// Try to recognise the "focus-on-call-argument" SOURCE shape — the
+/// source-side dual of [`try_compile_focus_call_sink_block`] — and, if found,
+/// push one [`GenericMatcher::CallArgSource`] per matching call/seed pairing.
+/// Returns `true` (and pushes ≥1 matcher) on recognition.
+///
+/// The shape (the C# `use_weak_rng_for_keygeneration` rule):
+///
+/// ```yaml
+/// pattern-sources:
+///   - patterns:
+///       - pattern-inside: (System.Random $RNG).NextBytes($KEY); ...
+///       - pattern: $KEY
+/// ```
+///
+/// Recognition:
+///   1. the block names a focused metavariable `$KEY` — via `focus-metavariable:
+///      $KEY` or a bare `pattern: $KEY`; and
+///   2. the block carries a CALL context (a `pattern-inside:`/`pattern:` whose
+///      text is a call, possibly with a leading typed-receiver cast
+///      `(System.Random $RNG).` and a trailing `; ...` Semgrep continuation)
+///      whose ARGUMENT LIST holds that `$KEY` at a definite position.
+///
+/// The call's final method name (`NextBytes`) and the zero-based argument
+/// position of the focused metavariable (`0`) are compiled to a
+/// [`GenericMatcher::CallArgSource`]. The C# engine seeds the identifier sitting
+/// in that argument position of any matching call as tainted, so `NextBytes(key)`
+/// makes `key` an untrusted-key-material source. Source role only — a call
+/// argument fill is a taint origin, not a destination. When no call/seed pairing
+/// resolves to a definite `(method, arg_index)` the recognizer claims nothing and
+/// the caller falls through to the normal graceful-degradation extraction.
+fn try_compile_focus_call_source_block(v: &YamlValue, out: &mut Vec<GenericMatcher>) -> bool {
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+
+    let mut seeds: Vec<String> = Vec::new();
+    let mut call_texts: Vec<String> = Vec::new();
+    collect_focus_call_source_parts(items, &mut seeds, &mut call_texts);
+
+    if seeds.is_empty() || call_texts.is_empty() {
+        return false;
+    }
+
+    let before = out.len();
+    for call in &call_texts {
+        for seed in &seeds {
+            if let Some((method, arg_index)) = parse_call_arg_source(call, seed) {
+                let candidate = GenericMatcher::CallArgSource {
+                    method: method.clone(),
+                    arg_index,
+                    description: format!("value filled into `{method}(...)` argument (source)"),
+                };
+                // Avoid duplicate matchers when several seeds/call texts resolve
+                // to the same (method, arg_index).
+                let dup = out.iter().any(|m| {
+                    matches!(m, GenericMatcher::CallArgSource { method: mm, arg_index: ai, .. }
+                        if *mm == method && *ai == arg_index)
+                });
+                if !dup {
+                    out.push(candidate);
+                }
+            }
+        }
+    }
+    out.len() > before
+}
+
+/// Walk a SOURCE `patterns:` block (recursing into `pattern-either:`/`patterns:`)
+/// collecting focused metavariables (`focus-metavariable: $F` and bare
+/// `pattern: $F`) and the raw text of any `pattern:`/`pattern-inside:` call
+/// context (a non-metavariable pattern string). The context text is validated
+/// later by [`parse_call_arg_source`], which returns `None` for anything that is
+/// not a call whose argument list contains the seed — so over-collecting here is
+/// harmless.
+fn collect_focus_call_source_parts(
+    items: &[YamlValue],
+    seeds: &mut Vec<String>,
+    call_texts: &mut Vec<String>,
+) {
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("focus-metavariable") => {
+                    if let Some(s) = val.as_str() {
+                        let mv = s.trim();
+                        if is_metavariable(mv) {
+                            seeds.push(mv.to_string());
+                        }
+                    }
+                }
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        let t = s.trim();
+                        if is_metavariable(t) {
+                            seeds.push(t.to_string());
+                        } else {
+                            call_texts.push(t.to_string());
+                        }
+                    }
+                }
+                Some("pattern-inside") => {
+                    if let Some(s) = val.as_str() {
+                        call_texts.push(s.trim().to_string());
+                    }
+                }
+                Some("pattern-either") | Some("patterns") => {
+                    if let Some(seq) = val.as_sequence() {
+                        collect_focus_call_source_parts(seq, seeds, call_texts);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Parse a focus-on-call-argument SOURCE call context, returning the call's
+/// final method-name segment and the zero-based argument position of `seed`.
+///
+/// Handles a leading Semgrep typed-receiver cast `(System.Random $RNG).` (drops
+/// it to a bare `$RNG.` receiver), a trailing `; ...` Semgrep continuation, and
+/// a dotted or bare callee. Returns `None` when `call` is not a single call, when
+/// its callee has no plain-identifier final method segment, or when `seed` is not
+/// exactly one of the call's top-level arguments — so faithfulness is preserved
+/// (only a genuine focused argument of a genuine call yields a seed target).
+fn parse_call_arg_source(call: &str, seed: &str) -> Option<(String, usize)> {
+    let c = call.trim();
+    // Strip a leading typed-receiver cast `(System.Random $RNG).NextBytes(...)`
+    // to a bare `$RNG.NextBytes(...)` receiver so the callee reads as an ordinary
+    // dotted call. A bare `(Type $MV)` with no trailing chain is left alone.
+    let normalized;
+    let b = if c.starts_with('(') {
+        match parse_typed_metavar(c) {
+            Some((_, metavar, remainder)) if !remainder.trim().is_empty() => {
+                normalized = format!("{metavar}{remainder}");
+                normalized.as_str()
+            }
+            _ => c,
+        }
+    } else {
+        c
+    };
+    let b = b.trim();
+
+    let open = b.find('(')?;
+    let callee = b[..open].trim();
+    if callee.is_empty() {
+        return None;
+    }
+    // The callee must be a plain or dotted identifier chain (no operators / call
+    // parens in the receiver). The final `.`-segment is the method name.
+    let method = callee.rsplit('.').next()?.trim();
+    if !is_identifier(method) {
+        return None;
+    }
+    // Reject a receiver that carries call/operator punctuation (an expression,
+    // not a plain `recv.method` callee).
+    if callee.contains('(')
+        || callee.contains('=')
+        || callee.contains('+')
+        || callee.contains('%')
+        || callee.contains('[')
+    {
+        return None;
+    }
+
+    // Locate the balanced argument list opened by this first `(`.
+    let bytes = b.as_bytes();
+    let mut depth = 0i32;
+    let mut close = None;
+    for (i, &ch) in bytes.iter().enumerate().skip(open) {
+        match ch {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let args = &b[open + 1..close];
+
+    // Split the argument list at TOP-LEVEL commas and find the position whose
+    // trimmed text is exactly the focused metavariable.
+    for (idx, piece) in split_top_level_commas(args).iter().enumerate() {
+        if piece.trim() == seed {
+            return Some((method.to_string(), idx));
+        }
+    }
+    None
+}
+
+/// Split `s` at commas that are not nested inside `()`, `[]`, or `{}`. Returns
+/// the raw (un-trimmed) pieces in order; an empty input yields a single empty
+/// piece (a zero-argument call has no focused position, handled by the caller).
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut pieces = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                pieces.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    pieces.push(&s[start..]);
+    pieces
 }
 
 /// The PHP superglobals. When the base of a `$SUPER[$KEY] = …` assignment is one
@@ -6105,6 +6493,29 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
         let callee = pat[..open_paren].trim();
         if callee.is_empty() {
             return None;
+        }
+
+        // ── C# object-creation form: `new AesGcm(...)` ──────────────────
+        //
+        // A `new Type(...)` constructor call has a `new ` prefix on the callee,
+        // so `is_dotted_identifier("new AesGcm")` fails (the space) and the
+        // Call branch below refuses it — the reason the crypto-primitive sinks
+        // `new AesGcm(...)` / `new AesCcm(...)` / `new ChaCha20Poly1305(...)` in
+        // `use_weak_rng_for_keygeneration` never loaded. The C# engine matches an
+        // `object_creation_expression` by its declared TYPE text against a `Call`
+        // canonical, so we compile `new Type(...)` to `Call { canonical: Type }`.
+        // Gated to C# (the `new Type(...)` constructor-sink shape) — for other
+        // languages a `new ...` callee stays refused.
+        if lang == Language::CSharp {
+            if let Some(type_name) = callee.strip_prefix("new ") {
+                let type_name = type_name.trim();
+                if is_dotted_identifier(type_name) {
+                    return Some(GenericMatcher::Call {
+                        canonical: type_name.to_string(),
+                        description: describe(type_name, role),
+                    });
+                }
+            }
         }
 
         // ── MethodName shape: `$METAVAR.method($X)` ─────────────────────
@@ -12781,6 +13192,182 @@ class Repo {
         assert!(
             rule.check(miss_src, &tree).is_empty(),
             "a differently-typed (int) local must not be seeded as a source"
+        );
+    }
+
+    // ── Focus-on-call-argument SOURCE (`use_weak_rng_for_keygeneration`) ────
+    //
+    // The C# rule's source `pattern-inside: (System.Random $RNG).NextBytes($KEY);
+    // ...` + `pattern: $KEY` compiles to a `CallArgSource { method: "NextBytes",
+    // arg_index: 0 }`; the C# engine seeds the identifier in the focused argument
+    // position of a matching call. These tests pin faithfulness: fires only on
+    // the focused argument of a matching call, silent on other calls / other
+    // positions / unfilled buffers.
+
+    fn weak_rng_rule() -> SemgrepTaintRule {
+        compiled(
+            r#"
+id: csharp-use-weak-rng
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: "Weak RNG used to generate a cryptographic key"
+pattern-sources:
+  - patterns:
+      - pattern-inside: (System.Random $RNG).NextBytes($KEY); ...
+      - pattern: $KEY
+pattern-sinks:
+  - pattern-either:
+      - pattern: new AesGcm(...)
+      - pattern: new AesCcm(...)
+      - pattern: new ChaCha20Poly1305(...)
+"#,
+        )
+    }
+
+    /// The `pattern-inside: (System.Random $RNG).NextBytes($KEY); ...` +
+    /// `pattern: $KEY` source compiles to a `CallArgSource { NextBytes, 0 }`, and
+    /// the `new AesGcm(...)` constructor sink compiles to `Call { "AesGcm" }`
+    /// (the C#-gated `new Type(...)` object-creation fix).
+    #[test]
+    fn csharp_call_arg_source_compiles_to_callargsource() {
+        let rule = weak_rng_rule();
+        assert!(
+            rule.spec.sources.iter().any(|s| matches!(
+                s,
+                GenericMatcher::CallArgSource { method, arg_index, .. }
+                    if method == "NextBytes" && *arg_index == 0
+            )),
+            "source should compile to CallArgSource{{NextBytes,0}}, got {:?}",
+            rule.spec.sources
+        );
+        assert!(
+            rule.spec.sinks.iter().any(|s| matches!(
+                s,
+                GenericMatcher::Call { canonical, .. } if canonical == "AesGcm"
+            )),
+            "`new AesGcm(...)` should compile to Call{{AesGcm}}, got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    /// Fires on the fill: `rng.NextBytes(key)` seeds `key`, which then reaches a
+    /// `new AesGcm(key)` sink — even though `key`'s own declaration
+    /// (`byte[] key = new byte[16];`) is an untainted RHS that each propagation
+    /// pass clears (the in-loop re-seeding restores the fill-taint).
+    #[test]
+    fn csharp_call_arg_source_fires_on_fill() {
+        use crate::engine::parser::parse_file;
+        let rule = weak_rng_rule();
+        let src = r#"
+class C {
+    void M() {
+        var rng = new Random();
+        byte[] key = new byte[16];
+        rng.NextBytes(key);
+        var cipher = new AesGcm(key);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a key filled by NextBytes() reaching new AesGcm() must fire, got {:?}",
+            findings
+        );
+    }
+
+    /// Silent on a non-matching call: `Scramble(key)` is not `NextBytes`, so
+    /// `key` is never seeded and the `new AesGcm(key)` sink stays clean.
+    #[test]
+    fn csharp_call_arg_source_silent_on_other_call() {
+        use crate::engine::parser::parse_file;
+        let rule = weak_rng_rule();
+        let src = r#"
+class C {
+    void M() {
+        byte[] key = new byte[16];
+        Scramble(key);
+        var cipher = new AesGcm(key);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a buffer passed to a NON-matching call must not be seeded, got {:?}",
+            findings
+        );
+    }
+
+    /// Seeds only the focused argument POSITION: for `NextBytes($KEY)` the focused
+    /// position is 0, so `rng.NextBytes(seed, key)` seeds `seed` (position 0) and
+    /// NOT `key` (position 1) — `new AesGcm(seed)` fires, `new AesGcm(key)` does
+    /// not.
+    #[test]
+    fn csharp_call_arg_source_seeds_only_focused_position() {
+        use crate::engine::parser::parse_file;
+        let rule = weak_rng_rule();
+
+        let fires_src = r#"
+class C {
+    void M() {
+        byte[] seed = new byte[16];
+        byte[] key = new byte[16];
+        rng.NextBytes(seed, key);
+        var cipher = new AesGcm(seed);
+    }
+}
+"#;
+        let tree = parse_file(fires_src, Language::CSharp).expect("C# fixture should parse");
+        assert_eq!(
+            rule.check(fires_src, &tree).len(),
+            1,
+            "the position-0 argument (`seed`) must be seeded and fire on new AesGcm(seed)"
+        );
+
+        let miss_src = r#"
+class C {
+    void M() {
+        byte[] seed = new byte[16];
+        byte[] key = new byte[16];
+        rng.NextBytes(seed, key);
+        var cipher = new AesGcm(key);
+    }
+}
+"#;
+        let tree = parse_file(miss_src, Language::CSharp).expect("C# fixture should parse");
+        assert!(
+            rule.check(miss_src, &tree).is_empty(),
+            "the position-1 argument (`key`) must NOT be seeded, got {:?}",
+            rule.check(miss_src, &tree)
+        );
+    }
+
+    /// An unfilled buffer is not a source: a `key` that never reaches a
+    /// `NextBytes(...)` call is untainted even when it flows into a `new AesGcm`
+    /// sink.
+    #[test]
+    fn csharp_call_arg_source_does_not_seed_unfilled_buffer() {
+        use crate::engine::parser::parse_file;
+        let rule = weak_rng_rule();
+        let src = r#"
+class C {
+    void M() {
+        byte[] key = new byte[16];
+        var cipher = new AesGcm(key);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "an unfilled buffer must not be a source, got {:?}",
+            findings
         );
     }
 

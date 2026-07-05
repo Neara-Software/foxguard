@@ -309,6 +309,35 @@ pub enum NodeMatcher {
         base: Option<String>,
         description: String,
     },
+
+    /// Match a value written into the focused ARGUMENT POSITION of a named CALL
+    /// as a taint SOURCE — the Semgrep "focus a call argument" source
+    /// `pattern-inside: (System.Random $RNG).NextBytes($KEY); ...` + focus/bare
+    /// `pattern: $KEY` (the `use_weak_rng_for_keygeneration` rule: bytes filled
+    /// by a weak RNG's `NextBytes(key)` become the untrusted key material).
+    ///
+    /// This is the SOURCE-position dual of [`NodeMatcher::MethodName`]/the
+    /// focus-call SINK shape: rather than firing when a tainted value reaches a
+    /// call, it SEEDS the identifier sitting in the focused argument position of
+    /// a matching call, so the engine's normal propagation then carries that
+    /// taint to the sink. `method` is the call's final method-name segment
+    /// (`NextBytes`); `arg_index` is the zero-based position of the focused
+    /// metavariable in the call's argument list (0 for `NextBytes($KEY)`).
+    ///
+    /// Faithfulness (the whole point): this seeds ONLY the identifier in the
+    /// focused argument position of a call whose final method name equals
+    /// `method` — `rng.NextBytes(key)` seeds `key`; an unrelated `otherCall(key)`
+    /// seeds nothing; `rng.NextBytes(seed, key)` seeds only position-`arg_index`
+    /// (`seed` for `arg_index == 0`); and an unfilled buffer that never reaches a
+    /// matching call is not a source. Source only — a call argument fill is a
+    /// taint origin, not a destination. Compiled solely for the C# engine (the
+    /// only registry rule with this source shape is C#); other engines carry the
+    /// matcher in the spec but no-op it.
+    CallArgSource {
+        method: String,
+        arg_index: usize,
+        description: String,
+    },
 }
 
 impl NodeMatcher {
@@ -333,6 +362,7 @@ impl NodeMatcher {
             NodeMatcher::LooseEquality { description } => description,
             NodeMatcher::TaintedCallee { description } => description,
             NodeMatcher::TaintedSubscriptKey { description, .. } => description,
+            NodeMatcher::CallArgSource { description, .. } => description,
         }
     }
 }
@@ -1528,6 +1558,13 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
         }
         NodeMatcher::TaintedSubscriptKey { base, description } => {
             format!("TSK|{}|{description}", base.as_deref().unwrap_or("*"))
+        }
+        NodeMatcher::CallArgSource {
+            method,
+            arg_index,
+            description,
+        } => {
+            format!("CAS|{method}|{arg_index}|{description}")
         }
     }
 }
