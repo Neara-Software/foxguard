@@ -776,8 +776,57 @@ fn find_sinks(
     walk_scope_nodes(scope, source, &mut |node, src| {
         let is_call = node.kind() == "invocation_expression";
         let is_new = node.kind() == "object_creation_expression";
+
+        // Property-assignment sinks (`PropertyAssignSink`) match an
+        // `assignment_expression` whose LHS is a member access `<expr>.<Prop>`
+        // with `<Prop>` in the enumerated property set AND whose RHS carries
+        // taint — e.g. `cmd.CommandText = tainted;`. This is not a call, so it
+        // is enforced here directly (never through the generic call-matcher
+        // path). A non-enumerated property or an untainted RHS is silent.
+        if node.kind() == "assignment_expression" {
+            for matcher in &spec.sinks {
+                if let NodeMatcher::PropertyAssignSink {
+                    property_names,
+                    description,
+                } = matcher
+                {
+                    if let Some(info) =
+                        property_assign_taint(node, src, property_names, spec, state)
+                    {
+                        out.push(taint_finding_for_node(node, info, description.clone()));
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+
         if !is_call && !is_new {
             return;
+        }
+
+        // Constructor-argument sinks (`ConstructorArgSink`) are enforced next:
+        // the object-creation's class name must be in the enumerated set AND the
+        // argument at the focused position must carry taint — e.g.
+        // `new SqlCommand(tainted)`. A tainted argument at a NON-focused position
+        // (`new SqlCommand(literal, tainted)` for `arg_index == 0`) and a
+        // non-enumerated class name (`new SafeThing(tainted)`) are both silent.
+        if is_new {
+            for matcher in &spec.sinks {
+                if let NodeMatcher::ConstructorArgSink {
+                    class_names,
+                    arg_index,
+                    description,
+                } = matcher
+                {
+                    if construction_class_matches(node, src, class_names) {
+                        if let Some(info) = nth_argument_taint(node, *arg_index, src, spec, state) {
+                            out.push(taint_finding_for_node(node, info, description.clone()));
+                            return;
+                        }
+                    }
+                }
+            }
         }
 
         // Concat-in-call sinks (`CallArgConcat`) are enforced first: the call's
@@ -805,6 +854,77 @@ fn find_sinks(
             out.push(taint_finding_for_node(node, info, sink_desc));
         }
     });
+}
+
+/// True when `node` is an `object_creation_expression` whose instantiated class
+/// name (the `type` field text) is one of `class_names`. The enumerated set is
+/// the anchored-alternation `metavariable-regex` on the `$PATTERN` class-name
+/// metavariable of `new $PATTERN(...)`, so the match is exact (as Semgrep binds
+/// the metavariable to the type as written): `new SqlCommand(x)` matches
+/// `["SqlCommand", ...]`; `new SafeThing(x)` matches nothing.
+fn construction_class_matches(node: Node<'_>, source: &str, class_names: &[String]) -> bool {
+    node.child_by_field_name("type")
+        .map(|ty| node_text(ty, source))
+        .is_some_and(|name| class_names.iter().any(|c| c == name))
+}
+
+/// Taint carried by the `arg_index`-th argument of a call / construction node —
+/// the enforcement half of a [`NodeMatcher::ConstructorArgSink`] focused
+/// argument position. Returns the taint of ONLY that positional argument (the
+/// focused `$CMD` in `new $PATTERN($CMD,...)`), so taint at any OTHER argument
+/// position does NOT fire.
+fn nth_argument_taint(
+    node: Node<'_>,
+    arg_index: usize,
+    source: &str,
+    spec: &TaintSpec,
+    state: &TaintState,
+) -> Option<TaintInfo> {
+    let args = call_arguments(node)?;
+    let mut cursor = args.walk();
+    let mut idx = 0usize;
+    for child in args.children(&mut cursor) {
+        if child.kind() != "argument" {
+            continue;
+        }
+        if idx == arg_index {
+            let mut acursor = child.walk();
+            for expr in child.children(&mut acursor) {
+                if expr.is_named() {
+                    return expression_taint(expr, source, spec, state);
+                }
+            }
+            return None;
+        }
+        idx += 1;
+    }
+    None
+}
+
+/// Taint carried by the RHS of an `assignment_expression` whose LHS is a member
+/// access `<expr>.<Prop>` with `<Prop>` in `property_names` — the enforcement of
+/// a [`NodeMatcher::PropertyAssignSink`]. Returns the RHS taint (the focused
+/// `$VALUE` in `$CMD.$PATTERN = $VALUE`) only when the LHS property name is
+/// enumerated; a non-enumerated property, a non-member-access LHS, or an
+/// untainted RHS all yield `None`.
+fn property_assign_taint(
+    node: Node<'_>,
+    source: &str,
+    property_names: &[String],
+    spec: &TaintSpec,
+    state: &TaintState,
+) -> Option<TaintInfo> {
+    let left = node.child_by_field_name("left")?;
+    if left.kind() != "member_access_expression" {
+        return None;
+    }
+    let prop = left.child_by_field_name("name")?;
+    let prop_name = node_text(prop, source);
+    if !property_names.iter().any(|p| p == prop_name) {
+        return None;
+    }
+    let right = node.child_by_field_name("right")?;
+    expression_taint(right, source, spec, state)
 }
 
 /// True when `node` is an `invocation_expression` whose final method-name
@@ -1140,6 +1260,10 @@ fn classify_source_expr(node: Node<'_>, source: &str, spec: &TaintSpec) -> Optio
                 // Concat-in-call sink — sink-only, enforced in `find_sinks`;
                 // never a source (no-op here).
             }
+            NodeMatcher::ConstructorArgSink { .. } | NodeMatcher::PropertyAssignSink { .. } => {
+                // Constructor-argument / property-assignment sinks — sink-only,
+                // enforced in `find_sinks`; never a source (no-op here).
+            }
         }
     }
     None
@@ -1260,6 +1384,12 @@ fn matcher_matches_call(matcher: &NodeMatcher, node: Node<'_>, source: &str) -> 
         // Concat-in-call sink — enforced directly in `find_sinks`, not through
         // the generic call-matcher path.
         | NodeMatcher::CallArgConcat { .. }
+        // Constructor-argument sink (`ConstructorArgSink`) is enforced directly
+        // in `find_sinks` (class-name + focused-argument-position check), not
+        // through this any-argument call-matcher path; the property-assignment
+        // sink (`PropertyAssignSink`) matches assignment nodes, not calls.
+        | NodeMatcher::ConstructorArgSink { .. }
+        | NodeMatcher::PropertyAssignSink { .. }
         // Ellipsis-string source `"..."` — not a call matcher.
         | NodeMatcher::LiteralString { .. } => false,
     }

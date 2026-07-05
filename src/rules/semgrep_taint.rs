@@ -334,6 +334,33 @@ enum GenericMatcher {
     /// [`crate::rules::taint_engine::NodeMatcher::CallArgConcat`]. Compiled solely
     /// for the C# engine; other engines carry it but no-op it.
     CallArgConcat { method: String, description: String },
+
+    /// Match a CONSTRUCTOR-ARGUMENT sink — a `new <Class>(arg0, ...)` whose
+    /// class name is in `class_names` and whose argument at `arg_index` carries
+    /// taint. Compiled (C# only) from the `csharp-sqli` sink arm
+    /// `new $PATTERN($CMD,...)` + `focus-metavariable: $CMD` gated by a
+    /// `metavariable-regex` anchored alternation on `$PATTERN` (ENUMERATED into
+    /// `class_names`). See
+    /// [`crate::rules::taint_engine::NodeMatcher::ConstructorArgSink`]. Other
+    /// engines carry it but no-op it.
+    ConstructorArgSink {
+        class_names: Vec<String>,
+        arg_index: usize,
+        description: String,
+    },
+
+    /// Match a PROPERTY-ASSIGNMENT sink — an assignment `<expr>.<Prop> = <RHS>`
+    /// whose property name is in `property_names` and whose RHS carries taint.
+    /// Compiled (C# only) from the `csharp-sqli` sink arm
+    /// `$CMD.$PATTERN = $VALUE;` + `focus-metavariable: $VALUE` gated by a
+    /// `metavariable-regex` anchored alternation on `$PATTERN` (ENUMERATED into
+    /// `property_names`). See
+    /// [`crate::rules::taint_engine::NodeMatcher::PropertyAssignSink`]. Other
+    /// engines carry it but no-op it.
+    PropertyAssignSink {
+        property_names: Vec<String>,
+        description: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -538,6 +565,22 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => python_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => python_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -686,6 +729,22 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => javascript_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => javascript_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -825,6 +884,22 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => go_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => go_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -962,6 +1037,22 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             description,
         } => java_taint::NodeMatcher::CallArgConcat {
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => java_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => java_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
             description: description.clone(),
         },
     }
@@ -1110,6 +1201,22 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => c_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => c_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1249,6 +1356,22 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => kotlin_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => kotlin_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1386,6 +1509,22 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
             description,
         } => ruby_taint::NodeMatcher::CallArgConcat {
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => ruby_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => ruby_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
             description: description.clone(),
         },
     }
@@ -1536,6 +1675,22 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => csharp_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => csharp_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1671,6 +1826,22 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
             description,
         } => bash_taint::NodeMatcher::CallArgConcat {
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => bash_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => bash_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
             description: description.clone(),
         },
     }
@@ -1819,6 +1990,22 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => solidity_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => solidity_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1954,6 +2141,22 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
             description,
         } => scala_taint::NodeMatcher::CallArgConcat {
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => scala_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => scala_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
             description: description.clone(),
         },
     }
@@ -2093,6 +2296,22 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => apex_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => apex_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2230,6 +2449,22 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
             method: method.clone(),
             description: description.clone(),
         },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => swift_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => swift_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -2358,6 +2593,22 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
             description,
         } => php_taint::NodeMatcher::CallArgConcat {
             method: method.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => php_taint::NodeMatcher::ConstructorArgSink {
+            class_names: class_names.clone(),
+            arg_index: *arg_index,
+            description: description.clone(),
+        },
+        GenericMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => php_taint::NodeMatcher::PropertyAssignSink {
+            property_names: property_names.clone(),
             description: description.clone(),
         },
     }
@@ -4123,6 +4374,27 @@ fn compile_entry(
             // inexpressible and firing without it would over-match.
             if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
                 if try_compile_focus_regex_either_sink_block(v, role, lang, out) {
+                    return;
+                }
+            }
+            // ── Composed `pattern-either` of two focus arms, both gated by a
+            //    shared class-name / property-name `metavariable-regex` SINK
+            //    shape (the C# `csharp-sqli` rule) ────────────────────────────
+            //
+            // A `pattern-either:` whose arms are `new $PATTERN($CMD,...)` (focus
+            // `$CMD`, arg-position) and `$CMD.$PATTERN = $VALUE;` (focus
+            // `$VALUE`, assignment RHS), both gated by a block-level
+            // `metavariable-regex` pinning the CLASS-NAME / PROPERTY-NAME
+            // metavariable `$PATTERN`. The pinned metavariable is neither a
+            // callee nor the focus, so the callee/method/receiver-regex
+            // recognizers above all miss it; the plain pattern path would drop
+            // the regex and over-match (`new $ANY(...)` / any `$X.$Y = …`). We
+            // ENUMERATE the anchored alternation and compile one enumerated
+            // `ConstructorArgSink` / `PropertyAssignSink` per arm, so the C#
+            // engine fires only on an enumerated class/property name with a
+            // tainted focus argument/RHS — FP-safe. Gated to C#.
+            if let MatcherRole::Sink | MatcherRole::Sanitizer = role {
+                if try_compile_csharp_pattern_regex_either_sink_block(v, role, lang, out) {
                     return;
                 }
             }
@@ -6070,6 +6342,244 @@ fn concrete_callee_call(call: &str, method_mv: &str, name: &str) -> String {
         _ => name.to_string(),
     };
     format!("{concrete_callee}(...)")
+}
+
+/// Try to recognise the composed "`pattern-either` of two focus arms, both
+/// gated by a shared `metavariable-regex` pinning a CLASS-NAME / PROPERTY-NAME
+/// metavariable" SINK shape (the C# `csharp-sqli` rule) and compile each arm to
+/// an enumerated [`GenericMatcher::ConstructorArgSink`] /
+/// [`GenericMatcher::PropertyAssignSink`].
+///
+/// The shape:
+///
+/// ```yaml
+/// patterns:
+///   - pattern-either:
+///       - patterns:
+///           - pattern: new $PATTERN($CMD,...)
+///           - focus-metavariable: $CMD
+///       - patterns:
+///           - pattern: $CMD.$PATTERN = $VALUE;
+///           - focus-metavariable: $VALUE
+///   - metavariable-regex:
+///       metavariable: $PATTERN
+///       regex: ^(SqlCommand|CommandText|OleDbCommand|OdbcCommand|OracleCommand)$
+/// ```
+///
+/// The `metavariable-regex` pins `$PATTERN` — in arm 1 the CLASS NAME of a
+/// `new`, in arm 2 the PROPERTY NAME of an assignment target — and the focus is
+/// on a constructor ARGUMENT (arm 1) / assignment RHS (arm 2), NOT on the pinned
+/// metavariable. None of the other recognizers handle this: the pinned
+/// metavariable is neither a callee/method (so the callee-regex / method-regex
+/// shapes miss) nor is the focus on the callee. We ENUMERATE the anchored
+/// alternation and compile ONE sink per arm carrying the full name set; the C#
+/// engine fires only when (a) the class/property name is in the enumerated set
+/// AND (b) the focused argument/RHS carries taint — strictly ≤ what Semgrep
+/// matches, and FP-safe (a non-enumerated name or an untainted focus is silent).
+///
+/// Faithfulness discipline: an arm compiles ONLY when the pinned metavariable
+/// sits in the expected class-name / property-name position AND the focus is on
+/// the expected argument / RHS. Any other shape yields nothing for that arm
+/// (graceful drop), never an over-broad sink. Gated to C# + sink/sanitizer.
+fn try_compile_csharp_pattern_regex_either_sink_block(
+    v: &YamlValue,
+    role: MatcherRole,
+    lang: Language,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
+    if lang != Language::CSharp {
+        return false;
+    }
+    let Some(items) = v.as_sequence() else {
+        return false;
+    };
+
+    // Collect the block-level `pattern-either` arms and every `metavariable-regex`
+    // pin declared at this block level (the shared gate over both arms).
+    let mut either_arms: Option<&[YamlValue]> = None;
+    let mut regexes: Vec<(String, String)> = Vec::new();
+    for item in items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("pattern-either") => {
+                    if let Some(seq) = val.as_sequence() {
+                        either_arms = Some(seq.as_slice());
+                    }
+                }
+                Some("metavariable-regex") => {
+                    if let Some(mm) = val.as_mapping() {
+                        let mv = mm
+                            .get(YamlValue::from("metavariable"))
+                            .and_then(|x| x.as_str());
+                        let re = mm.get(YamlValue::from("regex")).and_then(|x| x.as_str());
+                        if let (Some(mv), Some(re)) = (mv, re) {
+                            regexes.push((mv.to_string(), re.to_string()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let Some(arms) = either_arms else {
+        return false;
+    };
+    if regexes.is_empty() {
+        return false;
+    }
+
+    let before = out.len();
+    for arm in arms {
+        compile_csharp_pattern_regex_arm(arm, &regexes, role, out);
+    }
+    out.len() > before
+}
+
+/// Compile a single arm of the `csharp-sqli` sink shape into a
+/// [`GenericMatcher::ConstructorArgSink`] or [`GenericMatcher::PropertyAssignSink`].
+/// `block_regexes` are the block-level `metavariable-regex` pins shared over all
+/// arms; the arm may also carry its own pins (merged in). See
+/// [`try_compile_csharp_pattern_regex_either_sink_block`].
+fn compile_csharp_pattern_regex_arm(
+    arm: &YamlValue,
+    block_regexes: &[(String, String)],
+    role: MatcherRole,
+    out: &mut Vec<GenericMatcher>,
+) {
+    // An arm is a `{patterns: [...]}` AND-block.
+    let Some(arm_map) = arm.as_mapping() else {
+        return;
+    };
+    let arm_items: Vec<YamlValue> = match arm_map.iter().next() {
+        Some((k, val)) if arm_map.len() == 1 && k.as_str() == Some("patterns") => {
+            match val.as_sequence() {
+                Some(seq) => seq.clone(),
+                None => return,
+            }
+        }
+        _ => vec![arm.clone()],
+    };
+
+    // Collect the arm's pattern text(s), focus metavariable(s), and any arm-local
+    // regex pins (merged with the shared block-level pins).
+    let mut patterns: Vec<String> = Vec::new();
+    let mut focus: Vec<String> = Vec::new();
+    let mut regexes: Vec<(String, String)> = block_regexes.to_vec();
+    for item in &arm_items {
+        let Some(map) = item.as_mapping() else {
+            continue;
+        };
+        for (k, val) in map {
+            match k.as_str() {
+                Some("pattern") => {
+                    if let Some(s) = val.as_str() {
+                        patterns.push(s.trim().to_string());
+                    }
+                }
+                Some("focus-metavariable") => {
+                    if let Some(s) = val.as_str() {
+                        let mv = s.trim();
+                        if is_metavariable(mv) {
+                            focus.push(mv.to_string());
+                        }
+                    }
+                }
+                Some("metavariable-regex") => {
+                    if let Some(mm) = val.as_mapping() {
+                        let mv = mm
+                            .get(YamlValue::from("metavariable"))
+                            .and_then(|x| x.as_str());
+                        let re = mm.get(YamlValue::from("regex")).and_then(|x| x.as_str());
+                        if let (Some(mv), Some(re)) = (mv, re) {
+                            regexes.push((mv.to_string(), re.to_string()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // The arm names exactly one pattern and one focus metavariable.
+    let (Some(pattern), Some(focus_mv)) = (patterns.first(), focus.first()) else {
+        return;
+    };
+
+    if let Some((class_names, arg_index)) = parse_constructor_arg_arm(pattern, focus_mv, &regexes) {
+        out.push(GenericMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description: describe(&format!("new {pattern}"), role),
+        });
+    } else if let Some(property_names) = parse_property_assign_arm(pattern, focus_mv, &regexes) {
+        out.push(GenericMatcher::PropertyAssignSink {
+            property_names,
+            description: describe(pattern, role),
+        });
+    }
+}
+
+/// Parse a constructor-argument arm `new $PATTERN($CMD,...)` with focus `$CMD`:
+/// the class-name metavariable `$PATTERN` must be pinned by an anchored
+/// alternation `metavariable-regex` (ENUMERATED into the returned class names)
+/// and the focus metavariable must be one of the constructor arguments (its
+/// zero-based position is returned). Any other shape → `None`.
+fn parse_constructor_arg_arm(
+    pattern: &str,
+    focus_mv: &str,
+    regexes: &[(String, String)],
+) -> Option<(Vec<String>, usize)> {
+    let p = pattern.trim().trim_end_matches(';').trim();
+    let rest = p.strip_prefix("new ")?.trim_start();
+    let open = rest.find('(')?;
+    if !rest.trim_end().ends_with(')') {
+        return None;
+    }
+    let class_mv = rest[..open].trim();
+    if !is_metavariable(class_mv) {
+        return None;
+    }
+    // The class-name metavariable must be pinned by an anchored alternation.
+    let class_names = regex_alternatives_for(class_mv, regexes)?;
+    // Locate the focus metavariable's argument position.
+    let close = rest.rfind(')')?;
+    let args = &rest[open + 1..close];
+    let arg_index = split_top_level_commas(args)
+        .iter()
+        .position(|a| a.trim() == focus_mv)?;
+    Some((class_names, arg_index))
+}
+
+/// Parse a property-assignment arm `$CMD.$PATTERN = $VALUE;` with focus
+/// `$VALUE`: the property-name metavariable `$PATTERN` must be pinned by an
+/// anchored alternation `metavariable-regex` (ENUMERATED into the returned
+/// property names), the receiver must be a metavariable (any receiver), and the
+/// RHS must be the focus metavariable. Any other shape → `None`.
+fn parse_property_assign_arm(
+    pattern: &str,
+    focus_mv: &str,
+    regexes: &[(String, String)],
+) -> Option<Vec<String>> {
+    let p = pattern.trim().trim_end_matches(';').trim();
+    let (lhs, rhs) = p.split_once('=')?;
+    let lhs = lhs.trim();
+    let rhs = rhs.trim();
+    // The RHS is the focused assigned value.
+    if rhs != focus_mv {
+        return None;
+    }
+    // LHS is a member access `<recv>.<prop>`; both segments are metavariables.
+    let dot = lhs.rfind('.')?;
+    let recv = lhs[..dot].trim();
+    let prop_mv = lhs[dot + 1..].trim();
+    if !is_metavariable(recv) || !is_metavariable(prop_mv) {
+        return None;
+    }
+    regex_alternatives_for(prop_mv, regexes)
 }
 
 /// Compile a Bash-specific pattern (shell command or command substitution)
@@ -9625,6 +10135,241 @@ class Dao {
         assert!(
             !findings.is_empty(),
             "any-method propagator should carry taint through sb.Append() into ExecuteReader, got none"
+        );
+    }
+
+    // ── C# `csharp-sqli` constructor-argument + property-assignment SINK shape ──
+    //
+    // The sink is a `pattern-either` of two focus arms, BOTH gated by a shared
+    // `metavariable-regex` on the class-name / property-name metavariable
+    // `$PATTERN` (`^(SqlCommand|CommandText|OleDbCommand|OdbcCommand|OracleCommand)$`):
+    //   arm 1: `new $PATTERN($CMD,...)` + focus `$CMD` (first constructor arg)
+    //   arm 2: `$CMD.$PATTERN = $VALUE;` + focus `$VALUE` (assignment RHS)
+    // These compile to enumerated `ConstructorArgSink` / `PropertyAssignSink`.
+    // The tests exercise the full `parse_taint_rule -> check` path.
+
+    /// The exact `csharp-sqli` sink (both arms + shared regex). Source is the
+    /// typed `(string $X)` metavariable; a `StringBuilder` propagator and the
+    /// `$CMD.Parameters.*` sanitizers are included so the rule matches the
+    /// registry shape faithfully.
+    fn csharp_sqli_rule() -> SemgrepTaintRule {
+        compiled(
+            r#"
+id: csharp-sqli
+mode: taint
+languages: [csharp]
+severity: ERROR
+message: "SQL injection"
+pattern-sources:
+  - patterns:
+      - pattern: |
+          (string $X)
+      - pattern-not: |
+          "..."
+pattern-propagators:
+  - pattern: (StringBuilder $B).$ANY(...,(string $X),...)
+    from: $X
+    to: $B
+pattern-sinks:
+  - patterns:
+      - pattern-either:
+        - patterns:
+          - pattern: |
+              new $PATTERN($CMD,...)
+          - focus-metavariable: $CMD
+        - patterns:
+          - pattern: |
+              $CMD.$PATTERN = $VALUE;
+          - focus-metavariable: $VALUE
+      - metavariable-regex:
+          metavariable: $PATTERN
+          regex: ^(SqlCommand|CommandText|OleDbCommand|OdbcCommand|OracleCommand)$
+pattern-sanitizers:
+  - pattern-either:
+      - pattern: |
+          $CMD.Parameters.Add(...)
+      - pattern: |
+          $CMD.Parameters.AddRange(...)
+      - pattern: |
+          $CMD.Parameters.AddWithValue(...)
+      - pattern: |
+          $CMD.Parameters[$IDX].Value = ...
+    by-side-effect: true
+"#,
+        )
+    }
+
+    const CSQLI_NAMES: [&str; 5] = [
+        "SqlCommand",
+        "CommandText",
+        "OleDbCommand",
+        "OdbcCommand",
+        "OracleCommand",
+    ];
+
+    /// TEST 1 — the rule COMPILES to the expected sink shapes: a typed-string
+    /// source, a `ConstructorArgSink` enumerating all five class names focused on
+    /// the first argument (`arg_index == 0`), and a `PropertyAssignSink`
+    /// enumerating all five property names.
+    #[test]
+    fn csharp_sqli_compiles_to_constructor_and_property_sinks() {
+        let rule = csharp_sqli_rule();
+        assert!(
+            rule.spec
+                .sources
+                .iter()
+                .any(|s| matches!(s, GenericMatcher::TypedName { type_name, .. } if type_name == "string")),
+            "source must be a typed-string metavariable, got {:?}",
+            rule.spec.sources
+        );
+
+        let ctor = rule
+            .spec
+            .sinks
+            .iter()
+            .find_map(|s| match s {
+                GenericMatcher::ConstructorArgSink {
+                    class_names,
+                    arg_index,
+                    ..
+                } => Some((class_names.clone(), *arg_index)),
+                _ => None,
+            })
+            .expect("a ConstructorArgSink must be compiled");
+        assert_eq!(ctor.1, 0, "constructor focus is the FIRST argument");
+        assert_eq!(ctor.0, CSQLI_NAMES, "constructor class names enumerated");
+
+        let props = rule
+            .spec
+            .sinks
+            .iter()
+            .find_map(|s| match s {
+                GenericMatcher::PropertyAssignSink { property_names, .. } => {
+                    Some(property_names.clone())
+                }
+                _ => None,
+            })
+            .expect("a PropertyAssignSink must be compiled");
+        assert_eq!(props, CSQLI_NAMES, "property names enumerated");
+    }
+
+    /// TEST 2 — the rule FIRES: a tainted string in `new SqlCommand(userInput)`
+    /// AND in `cmd.CommandText = userInput;` are both findings.
+    #[test]
+    fn csharp_sqli_fires_on_constructor_and_property_sinks() {
+        use crate::engine::parser::parse_file;
+        let rule = csharp_sqli_rule();
+
+        let ctor = r#"
+class Dao {
+    void Q(string userInput) {
+        SqlCommand command = new SqlCommand(userInput);
+    }
+}
+"#;
+        let tree = parse_file(ctor, Language::CSharp).expect("C# fixture parses");
+        assert_eq!(
+            rule.check(ctor, &tree).len(),
+            1,
+            "`new SqlCommand(userInput)` (tainted arg0) must fire"
+        );
+
+        let prop = r#"
+class Dao {
+    void Q(string userInput) {
+        var command = MakeCommand();
+        command.CommandText = userInput;
+    }
+}
+"#;
+        let tree = parse_file(prop, Language::CSharp).expect("C# fixture parses");
+        assert_eq!(
+            rule.check(prop, &tree).len(),
+            1,
+            "`command.CommandText = userInput` (tainted RHS) must fire"
+        );
+    }
+
+    /// TEST 3 — enumerated-name DISCRIMINATION (the crux of faithfulness): a
+    /// constructor of a class NOT in the set and an assignment to a property NOT
+    /// in the set are BOTH silent, even though the focused value is tainted.
+    #[test]
+    fn csharp_sqli_silent_on_non_enumerated_names() {
+        use crate::engine::parser::parse_file;
+        let rule = csharp_sqli_rule();
+
+        let ctor = r#"
+class Dao {
+    void Q(string userInput) {
+        var x = new SafeThing(userInput);
+    }
+}
+"#;
+        let tree = parse_file(ctor, Language::CSharp).expect("C# fixture parses");
+        assert!(
+            rule.check(ctor, &tree).is_empty(),
+            "`new SafeThing(userInput)` (class NOT enumerated) must NOT fire"
+        );
+
+        let prop = r#"
+class Dao {
+    void Q(string userInput) {
+        var command = MakeCommand();
+        command.SomeOther = userInput;
+    }
+}
+"#;
+        let tree = parse_file(prop, Language::CSharp).expect("C# fixture parses");
+        assert!(
+            rule.check(prop, &tree).is_empty(),
+            "`command.SomeOther = userInput` (property NOT enumerated) must NOT fire"
+        );
+    }
+
+    /// TEST 4 — parameterized/sanitized usage is silent: a tainted value passed
+    /// to `cmd.Parameters.AddWithValue(...)` (a parameterized query) never forms
+    /// the constructor/property sink shape, so no finding is produced.
+    #[test]
+    fn csharp_sqli_silent_on_parameterized_query() {
+        use crate::engine::parser::parse_file;
+        let rule = csharp_sqli_rule();
+
+        let src = r#"
+class Dao {
+    void Q(string userInput) {
+        var command = new SqlCommand("SELECT * FROM T WHERE id = @id");
+        command.Parameters.AddWithValue("@id", userInput);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture parses");
+        assert!(
+            rule.check(src, &tree).is_empty(),
+            "a parameterized query (AddWithValue) must NOT fire — the tainted value \
+             never reaches the constructor/property sink"
+        );
+    }
+
+    /// TEST 5 — focus-POSITION discrimination: arm 1 binds `$CMD` to the FIRST
+    /// constructor argument, so taint at a LATER argument
+    /// (`new SqlCommand(literal, userInput)`) must NOT fire.
+    #[test]
+    fn csharp_sqli_silent_on_non_focused_argument_position() {
+        use crate::engine::parser::parse_file;
+        let rule = csharp_sqli_rule();
+
+        let src = r#"
+class Dao {
+    void Q(string userInput) {
+        var command = new SqlCommand("SELECT 1", userInput);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::CSharp).expect("C# fixture parses");
+        assert!(
+            rule.check(src, &tree).is_empty(),
+            "taint at arg1 (`new SqlCommand(literal, userInput)`) must NOT fire \
+             for a first-argument focus"
         );
     }
 

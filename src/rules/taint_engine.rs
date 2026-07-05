@@ -369,6 +369,54 @@ pub enum NodeMatcher {
     /// call to a different method are all silent. Sink/sanitizer only. Matched by
     /// the C# engine; other engines carry it in the spec but no-op it.
     CallArgConcat { method: String, description: String },
+
+    /// Match a CONSTRUCTOR-ARGUMENT sink — a `new <Class>(arg0, ...)` object
+    /// creation whose instantiated class name is one of `class_names` AND whose
+    /// argument at position `arg_index` carries taint. Compiled from the Semgrep
+    /// C# `csharp-sqli` sink arm `new $PATTERN($CMD,...)` + `focus-metavariable:
+    /// $CMD`, gated by `metavariable-regex` on `$PATTERN`
+    /// (`^(SqlCommand|OleDbCommand|OdbcCommand|OracleCommand|...)$`): the
+    /// anchored-alternation regex is ENUMERATED into `class_names`, and the
+    /// focused first constructor argument is the tainted-value position (`new
+    /// SqlCommand(userInput)` is SQL injection).
+    ///
+    /// Faithfulness (the whole point): this fires ONLY when (a) the instantiated
+    /// class name is in the enumerated set — `new SafeThing(userInput)` is
+    /// silent (the class name is not enumerated) — AND (b) the argument at
+    /// `arg_index` (the focused position) carries taint — `new SqlCommand(literal,
+    /// userInput)` with taint at position 1 does NOT fire for `arg_index == 0`,
+    /// matching Semgrep's `focus-metavariable: $CMD` binding to the FIRST
+    /// argument. A concrete (never-enumerated) class name and an untainted focus
+    /// argument are both silent. Sink/sanitizer only — a construction is a
+    /// data-flow destination, not a taint origin. Compiled solely for the C#
+    /// engine; other engines carry the matcher in the spec but no-op it.
+    ConstructorArgSink {
+        class_names: Vec<String>,
+        arg_index: usize,
+        description: String,
+    },
+
+    /// Match a PROPERTY-ASSIGNMENT sink — an assignment `<expr>.<Prop> = <RHS>`
+    /// whose assigned property name is one of `property_names` AND whose
+    /// right-hand side carries taint. Compiled from the Semgrep C# `csharp-sqli`
+    /// sink arm `$CMD.$PATTERN = $VALUE;` + `focus-metavariable: $VALUE`, gated
+    /// by `metavariable-regex` on `$PATTERN`
+    /// (`^(CommandText|SqlCommand|...)$`): the anchored-alternation regex is
+    /// ENUMERATED into `property_names`, and the focused RHS is the tainted-value
+    /// position (`cmd.CommandText = userInput` is SQL injection).
+    ///
+    /// Faithfulness (the whole point): this fires ONLY when (a) the LHS property
+    /// name is in the enumerated set — `cmd.SomeOther = userInput` is silent (the
+    /// property is not enumerated) — AND (b) the RHS carries taint —
+    /// `cmd.CommandText = "literal"` is silent. A non-enumerated property and an
+    /// untainted RHS are both silent, regardless of the receiver. Sink/sanitizer
+    /// only — an assignment target is a data-flow destination, not a taint
+    /// origin. Compiled solely for the C# engine; other engines carry the matcher
+    /// in the spec but no-op it.
+    PropertyAssignSink {
+        property_names: Vec<String>,
+        description: String,
+    },
 }
 
 impl NodeMatcher {
@@ -396,6 +444,8 @@ impl NodeMatcher {
             NodeMatcher::CallArgSource { description, .. } => description,
             NodeMatcher::FirstParamSource { description } => description,
             NodeMatcher::CallArgConcat { description, .. } => description,
+            NodeMatcher::ConstructorArgSink { description, .. } => description,
+            NodeMatcher::PropertyAssignSink { description, .. } => description,
         }
     }
 }
@@ -1607,6 +1657,19 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
             description,
         } => {
             format!("CAC|{method}|{description}")
+        }
+        NodeMatcher::ConstructorArgSink {
+            class_names,
+            arg_index,
+            description,
+        } => {
+            format!("CTOR|{}|{arg_index}|{description}", class_names.join(","))
+        }
+        NodeMatcher::PropertyAssignSink {
+            property_names,
+            description,
+        } => {
+            format!("PAS|{}|{description}", property_names.join(","))
         }
     }
 }
