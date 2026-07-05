@@ -1781,7 +1781,8 @@ fn match_source(
             | NodeMatcher::ConstructorArgSink { .. }
             | NodeMatcher::PropertyAssignSink { .. }
             | NodeMatcher::MethodArgSink { .. }
-            | NodeMatcher::ReceiverProvenanceCall { .. } => {
+            | NodeMatcher::ReceiverProvenanceCall { .. }
+            | NodeMatcher::LiteralArgCall { .. } => {
                 // Sink-only matcher; MemberAssign is JS-specific; BinopFormat is
                 // matched on binary-expression nodes, not as a source.
             }

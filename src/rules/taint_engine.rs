@@ -516,6 +516,35 @@ pub enum NodeMatcher {
         method: String,
         description: String,
     },
+
+    /// Match an INLINE method call `<recv>.<method>("<arg>", ...)` as a taint
+    /// SOURCE — the Semgrep inline hash-provenance source
+    /// `$CRYPTO.createHash("md5")` (the JS `md5-used-as-password` rule: the
+    /// digest of an MD5 hash created inline by `crypto.createHash("md5")` is a
+    /// weak password hash). Fires on a call whose final method-name segment
+    /// equals `method` (`createHash`) AND whose first string-literal argument
+    /// equals `arg` (`md5`); the call result is seeded tainted, and the engine's
+    /// method-chain propagation carries it through `.update(...).digest(...)` to
+    /// the password sink.
+    ///
+    /// This is the INLINE analogue of [`NodeMatcher::ReceiverProvenanceCall`]
+    /// (which needs a separately-declared receiver): here the provenance IS the
+    /// call itself, so no receiver-declaration lookup is required.
+    ///
+    /// Faithfulness (the whole point): the `arg` string discriminator is what
+    /// separates the weak algorithm from strong ones — a call
+    /// `createHash("sha256")` does NOT match (its literal argument is not
+    /// `arg`), so `sha256.digest()` stays clean. Matching requires BOTH the
+    /// method name AND the literal argument, so an unrelated `createHash`
+    /// receiver or a non-literal argument is silent. Source only — a hash call
+    /// is a taint origin, not a destination. Compiled solely for the JS engine
+    /// (the only registry rule with this inline shape is JS); other engines
+    /// carry the matcher in the spec but no-op it.
+    LiteralArgCall {
+        method: String,
+        arg: String,
+        description: String,
+    },
 }
 
 impl NodeMatcher {
@@ -548,6 +577,7 @@ impl NodeMatcher {
             NodeMatcher::PropertyAssignSink { description, .. } => description,
             NodeMatcher::MethodArgSink { description, .. } => description,
             NodeMatcher::ReceiverProvenanceCall { description, .. } => description,
+            NodeMatcher::LiteralArgCall { description, .. } => description,
         }
     }
 }
@@ -1794,6 +1824,13 @@ pub(super) fn matcher_fingerprint(m: &NodeMatcher) -> String {
             description,
         } => {
             format!("RPC|{init_receiver}.{init_method}({init_arg})|{method}|{description}")
+        }
+        NodeMatcher::LiteralArgCall {
+            method,
+            arg,
+            description,
+        } => {
+            format!("LAC|{method}({arg})|{description}")
         }
     }
 }
