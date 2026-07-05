@@ -235,6 +235,22 @@ enum GenericMatcher {
         type_name: String,
         description: String,
     },
+
+    /// Matches an ASSIGNMENT/DECLARATION SINK whose LHS is a variable of
+    /// declared type `type_name` (final `.`-segment) AND whose RHS is tainted.
+    /// Compiled (Java only) from a Semgrep "typed assignment" sink
+    /// `(java.io.File $FILE) = ...` — "a tainted value assigned into a variable
+    /// of type `File` is the sink" (e.g. building a `File` from an untrusted
+    /// path is a path-traversal sink).
+    ///
+    /// Sink/sanitizer only — a typed write is a destination, not a taint
+    /// origin. The Java engine fires it on `variable_declarator` /
+    /// `assignment_expression` LHS types only when the RHS carries taint (never
+    /// on a bare `x = y`); other engines carry it but no-op it.
+    TypedAssignTarget {
+        type_name: String,
+        description: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -392,6 +408,13 @@ fn to_python_matcher(m: &GenericMatcher) -> python_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => python_taint::NodeMatcher::TypedAssignTarget {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -490,6 +513,13 @@ fn to_js_matcher(m: &GenericMatcher) -> javascript_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => javascript_taint::NodeMatcher::TypedAssignTarget {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -582,6 +612,13 @@ fn to_go_matcher(m: &GenericMatcher) -> go_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => go_taint::NodeMatcher::TypedAssignTarget {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -671,6 +708,13 @@ fn to_java_matcher(m: &GenericMatcher) -> java_taint::NodeMatcher {
             type_name,
             description,
         } => java_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => java_taint::NodeMatcher::TypedAssignTarget {
             type_name: type_name.clone(),
             description: description.clone(),
         },
@@ -773,6 +817,13 @@ fn to_c_matcher(m: &GenericMatcher) -> c_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => c_taint::NodeMatcher::TypedAssignTarget {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -865,6 +916,13 @@ fn to_kotlin_matcher(m: &GenericMatcher) -> kotlin_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => kotlin_taint::NodeMatcher::TypedAssignTarget {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -954,6 +1012,13 @@ fn to_ruby_matcher(m: &GenericMatcher) -> ruby_taint::NodeMatcher {
             type_name,
             description,
         } => ruby_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => ruby_taint::NodeMatcher::TypedAssignTarget {
             type_name: type_name.clone(),
             description: description.clone(),
         },
@@ -1058,6 +1123,13 @@ fn to_csharp_matcher(m: &GenericMatcher) -> csharp_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => csharp_taint::NodeMatcher::TypedAssignTarget {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1145,6 +1217,13 @@ fn to_bash_matcher(m: &GenericMatcher) -> bash_taint::NodeMatcher {
             type_name,
             description,
         } => bash_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => bash_taint::NodeMatcher::TypedAssignTarget {
             type_name: type_name.clone(),
             description: description.clone(),
         },
@@ -1244,6 +1323,13 @@ fn to_solidity_matcher(m: &GenericMatcher) -> solidity_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => solidity_taint::NodeMatcher::TypedAssignTarget {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1331,6 +1417,13 @@ fn to_scala_matcher(m: &GenericMatcher) -> scala_taint::NodeMatcher {
             type_name,
             description,
         } => scala_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => scala_taint::NodeMatcher::TypedAssignTarget {
             type_name: type_name.clone(),
             description: description.clone(),
         },
@@ -1424,6 +1517,13 @@ fn to_apex_matcher(m: &GenericMatcher) -> apex_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => apex_taint::NodeMatcher::TypedAssignTarget {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1514,6 +1614,13 @@ fn to_swift_matcher(m: &GenericMatcher) -> swift_taint::NodeMatcher {
             type_name: type_name.clone(),
             description: description.clone(),
         },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => swift_taint::NodeMatcher::TypedAssignTarget {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
     }
 }
 
@@ -1594,6 +1701,13 @@ fn to_php_matcher(m: &GenericMatcher) -> php_taint::NodeMatcher {
             type_name,
             description,
         } => php_taint::NodeMatcher::TypedName {
+            type_name: type_name.clone(),
+            description: description.clone(),
+        },
+        GenericMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } => php_taint::NodeMatcher::TypedAssignTarget {
             type_name: type_name.clone(),
             description: description.clone(),
         },
@@ -4438,6 +4552,24 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
                 }
                 MatcherRole::Sink | MatcherRole::Sanitizer => {
                     let rem = remainder.trim();
+                    // Typed-ASSIGNMENT sink `(java.io.File $FILE) = ...`: the
+                    // whole `(Type $MV)` is the assignment/declaration target,
+                    // so a tainted value written into a variable of that type
+                    // is the sink. Detect a leading single `=` (not `==`, a
+                    // comparison) and compile a type-specific
+                    // `TypedAssignTarget`. The RHS (`...`) is Semgrep's
+                    // ellipsis; the engine's own tainted-RHS check is what
+                    // bounds the match (never a bare `x = y`).
+                    if let Some(rhs) = rem.strip_prefix('=') {
+                        if !rhs.starts_with('=') {
+                            return Some(GenericMatcher::TypedAssignTarget {
+                                type_name: type_seg.to_string(),
+                                description: format!(
+                                    "tainted value assigned to `{type_seg}` variable"
+                                ),
+                            });
+                        }
+                    }
                     if rem.is_empty() {
                         // Bare `(Type $MV)` sink — no node shape to match on.
                         return None;
@@ -10702,6 +10834,133 @@ class Handler {
         assert!(
             findings.is_empty(),
             "a differently-typed parameter must not be seeded as a source, got {:?}",
+            findings
+        );
+    }
+
+    // ── Java typed-ASSIGNMENT sink `(java.io.File $FILE) = ...` ──────────────
+    //
+    // The whole `parse_taint_rule -> compiled() -> check()` path for the
+    // path-traversal sink shape: a tainted value assigned into a `File`-typed
+    // variable fires; a literal RHS or a wrong-type LHS stays silent.
+
+    fn path_traversal_rule() -> SemgrepTaintRule {
+        compiled(
+            r#"
+id: java-httpservlet-path-traversal
+mode: taint
+languages: [java]
+severity: ERROR
+message: "Tainted path flows into a File"
+pattern-sources:
+  - pattern: (HttpServletRequest $REQ)
+pattern-sinks:
+  - pattern: |
+      (java.io.File $FILE) = ...
+"#,
+        )
+    }
+
+    #[test]
+    fn typed_assign_sink_compiles_to_typed_assign_target() {
+        let rule = path_traversal_rule();
+        assert!(
+            rule.spec.sinks.iter().any(|s| matches!(
+                s,
+                GenericMatcher::TypedAssignTarget { type_name, .. } if type_name == "File"
+            )),
+            "sink should compile to TypedAssignTarget{{File}} (not `any assignment`), got {:?}",
+            rule.spec.sinks
+        );
+    }
+
+    #[test]
+    fn typed_assign_sink_fires_on_tainted_file_declaration() {
+        use crate::engine::parser::parse_file;
+        let rule = path_traversal_rule();
+        let src = r#"
+class Handler {
+    void handle(HttpServletRequest req) throws Exception {
+        String path = req.getParameter("path");
+        File f = new File(path);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a tainted path assigned into a File-typed variable must fire, got {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn typed_assign_sink_silent_on_literal_rhs() {
+        use crate::engine::parser::parse_file;
+        let rule = path_traversal_rule();
+        // File-typed LHS, but the RHS is a constant literal — no taint.
+        let src = r#"
+class Handler {
+    void handle(HttpServletRequest req) throws Exception {
+        String path = req.getParameter("path");
+        File f = new File("/static");
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a File built from a literal path must not fire, got {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn typed_assign_sink_fires_on_bare_assignment_to_file_local() {
+        use crate::engine::parser::parse_file;
+        let rule = path_traversal_rule();
+        // `f` is declared `File` then reassigned a tainted value in a bare
+        // `assignment_expression` — the declared type is resolved through the
+        // scope's local-type map.
+        let src = r#"
+class Handler {
+    void handle(HttpServletRequest req) throws Exception {
+        File f = new File("/static");
+        String path = req.getParameter("path");
+        f = new File(path);
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert_eq!(
+            findings.len(),
+            1,
+            "a tainted value reassigned into a File-typed local must fire, got {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn typed_assign_sink_silent_on_wrong_lhs_type() {
+        use crate::engine::parser::parse_file;
+        let rule = path_traversal_rule();
+        // Tainted RHS, but the LHS is a String, not a File.
+        let src = r#"
+class Handler {
+    void handle(HttpServletRequest req) throws Exception {
+        String s = req.getParameter("path");
+    }
+}
+"#;
+        let tree = parse_file(src, Language::Java).expect("java fixture should parse");
+        let findings = rule.check(src, &tree);
+        assert!(
+            findings.is_empty(),
+            "a tainted value assigned into a non-File variable must not fire, got {:?}",
             findings
         );
     }

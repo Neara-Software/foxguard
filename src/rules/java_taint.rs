@@ -925,7 +925,27 @@ fn find_sinks(
     state: &TaintState,
     out: &mut Vec<TaintFinding>,
 ) {
+    // Typed-assignment sinks (`(java.io.File $FILE) = ...`) are cheap to skip
+    // when the rule has none: only build the local-variable declared-type map
+    // (needed to resolve a bare `assignment_expression` LHS to its declared
+    // type) when at least one such sink is present.
+    let has_typed_assign = spec
+        .sinks
+        .iter()
+        .any(|m| matches!(m, NodeMatcher::TypedAssignTarget { .. }));
+    let local_types = if has_typed_assign {
+        collect_local_var_types(scope, source)
+    } else {
+        HashMap::new()
+    };
+
     walk_scope_nodes(scope, source, &mut |node, src| {
+        // Typed-assignment / declaration sinks fire on declaration and
+        // assignment nodes, which the call-only walk below never inspects.
+        if has_typed_assign {
+            check_typed_assign_sink(node, src, spec, policy, state, &local_types, out);
+        }
+
         if node.kind() != "method_invocation" && node.kind() != "object_creation_expression" {
             return;
         }
@@ -950,6 +970,114 @@ fn find_sinks(
             out.push(taint_finding_for_node(node, info, sink_description));
         }
     });
+}
+
+/// Fire a [`NodeMatcher::TypedAssignTarget`] sink (`(java.io.File $FILE) = ...`)
+/// when `node` is a declaration or assignment whose LHS is a variable of the
+/// required declared type AND whose RHS carries taint.
+///
+/// Two node shapes are handled:
+/// - `variable_declarator` (`File f = <rhs>`): the declared type is read off
+///   the owning `local_variable_declaration`.
+/// - `assignment_expression` (`f = <rhs>`): the LHS is a bare identifier, so
+///   its declared type is resolved through `local_types` (built once per scope
+///   from the local declarations). A target with no known declared type is
+///   skipped (no over-match).
+///
+/// Faithful by construction: the sink requires BOTH the type match AND a
+/// tainted RHS, so a literal RHS or a wrong-type LHS is silent.
+fn check_typed_assign_sink(
+    node: Node<'_>,
+    source: &str,
+    spec: &TaintSpec,
+    policy: Option<&LabelPolicy>,
+    state: &TaintState,
+    local_types: &HashMap<String, String>,
+    out: &mut Vec<TaintFinding>,
+) {
+    let (decl_type, rhs) = match node.kind() {
+        "variable_declarator" => {
+            let Some(value) = node.child_by_field_name("value") else {
+                return;
+            };
+            let Some(ty) = local_declarator_type(node, source) else {
+                return;
+            };
+            (ty.to_string(), value)
+        }
+        "assignment_expression" => {
+            let Some(left) = node.child_by_field_name("left") else {
+                return;
+            };
+            let Some(name) = assignment_target_name(left, source) else {
+                return;
+            };
+            let Some(ty) = local_types.get(name) else {
+                return;
+            };
+            let Some(right) = node.child_by_field_name("right") else {
+                return;
+            };
+            (ty.clone(), right)
+        }
+        _ => return,
+    };
+
+    let Some(sink_description) = typed_assign_sink_description(spec, &decl_type) else {
+        return;
+    };
+    // The RHS must carry taint — this is what keeps the sink from firing on
+    // every `File f = <literal>` / `x = y`.
+    let Some(info) = expression_taint(rhs, source, spec, policy, state) else {
+        return;
+    };
+    if let Some(p) = policy {
+        let labels = info.labels.clone().unwrap_or_default();
+        if !p.sink_requires.eval(&labels) {
+            return;
+        }
+    }
+    out.push(taint_finding_for_node(node, info, sink_description));
+}
+
+/// Build a map from local-variable name to its declared type text for every
+/// `local_variable_declaration` inside `scope`. Used to resolve the declared
+/// type of a bare `assignment_expression` LHS (`f = ...`) against a
+/// [`NodeMatcher::TypedAssignTarget`] sink.
+fn collect_local_var_types(scope: Node<'_>, source: &str) -> HashMap<String, String> {
+    let mut types = HashMap::new();
+    walk_scope_nodes(scope, source, &mut |node, src| {
+        if node.kind() != "local_variable_declaration" {
+            return;
+        }
+        let Some(ty) = node.child_by_field_name("type").map(|t| node_text(t, src)) else {
+            return;
+        };
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() != "variable_declarator" {
+                continue;
+            }
+            if let Some(name) = child.child_by_field_name("name") {
+                types.insert(node_text(name, src).to_string(), ty.to_string());
+            }
+        }
+    });
+    types
+}
+
+/// If `decl_type` matches a [`NodeMatcher::TypedAssignTarget`] sink in `spec`
+/// (by final `.`-segment, so both `File` and `java.io.File` match `File`),
+/// return that sink's description.
+fn typed_assign_sink_description(spec: &TaintSpec, decl_type: &str) -> Option<String> {
+    let seg = type_final_segment(decl_type);
+    spec.sinks.iter().find_map(|matcher| match matcher {
+        NodeMatcher::TypedAssignTarget {
+            type_name,
+            description,
+        } if type_name == seg => Some(description.clone()),
+        _ => None,
+    })
 }
 
 fn expression_taint(

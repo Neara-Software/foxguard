@@ -9,13 +9,13 @@ Measures how well foxguard's existing Semgrep-compat YAML loader (`src/rules/sem
 
 | Metric | Value |
 |---|---|
-| Rule files scanned | 2070 |
+| Rule files scanned | 2071 |
 | Files with YAML parse errors | 0 |
-| Total rules | 2144 |
-| Rules loaded OK | 2077 (96.9%) |
-| Rules skipped | 67 (3.1%) |
+| Total rules | 2145 |
+| Rules loaded OK | 2079 (96.9%) |
+| Rules skipped | 66 (3.1%) |
 
-**Headline load rate: 96.9%** (2077 / 2144 rules).
+**Headline load rate: 96.9%** (2079 / 2145 rules).
 
 ## Skip-reason histogram
 
@@ -23,7 +23,7 @@ Sorted by frequency. The reason names the operator/key that blocks the rule toda
 
 | Skip reason | Rules | % of skipped | % of all rules |
 |---|---:|---:|---:|
-| `mode: taint (unsupported shape)` | 66 | 98.5% | 3.1% |
+| `mode: taint (unsupported shape)` | 65 | 98.5% | 3.0% |
 | `generic mode (languages: [generic])` | 1 | 1.5% | 0.0% |
 
 ## Priority order — operator/feature backlog
@@ -32,9 +32,9 @@ Matcher capabilities (implementable in `semgrep_compat.rs` / `semgrep_taint.rs`)
 
 | Rank | Capability to add | Rules unlocked |
 |---:|---|---:|
-| 1 | `mode: taint (unsupported shape)` | 66 |
+| 1 | `mode: taint (unsupported shape)` | 65 |
 
-Operator/feature gaps account for **66 rules** (3.1% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
+Operator/feature gaps account for **65 rules** (3.0% of all rules). Closing the top of this list is the highest-leverage parity work that does not require a new parser.
 
 ## Priority order — missing language grammars
 
@@ -56,12 +56,12 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 | hcl | 359 | 359 | 0 | 100.0% |
 | javascript | 243 | 230 | 13 | 94.7% |
 | regex | 237 | 237 | 0 | 100.0% |
-| java | 131 | 124 | 7 | 94.7% |
+| java | 131 | 125 | 6 | 95.4% |
 | generic | 103 | 102 | 1 | 99.0% |
 | yaml | 100 | 100 | 0 | 100.0% |
 | go | 97 | 87 | 10 | 89.7% |
 | ruby | 92 | 85 | 7 | 92.4% |
-| php | 63 | 56 | 7 | 88.9% |
+| php | 64 | 57 | 7 | 89.1% |
 | solidity | 50 | 49 | 1 | 98.0% |
 | csharp | 48 | 42 | 6 | 87.5% |
 | dockerfile | 39 | 39 | 0 | 100.0% |
@@ -87,7 +87,7 @@ Language is the rule's first declared language (js/ts/jsx/tsx collapsed to `java
 - **csharp**: `mode: taint (unsupported shape)` (6)
 - **generic**: `generic mode (languages: [generic])` (1)
 - **go**: `mode: taint (unsupported shape)` (10)
-- **java**: `mode: taint (unsupported shape)` (7)
+- **java**: `mode: taint (unsupported shape)` (6)
 - **javascript**: `mode: taint (unsupported shape)` (13)
 - **php**: `mode: taint (unsupported shape)` (7)
 - **python**: `mode: taint (unsupported shape)` (14)

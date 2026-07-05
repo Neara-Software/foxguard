@@ -1619,7 +1619,9 @@ fn match_source(
             | NodeMatcher::ReturnValue { .. }
             // Java-only typed-metavariable source; Go has no declared-type
             // seeding, so it is a no-op here.
-            | NodeMatcher::TypedName { .. } => {
+            | NodeMatcher::TypedName { .. }
+            // Java-only typed-assignment sink; no-op in source position here.
+            | NodeMatcher::TypedAssignTarget { .. } => {
                 // Sink-only matcher; MemberAssign is JS-specific; BinopFormat is
                 // matched on binary-expression nodes, not as a source.
             }
