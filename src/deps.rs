@@ -610,7 +610,9 @@ fn parse_yarn_classic_lock(source: &str, path: &Path) -> Vec<PackageRef> {
         } else if let Some(version) = yarn_classic_version(line) {
             if let Some((name, start, end)) = current.take() {
                 if seen.insert((name.clone(), version.clone())) {
-                    packages.push(package_ref("npm", &name, &version, source, path, start, end));
+                    packages.push(package_ref(
+                        "npm", &name, &version, source, path, start, end,
+                    ));
                 }
             }
         }
@@ -660,7 +662,11 @@ fn yarn_descriptor_name(descriptors: &str) -> Option<String> {
 
 // Version from a classic `version "x"` line.
 fn yarn_classic_version(line: &str) -> Option<String> {
-    let version = line.trim().strip_prefix("version ")?.trim().trim_matches('"');
+    let version = line
+        .trim()
+        .strip_prefix("version ")?
+        .trim()
+        .trim_matches('"');
     if version.is_empty() {
         return None;
     }
@@ -1493,8 +1499,11 @@ mod tests {
             "elliptic"
         );
         assert_eq!(
-            parse_yarn_lock("elliptic@^6.5.0:\n  version \"6.5.4\"\n", Path::new("yarn.lock"))[0]
-                .purl,
+            parse_yarn_lock(
+                "elliptic@^6.5.0:\n  version \"6.5.4\"\n",
+                Path::new("yarn.lock")
+            )[0]
+            .purl,
             "pkg:npm/elliptic@6.5.4"
         );
     }
@@ -1550,7 +1559,10 @@ acorn@^7.0.0:
         assert_eq!(berry.len(), 1);
         assert_eq!(berry[0].name, "@cspotcode/source-map-support");
         assert_eq!(berry[0].version, "0.8.1");
-        assert_eq!(berry[0].purl, "pkg:npm/%40cspotcode/source-map-support@0.8.1");
+        assert_eq!(
+            berry[0].purl,
+            "pkg:npm/%40cspotcode/source-map-support@0.8.1"
+        );
     }
 
     #[test]

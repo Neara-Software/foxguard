@@ -3222,6 +3222,9 @@ pub struct SemgrepTaintRule {
     /// `None` for every unlabeled rule (unchanged behavior). Consulted only by
     /// the Java engine.
     label_policy: Option<crate::rules::taint_engine::LabelPolicy>,
+    /// Compiled `paths:` include/exclude filter. Shared semantics with the
+    /// structural `SemgrepRule` path (see `PathFilter`); `None` = no filter.
+    path_filter: Option<crate::rules::semgrep_compat::PathFilter>,
 }
 
 /// Unified view over the three engine-specific `TaintFinding` types.
@@ -3469,6 +3472,12 @@ impl Rule for SemgrepTaintRule {
     }
     fn language(&self) -> Language {
         self.lang
+    }
+
+    fn applies_to_path(&self, path: &std::path::Path) -> bool {
+        self.path_filter
+            .as_ref()
+            .is_none_or(|filter| filter.matches(path))
     }
 
     fn check(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<Finding> {
@@ -4281,6 +4290,32 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
     let side_effect_sanitizers =
         compile_side_effect_sanitizers(yaml.get("pattern-sanitizers"), &id, lang);
 
+    // `paths:` include/exclude — same semantics as structural rules. A broken
+    // glob skips the rule (fail closed on the filter rather than scanning wide).
+    let path_filter = match yaml
+        .get("paths")
+        .map(|node| {
+            serde_yaml_ng::from_value::<crate::rules::semgrep_compat::SemgrepPaths>(node.clone())
+        })
+        .transpose()
+    {
+        Ok(paths) => match crate::rules::semgrep_compat::PathFilter::from_yaml(paths.as_ref()) {
+            Ok(f) => f,
+            Err(e) => {
+                return TaintRuleParse::Skip(format!(
+                    "taint rule `{}` has an invalid `paths:` filter: {}",
+                    id, e
+                ))
+            }
+        },
+        Err(e) => {
+            return TaintRuleParse::Skip(format!(
+                "taint rule `{}` has a malformed `paths:` section: {}",
+                id, e
+            ))
+        }
+    };
+
     TaintRuleParse::Compiled(SemgrepTaintRule {
         id: format!("semgrep/{}", id),
         message,
@@ -4303,6 +4338,7 @@ pub fn parse_taint_rule(yaml: &YamlValue) -> TaintRuleParse {
         },
         propagators,
         label_policy,
+        path_filter,
     })
 }
 
@@ -5362,7 +5398,11 @@ fn compile_patterns_block(
 ///
 /// Returns `false` (and pushes nothing) for any other block shape, leaving the
 /// caller to fall through to the normal graceful-degradation extraction.
-fn try_compile_param_source_block(v: &YamlValue, lang: Language, out: &mut Vec<GenericMatcher>) -> bool {
+fn try_compile_param_source_block(
+    v: &YamlValue,
+    lang: Language,
+    out: &mut Vec<GenericMatcher>,
+) -> bool {
     let Some(items) = v.as_sequence() else {
         return false;
     };
@@ -5399,7 +5439,18 @@ fn try_compile_param_source_block(v: &YamlValue, lang: Language, out: &mut Vec<G
                 .flatten();
             match typed {
                 Some(ty) => {
-                    let sentinel = format!("{}{ty}", crate::rules::taint_engine::TYPE_PARAM_PREFIX);
+                    // Encode the signature's other concretely-typed parameters
+                    // into the sentinel (`type:DbKey&AuthContext`): the rule
+                    // says "a DbKey param of a method that ALSO takes an
+                    // AuthContext", so the engine must gate seeding on those
+                    // co-parameter types being present, not seed every DbKey
+                    // param anywhere.
+                    let mut sentinel =
+                        format!("{}{ty}", crate::rules::taint_engine::TYPE_PARAM_PREFIX);
+                    for co in signature_co_param_types(sig, seed) {
+                        sentinel.push('&');
+                        sentinel.push_str(co);
+                    }
                     if !type_names.contains(&sentinel) {
                         type_names.push(sentinel);
                     }
@@ -5798,6 +5849,39 @@ fn signature_has_param(sig: &str, seed: &str) -> bool {
     params
         .split(|c: char| !is_ident_char(c) && c != '$')
         .any(|tok| tok == seed)
+}
+
+/// The concrete declared types of the OTHER parameters in `sig`'s parameter
+/// list (excluding the seed's own parameter, `...` ellipses, and parameters
+/// with metavariable types). `$RET $M(..., AuthContext $AC, ..., DbKey<$T> $ID, ...)`
+/// with seed `$ID` yields `["AuthContext"]`. These become co-parameter
+/// requirements on the compiled typed-param source: a method is only seeded
+/// when its own parameter list declares every listed type.
+fn signature_co_param_types<'a>(sig: &'a str, seed: &str) -> Vec<&'a str> {
+    let Some(open) = sig.find('(') else {
+        return Vec::new();
+    };
+    let Some(close) = matching_paren(sig, open) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for param in split_top_level_commas(&sig[open + 1..close]) {
+        let param = param.trim();
+        if param.is_empty() || param == "..." {
+            continue;
+        }
+        let Some(ws) = param.rfind(char::is_whitespace) else {
+            continue; // single token — no declared type
+        };
+        if param[ws + 1..].trim() == seed {
+            continue; // the seed's own parameter
+        }
+        let base = crate::rules::taint_engine::type_base_name(param[..ws].trim());
+        if !base.is_empty() && !is_metavariable(base) && !out.contains(&base) {
+            out.push(base);
+        }
+    }
+    out
 }
 
 /// Split a parameter list on top-level commas, ignoring commas nested inside
@@ -6939,9 +7023,58 @@ fn trailing_call_open(s: &str) -> Option<usize> {
     None
 }
 
+/// Canonical for a chained-call callee that preserves the trailing receiver
+/// segment: `$TBL.id().eq` → `Some("id().eq")`. Requires the final method to be
+/// a plain identifier and the segment immediately before it to be a no-arg call
+/// on a plain identifier (`ident()`). Any other chain (metavariable method,
+/// call with arguments, deeper nesting in the last segment) yields `None` so
+/// the caller can fall back / skip.
+fn chained_callee_canonical(callee: &str) -> Option<String> {
+    // Split at the last top-level dot: receiver-chain "." method.
+    let mut depth = 0i32;
+    let mut last_dot = None;
+    for (i, c) in callee.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '.' if depth == 0 => last_dot = Some(i),
+            _ => {}
+        }
+    }
+    let dot = last_dot?;
+    let method = callee[dot + 1..].trim();
+    if !is_identifier(method) {
+        return None;
+    }
+    let chain = callee[..dot].trim();
+    // The last segment of the receiver chain must be `ident()`.
+    let seg_start = {
+        let mut depth = 0i32;
+        let mut idx = 0;
+        for (i, c) in chain.char_indices() {
+            match c {
+                '(' | '[' => depth += 1,
+                ')' | ']' => depth -= 1,
+                '.' if depth == 0 => idx = i + 1,
+                _ => {}
+            }
+        }
+        idx
+    };
+    let seg = chain[seg_start..].trim();
+    let head = seg.strip_suffix("()")?;
+    if !is_identifier(head.trim()) {
+        return None;
+    }
+    Some(format!("{}.{}", seg, method))
+}
+
 /// The final method name of a (possibly chained) callee: the identifier after
 /// the last top-level `.` (ignoring `.` nested inside `()`/`[]`). `$TBL.id().eq`
 /// → `eq`; `$RES.$METH` → `$METH`; `redirect_to` → `redirect_to`.
+/// (Production callers now go through [`chained_callee_canonical`], which keeps
+/// the trailing receiver segment; this remains for its test coverage.)
+#[cfg(test)]
 fn final_method_name(callee: &str) -> &str {
     let mut depth = 0i32;
     let mut last_dot = None;
@@ -7000,14 +7133,17 @@ fn compile_focus_call_callee(
     let callee = c[..open].trim();
 
     // Chained-call callee whose receiver itself contains a call — e.g.
-    // `$TBL.id().eq` (the tenant by-id-query sink). The receiver chain cannot be
-    // expressed, so key off the FINAL method name and match any receiver.
+    // `$TBL.id().eq` (the tenant by-id-query sink). Keep the trailing receiver
+    // segment: compile to `Call { canonical: "id().eq" }`, which the Java
+    // matcher checks against the END of the actual receiver chain (so
+    // `TEAM.id().eq(x)` matches but `TEAM.name().eq(x)` does not). Falling
+    // back to the bare final method name here would degrade the sink to ANY
+    // `.eq(tainted)` — the by-any-column false-positive flood.
     if callee.contains('(') {
-        let method = final_method_name(callee);
-        if is_identifier(method) {
-            out.push(GenericMatcher::MethodName {
-                method: method.to_string(),
-                description: describe(method, role),
+        if let Some(canonical) = chained_callee_canonical(callee) {
+            out.push(GenericMatcher::Call {
+                description: describe(&canonical, role),
+                canonical,
             });
         }
         return;
@@ -9256,6 +9392,28 @@ fn compile_pattern(pattern: &str, role: MatcherRole, lang: Language) -> Option<G
         });
     }
 
+    // ── Chained-call form: `$TBL.id().eq($X)` ────────────────────────────
+    //
+    // A callee whose receiver chain itself contains a call. The first-paren
+    // Call form below would mis-split this at the inner `id(` paren and
+    // compile `MethodName { id }` — the wrong method, on any receiver. Keep
+    // the trailing receiver segment instead: `Call { canonical: "id().eq" }`,
+    // matched by the Java engine against the END of the receiver chain.
+    // Sink/sanitizer only (a call argument is a destination, not an origin).
+    if let (MatcherRole::Sink | MatcherRole::Sanitizer, Some(open)) =
+        (role, trailing_call_open(pat))
+    {
+        let callee = pat[..open].trim();
+        if callee.contains('(') {
+            if let Some(canonical) = chained_callee_canonical(callee) {
+                return Some(GenericMatcher::Call {
+                    description: describe(&canonical, role),
+                    canonical,
+                });
+            }
+        }
+    }
+
     // ── Call form: `root.method(...)` or `func($X)` ─────────────────────
     if let Some(open_paren) = pat.find('(') {
         if !pat.ends_with(')') {
@@ -10438,8 +10596,8 @@ mod tests {
         // The cast paren previously broke the Call form (`unsupported pattern
         // shape`); now BOTH roles compile to an any-receiver MethodName — the
         // SOURCE role being the new capability this enables.
-        let as_source =
-            compile("(Req $R).getQueryParam(...)", MatcherRole::Source).expect("cast-prefix source");
+        let as_source = compile("(Req $R).getQueryParam(...)", MatcherRole::Source)
+            .expect("cast-prefix source");
         let as_sink =
             compile("(Req $R).getQueryParam(...)", MatcherRole::Sink).expect("cast-prefix sink");
         for (label, m) in [("source", as_source), ("sink", as_sink)] {
@@ -15193,8 +15351,11 @@ function run(name, cmd) {
     #[test]
     fn typed_param_block_compiles_to_type_sentinel() {
         // `DbKey<$T> $ID` (+ a signature `pattern-inside`) now compiles to a
-        // TYPED param source (`type:DbKey`), not the type-blind any-parameter
-        // wildcard.
+        // TYPED param source, not the type-blind any-parameter wildcard. The
+        // signature's other concretely-typed parameters (here `AuthContext`)
+        // are encoded as `&`-joined co-parameter requirements: the engine
+        // seeds a DbKey param only in methods that ALSO declare an
+        // AuthContext parameter.
         let rule = compiled(
             r#"
 id: java-typed-param
@@ -15213,9 +15374,10 @@ pattern-sinks:
         assert!(
             matches!(
                 rule.spec.sources.as_slice(),
-                [GenericMatcher::ParamName { names, .. }] if names == &["type:DbKey".to_string()]
+                [GenericMatcher::ParamName { names, .. }]
+                    if names == &["type:DbKey&AuthContext".to_string()]
             ),
-            "expected a `type:DbKey` ParamName source, got {:?}",
+            "expected a `type:DbKey&AuthContext` ParamName source, got {:?}",
             rule.spec.sources
         );
     }
@@ -15229,7 +15391,10 @@ pattern-sinks:
             trailing_call_open("$TBL.id().eq($SINK)"),
             Some("$TBL.id().eq".len())
         );
-        assert_eq!(trailing_call_open("redirect_to($X)"), Some("redirect_to".len()));
+        assert_eq!(
+            trailing_call_open("redirect_to($X)"),
+            Some("redirect_to".len())
+        );
         assert_eq!(trailing_call_open("no parens"), None);
         // `final_method_name` ignores `.` inside the receiver chain's calls.
         assert_eq!(final_method_name("$TBL.id().eq"), "eq");
@@ -15261,14 +15426,16 @@ pattern-sinks:
           - pattern: eq($TBL.id(), $SINK)
 "#,
         );
-        // The chained-focus sink compiles to an any-receiver MethodName on `eq`
-        // (the trailing call), not `id` (the inner call) as it did before.
+        // The chained-focus sink keeps its trailing receiver segment: it
+        // compiles to `Call { canonical: "id().eq" }`, matched against the END
+        // of the receiver chain — not a bare any-receiver `eq`, which degraded
+        // to every `.eq(tainted)` call.
         assert!(
             rule.spec.sinks.iter().any(|m| matches!(
                 m,
-                GenericMatcher::MethodName { method, .. } if method == "eq"
+                GenericMatcher::Call { canonical, .. } if canonical == "id().eq"
             )),
-            "expected a MethodName `eq` sink, got {:?}",
+            "expected a Call `id().eq` sink, got {:?}",
             rule.spec.sinks
         );
 

@@ -378,7 +378,15 @@ fn summarize_java_method(
                 sanitizers: rule_spec.sanitizers.clone(),
             };
             let mut findings = Vec::new();
-            analyze_scope(method_node, source, &synthetic, &[], None, &[], &mut findings);
+            analyze_scope(
+                method_node,
+                source,
+                &synthetic,
+                &[],
+                None,
+                &[],
+                &mut findings,
+            );
             if let Some(finding) = findings.first() {
                 params_to_sink.push(ParamSinkFlow {
                     param_index: param_idx,
@@ -835,10 +843,15 @@ fn collect_param_sources(
 ) {
     let mut annotation_names: Vec<&str> = Vec::new();
     let mut bare_names: Vec<&str> = Vec::new();
-    // `type:`-prefixed name (`type:DbKey`) seeds every parameter whose declared
-    // simple type matches — compiled from a Semgrep source block with a typed
-    // signature `pattern-inside` (e.g. `DbKey<$T> $ID`) + `pattern: $ID`.
-    let mut type_names: Vec<&str> = Vec::new();
+    // `type:`-prefixed name (`type:DbKey`, or `type:DbKey&AuthContext` with
+    // co-parameter requirements) seeds every parameter whose declared simple
+    // type matches the FIRST segment — compiled from a Semgrep source block
+    // with a typed signature `pattern-inside` (e.g.
+    // `$RET $M(..., AuthContext $AC, ..., DbKey<$T> $ID, ...)` + `pattern: $ID`).
+    // Any `&`-joined trailing segments are co-parameter types the enclosing
+    // method's parameter list must ALSO declare for the seed to apply (the
+    // signature constrains the whole method, not just the seed parameter).
+    let mut type_names: Vec<(&str, Vec<&str>)> = Vec::new();
     // `$`-prefixed name (`$PARAM`) is the any-parameter wildcard compiled from a
     // Semgrep `pattern-inside: function(...,$ARG,...) + focus-metavariable: $ARG`
     // source block: seed *every* parameter of the enclosing scope.
@@ -850,7 +863,10 @@ fn collect_param_sources(
                 if let Some(rest) = name.strip_prefix('@') {
                     annotation_names.push(rest);
                 } else if let Some(rest) = name.strip_prefix(type_prefix) {
-                    type_names.push(rest);
+                    let mut segs = rest.split('&');
+                    if let Some(ty) = segs.next() {
+                        type_names.push((ty, segs.collect()));
+                    }
                 } else if name == crate::rules::taint_engine::ANY_PARAM_WILDCARD {
                     wildcard = true;
                 } else {
@@ -859,6 +875,15 @@ fn collect_param_sources(
             }
         }
     }
+
+    // Declared simple types of ALL parameters in this scope, for co-parameter
+    // gating of `type:`-sentinel sources.
+    let scope_param_types: Vec<String> = scope_parameter_nodes(scope_node)
+        .into_iter()
+        .filter_map(|node| {
+            formal_parameter_type(node, source).map(|ty| type_final_segment(ty).to_string())
+        })
+        .collect();
 
     for node in scope_parameter_nodes(scope_node) {
         let Some(name) = formal_parameter_name(node, source) else {
@@ -870,7 +895,14 @@ fn collect_param_sources(
             .find(|annotation| text.contains(&format!("@{annotation}")));
         let matched_type = formal_parameter_type(node, source)
             .map(type_final_segment)
-            .filter(|ty| type_names.contains(ty));
+            .filter(|&ty| {
+                type_names.iter().any(|(seed_ty, co_types)| {
+                    *seed_ty == ty
+                        && co_types
+                            .iter()
+                            .all(|co| scope_param_types.iter().any(|p| p == co))
+                })
+            });
 
         // Typed-metavariable source `(HttpServletRequest $REQ)`: seed the
         // parameter when its DECLARED TYPE matches, regardless of name.
@@ -1627,11 +1659,74 @@ fn match_java_method_canonical(canonical: &str, receiver: &str, method: &str) ->
     if method != expected_method {
         return false;
     }
-    let receiver_lower = receiver.to_ascii_lowercase();
-    let expected_lower = expected_receiver.to_ascii_lowercase();
-    receiver_lower.contains(&expected_lower)
-        || (expected_lower == "request" && receiver_lower.contains("request"))
-        || (expected_lower == "runtime" && receiver_lower.contains("runtime"))
+    // A parenthesised trailing segment (`id()`, from a chained-call canonical
+    // like `id().eq`) must match the END of the receiver chain exactly:
+    // `TEAM.id().eq(x)` has receiver `TEAM.id()` which ends with `id()`;
+    // `TEAM.name().eq(x)` does not.
+    if let Some(seg) = expected_receiver.strip_suffix("()") {
+        let recv = receiver.trim();
+        let Some(head) = recv.strip_suffix("()") else {
+            return false;
+        };
+        return head.ends_with(seg)
+            && head[..head.len() - seg.len()]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+    }
+    // Token-boundary receiver match: the canonical receiver must appear in the
+    // actual receiver text as a whole word, where word boundaries are
+    // non-alphanumeric characters OR camelCase transitions. This keeps the
+    // intended looseness (`request.getParameter` matches a receiver named
+    // `httpServletRequest`; `Runtime.exec` matches `Runtime.getRuntime()`)
+    // while rejecting accidental substrings (`rq` inside `parquetUri`, `req`
+    // at the tail of `freq`).
+    receiver_contains_token(receiver, expected_receiver)
+}
+
+/// True when `token` occurs in `text` case-insensitively at word boundaries.
+/// A boundary is the start/end of the text, a non-alphanumeric/underscore
+/// character, or a lower→UPPER camelCase transition (so `httpServletRequest`
+/// contains the token `request`, but `freq` does not contain `req` and
+/// `parquetUri` does not contain `rq`).
+fn receiver_contains_token(text: &str, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    let m = token.chars().count();
+    if m > n {
+        return false;
+    }
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    for start in 0..=n - m {
+        let window: String = chars[start..start + m].iter().collect();
+        if !window.eq_ignore_ascii_case(token) {
+            continue;
+        }
+        // Left boundary: start of text, non-word char, or camel transition
+        // (previous char lowercase/digit and window starts uppercase in the
+        // ORIGINAL text).
+        let left_ok = start == 0 || {
+            let prev = chars[start - 1];
+            !is_word(prev) || (prev.is_lowercase() && chars[start].is_uppercase())
+        };
+        if !left_ok {
+            continue;
+        }
+        // Right boundary: end of text, non-word char, or camel transition
+        // (window ends lowercase and next char is uppercase).
+        let end = start + m;
+        let right_ok = end == n || {
+            let next = chars[end];
+            !is_word(next) || (chars[end - 1].is_lowercase() && next.is_uppercase())
+        };
+        if right_ok {
+            return true;
+        }
+    }
+    false
 }
 
 fn sink_argument_taint(
@@ -1910,8 +2005,14 @@ public class Handler {
 }
 "#;
         let findings = analyze(src, &method_name_source_spec());
-        assert_eq!(findings.len(), 1, "MethodName source must fire: {findings:?}");
-        assert!(findings[0].source_description.contains("request query param"));
+        assert_eq!(
+            findings.len(),
+            1,
+            "MethodName source must fire: {findings:?}"
+        );
+        assert!(findings[0]
+            .source_description
+            .contains("request query param"));
         assert!(findings[0].sink_description.contains("file path"));
     }
 

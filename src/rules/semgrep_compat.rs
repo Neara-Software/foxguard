@@ -3415,6 +3415,14 @@ fn compile_globset(patterns: &[String]) -> Result<Option<GlobSet>, String> {
 ///   - `**/<entry>` and `**/<entry>/**` (the same, matched at any depth, so it
 ///     works whether the scanned paths are project-relative or absolute).
 fn expand_path_glob(pattern: &str) -> Vec<String> {
+    // A leading `/` is the Semgrepignore-v2 root anchor: `/src/handlers/`
+    // means "src/handlers at the project root", not an absolute filesystem
+    // path. foxguard's path filter sees whatever path the walker produced
+    // (often absolute), with no notion of the project root, so true anchoring
+    // cannot be enforced here. Strip the anchor and match at any depth — the
+    // alternative (emitting only root-anchored globs) silently matches NOTHING
+    // against absolute scan paths, disabling the rule's include list entirely.
+    let pattern = pattern.strip_prefix('/').unwrap_or(pattern);
     let trimmed = pattern.trim_end_matches('/');
     if trimmed.is_empty() {
         return vec![pattern.to_string()];
