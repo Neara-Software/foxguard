@@ -114,6 +114,24 @@ PHP delta is the stable measure.
 
 ## Deferred — PHP
 
+> **Re-sweep (2026-07-09).** All 4 remaining PHP taint skips
+> (`doctrine-orm-dangerous-query`, `laravel-sql-injection`,
+> `laravel-api-route-sql-injection`, `laravel-unsafe-validator`) were re-checked
+> against the grown primitive set (`MethodArgSink`, `ConstructorArgSink`,
+> `CallArgSource`, `CallArgConcat`, `TypedName`, `FirstParamSource`,
+> `PropertyAssignSink`, `ReceiverProvenanceCall`). **None flip.** Even where a
+> new primitive addresses a *secondary* blocker — e.g. an arg-position-aware sink
+> would help `laravel-sql-injection`, and `TypedName`/`FirstParamSource` speak to
+> `laravel-unsafe-validator`'s typed/closure-param source — every one of the four
+> is gated first by the **decisive shared blocker below: PHP AST `pattern:` /
+> `pattern-inside` search matches zero nodes**, so the QueryBuilder / FormRequest
+> scoping that distinguishes these from ubiquitous `->where()/->select()/…` calls
+> cannot be enforced. Dropping the scope over-matches catastrophically; keeping
+> it (via a `contains_range` post-filter) suppresses every finding. No primitive
+> in the current set changes that. `laravel-api-route-sql-injection` additionally
+> needs `::` scoped-call `Call` support + closure-parameter source seeding. All 4
+> stay deferred.
+
 > **2026-07-05 re-investigation (focus-call-sink w/ pattern-inside).** Both rules
 > were re-examined end-to-end (recognizer feasibility + empirical probing of the
 > sink-side `pattern-inside` post-filter). The `->`/`::` lexical gap is indeed
