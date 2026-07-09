@@ -1,5 +1,89 @@
 # Taint-labels (`label:` / `requires:`) feasibility assessment
 
+> **Update (2026-07-09): re-examined `react-href-var`, `raw-html-format`, and
+> `grpc-server-insecure-connection` against the current `LabelPolicy` machinery
+> — all three stay DEFERRED, each on an independent hard blocker that is NOT
+> just "boolean `requires:` algebra" (that part the engine now has). The
+> `RequiresExpr` parser already accepts each rule's sink expression verbatim
+> (`TAINTED and not CONCAT and not CLEAN`,
+> `(EXPRESS and not CLEAN) or (EXPRESSTS and not CLEAN)`); the blockers are
+> elsewhere and are per-rule distinct:**
+>
+> - **`react-href-var` (TS/JS)** — deferred on FOUR compounding gaps, any one
+>   fatal: (1) **the JS/TS engine is not label-aware at all.** `LabelPolicy` is
+>   threaded and consumed only by the Go and Java engines (`analyze_tree_labeled`
+>   / `expression_labels` / `source_labels` in `go_taint.rs`; the Java engine's
+>   per-value label set). Every `AnalysisContext` the JS engine builds in
+>   `javascript_taint.rs` passes `label_policy: None`, and it runs the unlabeled
+>   `analyze_tree`. Loading this rule needs ~600 lines of Go-equivalent label
+>   machinery ported into the JS engine's different AST handling. (2) **`CLEAN`
+>   is a `by-side-effect: true` source with NO `requires:`**, so
+>   `detect_label_policy` classifies it as a *second primary label* (alongside
+>   `TAINTED`) → refused (`primary_labels.len() != 1`). A faithful load needs
+>   `detect_label_policy` extended to recognize a no-`requires` `by-side-effect`
+>   sanitizer source (whose label appears only under `not` in the sink) as a
+>   sanitizer *relabel*, not a primary — a new detect shape. (3) **The `CONCAT`
+>   relabel is not the generic string-building relabel the engine models.** Its
+>   trigger is a template-literal / JSX-concat with explicit `pattern-not`
+>   carve-outs (fires on `` `...${$X}...` `` and `$SAN + <...$X...>` but NOT on a
+>   leading-interpolation `` `${$X}...` `` nor `$X + ...`); the engine's `Relabel`
+>   carries only `{from, to}` and hard-codes the string-building trigger, with no
+>   way to express these exclusions. (4) **The sink shapes do not exist in the JS
+>   engine**: a JSX `href={$X}` attribute sink, a `React.createElement($EL,{href:$X})`
+>   object-argument sink with a `metavariable-pattern $EL !~ button`, AND an
+>   object-property *indirection* (`$PARAMS = {href:$X}; …; React.createElement($EL,$PARAMS)`
+>   — the rule's only positive fixture) that requires object-field taint flow.
+>   `grep` confirms zero `jsx`/`href`/`createElement` sink handling in
+>   `javascript_taint.rs`.
+>
+> - **`raw-html-format` (JS/express)** — deferred, and **the over-match is
+>   unavoidable even if the JS engine were made label-aware.** The sink's HTML-tag
+>   discriminator — the thing that separates the rule's positives
+>   (`"<h1>" + req.query.message`, `` `<h1>…${req.query.message}…` ``) from its own
+>   `ok` cases (`"message: " + req.query.message`, `` `message: ${req.query.message}` ``)
+>   — is a `metavariable-pattern` (generic `<$TAG ...`) on the concatenated literal
+>   plus a `pattern-regex: .*<\w+.*` on the template-literal branch. The loader
+>   reports both as unenforceable inside a taint sink: *"pattern-sinks `patterns:`
+>   block contains `metavariable-pattern` which foxguard cannot enforce … dropping
+>   constraint (matcher will be broader than the original rule)"* and *"unknown key
+>   `pattern-regex`; skipping sub-item"*. Dropping the HTML-tag constraint makes the
+>   sink fire on the non-HTML `ok` concatenations → **over-match on the rule's own
+>   negative fixtures**, which the parity bar forbids. Independently: the sink
+>   shapes `util.format($HTMLSTR, …)`, `"$HTMLSTR".concat(…)`, and a bare
+>   template-literal `` `...` `` sink are all reported *unsupported pattern shape*;
+>   and the sources are two primaries (`EXPRESS` + `EXPRESSTS`) plus the same
+>   no-`requires` `by-side-effect` `CLEAN` → three primaries → `detect_label_policy`
+>   refuses. (The two express-input primaries *would* collapse cleanly — the sink
+>   `(EXPRESS and not CLEAN) or (EXPRESSTS and not CLEAN)` is exactly
+>   `(EXPRESS ∨ EXPRESSTS) ∧ ¬CLEAN` — but the unenforceable HTML-tag sink
+>   discriminator is the fatal blocker regardless.)
+>
+> - **`grpc-server-insecure-connection` (Go)** — deferred (as pre-flagged
+>   likely-defer). It is a **structural predicate, not a dataflow**, with THREE
+>   distinct primary labels (`OPTIONS`/`CREDS`/`EMPTY_CONSTRUCTOR`) and **two sinks
+>   carrying DIFFERENT `requires:`** (`OPTIONS and not CREDS` vs
+>   `EMPTY_CONSTRUCTOR`). `detect_label_policy` models exactly one primary label
+>   and one shared sink gate; both invariants are violated. Dropping the `not CREDS`
+>   gate on the first sink fires on the secure `ok` case
+>   `grpc.NewServer(grpc.Creds(credentials.NewClientTLSFromCert(...)))` → over-match.
+>   The `OPTIONS` source `grpc.ServerOption{ ... }` (struct-literal) does not even
+>   match the fixture's `[]grpc.ServerOption{ ... }` (slice-literal), so the first
+>   sink has no positive fixture and could not be validated even if modeled. Only
+>   the bare `grpc.NewServer()` empty-constructor sink is trivially expressible
+>   (a plain zero-arg-call structural pattern), but loading just that abandons the
+>   `OPTIONS and not CREDS` sink and misrepresents the rule — half a rule under a
+>   whole rule's id. Defer as a unit.
+>
+> **Net: load-rate delta 0 rules (3 Go/JS/TS still skipped).** The negation-tier
+> `LabelPolicy` (2026-07-05) covers these rules' *sink boolean algebra* but none
+> of them is blocked *only* on that; the remaining blockers are (a) JS/TS engine
+> label-awareness, (b) `detect_label_policy` support for no-`requires`
+> `by-side-effect` sanitizer relabels + collapsing equivalent express-input
+> primaries, (c) taint-sink `metavariable-pattern`/`pattern-regex` enforcement
+> (raw-html-format's HTML-tag discriminator), (d) JSX-attribute / object-property
+> sink shapes (react-href-var), and (e) multi-primary / per-sink-differing-`requires`
+> for the structural gRPC rule. Each is a separate, larger feature.
+>
 > **Update (2026-07-05): the negation tier (`not`/`and`/`or` in `requires:`) is
 > now IMPLEMENTED in the engine.** `LabelPolicy` is generalized to a single
 > primary `source_label`, a list of conditional string-building `Relabel`s
