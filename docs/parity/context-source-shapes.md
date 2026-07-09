@@ -25,6 +25,38 @@ genuinely context-gated sources.
 > original blocker. Still deferred: `pyramid-direct-use-of-response`,
 > `pyramid-sqlalchemy-sql-injection`, `tainted-html-response`, `wildcard-cors`.
 
+> **Re-sweep (2026-07-09):** the 6 deferred Python taint rules
+> (`pyramid-direct-use-of-response`, `pyramid-sqlalchemy-sql-injection`,
+> `tainted-html-response`, `subprocess-list-passed-as-string`, `wildcard-cors`,
+> `hardcoded-token`) were re-examined against the grown primitive set
+> (`MethodArgSink`, `ConstructorArgSink`, `CallArgSource`, `LiteralArgCall`,
+> `TypedName`, `FirstParamSource`, `PropertyAssignSink`, `ReceiverProvenanceCall`).
+> **None flip** — each blocker is a shape the new primitives do not cover:
+> - `subprocess-list-passed-as-string` — source `" ".join($LIST)` is a call whose
+>   **receiver** is the literal `" "`. `CallArgSource{method,arg_index}` keys the
+>   *argument*, `LiteralArgCall{method,arg}` keys the *first argument literal*
+>   (JS-only) — neither expresses a literal-**receiver** method-call source.
+> - `wildcard-cors` — source `[..., "*", ...]` is a list-literal-contains-value
+>   (no such source); sink `add_middleware(CORSMiddleware, allow_origins=$ORIGIN,
+>   ...)` + focus is **keyword-position**, whereas `MethodArgSink` is positional
+>   and Java-only. The `ok` cases carry `allow=["*"]` in the *same* call, so an
+>   any-arg / positional sink over-matches.
+> - `hardcoded-token` — `FirstParamSource`/`LiteralString` cover the bare-string
+>   source, but the whole discriminator is the dropped sink constraints
+>   (`metavariable-regex` keyword name + `metavariable-pattern` value regex +
+>   `metavariable-analysis` Shannon entropy); no primitive enforces those inside
+>   a taint sink, so it would fire on every `ok` line.
+> - `tainted-html-response` — `FirstParamSource` could seed `event`, but it is
+>   wired only through the C#-signature recognizer (Java/C# engines); more
+>   decisively the sink is a nested-dict `pattern-inside`
+>   (`"Content-Type":"text/html"` sibling + `"body":$BODY`) that no primitive
+>   compiles — unchanged blocker.
+> - `pyramid-*` — still need the bound-parameter attribute-read source
+>   (`$REQ.$ANYTHING` with `$REQ` bound to the view param); source-side
+>   `pattern-inside` enforcement shipped, but the receiver-metavariable binding
+>   does not, and `pyramid-sqlalchemy-sql-injection` also needs the nested-format
+>   sink. Unchanged. All 6 stay deferred.
+
 ## Summary matrix
 
 | Rule | Source shape | Sink shape | Blocker | Status |
@@ -197,6 +229,24 @@ blockers, either alone fatal:
 **Needs:** a regex-gated string-building relabel (label side) + a
 constructor-argument / builder-chain focus sink primitive (sink side). Deferred.
 
+> **Re-sweep (2026-07-09).** The sink half is now *partially* expressible: the
+> `ConstructorArgSink{class_names, arg_index}` primitive (shipped for `csharp-sqli`,
+> also compiled Java-side) could cover the `new ResponseEntity<>($PAYLOAD, ...)` /
+> `new ResponseEntity<$ERROR>($PAYLOAD, ...)` arms as a class-name / arg-0 focus
+> sink. But blocker #1 remains **fatal and unchanged**: `requires: CONCAT` gates
+> the whole sink on the `INPUT → CONCAT` relabel, and that relabel must fire only
+> when the string-building literal matches `metavariable-regex $HTMLSTR ^<\w+`.
+> The fixture's discriminator is decisive — `getVulnerablePayloadLevelSecure3ok`
+> (`String … = "not html"; … += imageLocation; return new ResponseEntity<>(…)`,
+> marked **ok**) is byte-for-byte identical to the firing
+> `getVulnerablePayloadLevelSecure2` (`… = "<img …>"`) except for whether the
+> literal starts with an HTML tag. foxguard's `is_string_building_node` relabel
+> applies `INPUT → CONCAT` to **any** concatenation, so the `ok` case acquires
+> `CONCAT` and fires → false positive (gate #3 fails). A regex-gated relabel is
+> not expressible by `LabelPolicy`/`Relabel`. The `ResponseEntity.ok(...)` /
+> `ResponseEntity. ... .body(...)` builder-chain arms also still need an
+> ellipsis-chain focus sink `ConstructorArgSink` does not provide. Deferred.
+
 ### `wildcard-cors`
 
 Two blockers. Source `[..., "*", ...]` is a **list literal containing a value** —
@@ -324,6 +374,40 @@ Same hard rule: a loaded rule must match what Semgrep matches, **not more**.
 Outcome: **2 of 7 implemented** (`avoid-tainted-http-request`,
 `md5-used-as-password`), 5 deferred with the concrete blocker each carries. Ruby
 load rate moves **85 → 87 / 92 (92.4% → 94.6%)**; overall **2100 → 2102 / 2144**.
+
+> **Re-sweep (2026-07-09):** the 5 deferred Ruby taint rules
+> (`avoid-tainted-ftp-call`, `check-redirect-to`,
+> `check-render-local-file-include`, `divide-by-zero`,
+> `rails-no-render-after-save`) were re-examined against the *grown* primitive
+> set — `MethodArgSink{methods,arg_index}`, `ConstructorArgSink`,
+> `ReceiverProvenanceCall`, `CallArgSource`, `CallArgConcat`, `TypedName`,
+> `FirstParamSource`, `PropertyAssignSink`. **None flip.** The two that looked
+> newly-plausible fail on a shape mismatch, not merely a missing feature:
+> - `avoid-tainted-ftp-call` — the `ReceiverProvenanceCall` primitive is a
+>   **source** with a *fixed* `init_arg` literal and a *fixed* `method`
+>   (`MessageDigest.getInstance("MD5"); … $MD.digest(...)`), compiled solely for
+>   the Java engine. The FTP rule needs the **sink** dual with a *wildcard*
+>   method (`$FTP.$METHOD(...)`) and a receiver bound by
+>   `$FTP = Net::FTP.$OPEN(...)` — a receiver-TYPE-provenance sink that neither
+>   the primitive's shape nor the Ruby engine expresses. (Its first arm,
+>   `Net::FTP.$X(...)`, is a metavariable-method call that still does not compile
+>   to a concrete `Call`, and alone would catch only 2 of 15 fixture positives —
+>   a severe under-match even if forced.)
+> - `check-render-local-file-include` — `MethodArgSink{methods,arg_index}` is a
+>   **positional** arg-index sink (Java-only). The `render` sink keys on a
+>   **keyword** value (`file:`/`inline:`/`template:`/`action:`) *or* the first
+>   positional, and the `ok` discriminator
+>   `render :update, locals: { username: params[:username] }` puts taint in a
+>   *non-target* keyword — so a positional-index or any-arg sink over-matches it.
+>   A faithful compile needs a keyword-argument-value sink (not positional),
+>   plus the `metavariable-pattern`-gated `$MAP[...]` subscript sanitizer.
+>
+> `check-redirect-to` (metavariable-regex-gated sanitizer + `(?<!permit)`
+> lookbehind the Rust regex crate rejects), `divide-by-zero` (numeric-literal
+> source + `^\d*(?!\.)$` lookahead + divide-by-zero arithmetic predicate, a
+> non-dataflow shape), and `rails-no-render-after-save` (cross-pattern
+> metavariable UNIFICATION + ordering) are unchanged by the new primitives.
+> All 5 stay deferred.
 
 ## Summary matrix
 
