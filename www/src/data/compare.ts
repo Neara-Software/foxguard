@@ -1,8 +1,8 @@
 // Data for the /compare page.
 //
 // foxguard ground truth is verified against the Rust source:
-//   200+ built-in rules; 11 programming languages (JS/TS, Python, Go, Ruby, Java,
-//   PHP, Rust, C#, Swift, Kotlin, Haskell) plus config/infra targets; first-party
+//   200+ built-in rules; 12 programming languages (JS/TS, Python, Go, Ruby, Java,
+//   PHP, Rust, C#, Swift, Kotlin, Solidity, Haskell) plus config/infra targets; first-party
 //   taint for 14 languages (incl. C, Bash, Solidity, Scala, Apex) with cross-file
 //   taint for Python, JavaScript, Go, Java, Ruby, PHP, C#, and Kotlin; loads
 //   Semgrep/OpenGrep YAML via --rules; MIT OR Apache-2.0, free forever.
@@ -117,7 +117,7 @@ export const matrixRows: MatrixRow[] = [
   },
   {
     capability: 'Cross-file taint on the free tier',
-    note: 'foxguard: Python, JS, Go, Java, Ruby, PHP, C# (7 langs). Semgrep needs Pro; SonarQube needs Developer ed.; OpenGrep is per-file today.',
+    note: 'foxguard: Python, JS, Go, Java, Ruby, PHP, C#, Kotlin (8 langs). Semgrep needs Pro; SonarQube needs Developer ed.; OpenGrep is per-file today.',
     cells: {
       foxguard: 'yes',
       semgrep: 'Paid (Pro)',
@@ -294,9 +294,9 @@ export const coreRows: MatrixRow[] = [
   },
   {
     capability: 'Languages',
-    note: 'foxguard: 11 programming languages plus config/infra. Counts vary by edition/version.',
+    note: 'foxguard: 12 programming languages plus config/infra. Counts vary by edition/version.',
     cells: {
-      foxguard: '11 + config',
+      foxguard: '12 + config',
       semgrep: '30+',
       opengrep: '30+',
       codeql: '~11',
