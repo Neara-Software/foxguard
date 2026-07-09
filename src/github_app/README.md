@@ -1,6 +1,8 @@
-# foxguard GitHub App — Phase 1 foundation
+# foxguard GitHub App
 
 Tracking issue: [0sec-labs/foxguard#246](https://github.com/0sec-labs/foxguard/issues/246).
+
+**Status: live in production.** The App is registered under `0sec-labs`, receives webhooks at `https://foxguard.0sec.ai`, and runs as a container on the 0cloud k3s cluster, scanning pull requests across its installations.
 
 This directory hosts the in-tree pieces of the GitHub App webhook receiver. The receiver is built behind the `github-app` feature flag so the core scanner build stays lean for users who only want the CLI:
 
@@ -14,14 +16,12 @@ cargo build --release --features github-app --bin foxguard-github-app
 - `webhook.rs` — HMAC-SHA256 signature verification (`verify_signature`) and the `EventKind` router enum. 10 unit tests pin the verification contract: known-good vector, modified body, wrong secret, missing/empty/non-hex/short-length digest, trailing-whitespace tolerance, and the kind-routing map.
 - `auth.rs` — GitHub App JWT generation, installation-token exchange, and conservative in-memory token caching. It reads app credentials from `FOXGUARD_GITHUB_APP_ID` and either `FOXGUARD_GITHUB_PRIVATE_KEY` or an absolute `FOXGUARD_GITHUB_PRIVATE_KEY_PATH`, and keeps the outbound GitHub API base URL configurable for tests and allowlisted GitHub Enterprise hosts.
 - `installation_store.rs` — small JSON-backed installation registry. It records account metadata and selected repositories from `installation` / `installation_repositories` webhooks so self-hosted operators can recover install state across restarts without a database dependency.
-- `src/bin/foxguard_github_app.rs` — axum-based HTTP server with `/healthz` and `/webhook` endpoints. Verifies the signature, routes by `X-GitHub-Event`, extracts installation IDs from JSON payloads, persists installation metadata, prepares installation auth for `pull_request` deliveries, clones and scans pull-request heads in a bounded temp workspace, posts foxguard PR review comments and a check run through the installation token, clears cached tokens when installations are deleted, and returns `202 Accepted` for all known kinds.
+- `src/bin/foxguard_github_app.rs` — axum-based HTTP server with `/healthz` and `/webhook` endpoints. Verifies the signature, routes by `X-GitHub-Event`, extracts installation IDs from JSON payloads, persists installation metadata, prepares installation auth for `pull_request` deliveries, clones and scans pull-request heads in a bounded temp workspace, posts foxguard PR review comments and a check run through the installation token, clears cached tokens when installations are deleted, and returns `202 Accepted` for all known kinds. The PR scan runs the full tree first (whole-repo cross-file taint context) and, only if it exceeds `FOXGUARD_SCAN_TIMEOUT_SECS` (default 60), falls back to a diff-scoped scan of just the PR's changed files (`--changed-files-from`), with non-code paths (`tests/fixtures`, `vendor`, `node_modules`, minified/`dist`/`build`) excluded on both paths.
 - `review.rs` — installation-token GitHub REST client for PR review comments and check runs. It deletes prior foxguard review comments, lists changed PR files, filters findings to commentable diff lines, posts inline comments using the shared CLI comment formatter, and creates a `foxguard` check run with up to 50 annotations.
 
-## What's NOT here yet (Phase 2)
+## App configuration (registered & live)
 
-The intentional gap. Each of these is a follow-up PR so the architecture above can land cleanly first:
-
-- **App registration.** Create the production GitHub App under the `0sec-labs` org and wire the real install URL into the landing page (`www/src/pages/github.astro`, PR #299). The App must request exactly the permissions and webhook events the receiver consumes today — anything less will fail at runtime, anything more is over-scoped:
+The production App is registered under `0sec-labs` and installed at `https://foxguard.0sec.ai`. It requests **exactly** the permissions and webhook events the receiver consumes — anything less fails at runtime, anything more is over-scoped:
 
   **Repository permissions**
   - `contents: read` — used by `git clone --filter=blob:none` of the PR head (`src/bin/foxguard_github_app.rs`).
@@ -72,4 +72,4 @@ A reference Dockerfile lives at the repo root: [`Dockerfile.github-app`](../../D
 
 ## Status
 
-The receiver now covers the first useful App loop: verified webhook intake, installation metadata persistence, installation-token auth, bounded PR checkout + scan, PR review comment posting, and check-run annotations.
+Live in production. The receiver covers the full App loop: verified webhook intake, installation metadata persistence (durable via a mounted volume), installation-token auth, bounded PR checkout + scan (full-tree with diff-scoped fallback on timeout, configurable via `FOXGUARD_SCAN_TIMEOUT_SECS`, noise-path exclusions), PR review comment posting filtered to changed lines, and check-run annotations.

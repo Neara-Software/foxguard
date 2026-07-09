@@ -1,10 +1,25 @@
 # Investigation: 827-findings/PR noise — scope + noisy-rule breakdown
 
+> **RESOLVED (2026-07-09).** The P0/P1 recommendations below shipped and are
+> deployed in production:
+> - **Scan scoping** ([#544](https://github.com/0sec-labs/foxguard/pull/544)):
+>   full-tree scan first (whole-repo cross-file taint preserved), with a
+>   **diff-scoped fallback** (`--changed-files-from`) only on timeout, plus
+>   noise-path `--exclude` globs.
+> - **Configurable timeout** ([#543](https://github.com/0sec-labs/foxguard/pull/543)):
+>   `FOXGUARD_SCAN_TIMEOUT_SECS`, deployed at 180.
+>
+> Measured effect after deploy: the scan **timeout rate dropped from 20.5%
+> (468/2285 over 41 days) to 0% (0/125 over the following ~3.6 days)** — the
+> raised timeout + exclusions let even the large monorepos finish the full scan,
+> so the fallback isn't currently exercised and full cross-file coverage is
+> retained. The analysis below is kept as the record of the original diagnosis.
+
 Read-only investigation. **No detection logic was changed.** Goal: explain why
 the GitHub App reports a median of **827 findings/PR** (p90 972, max 1,834) with
 **~20% of scans hitting the 60s timeout**, and recommend concrete fixes.
 
-Code paths cited are on current `main`.
+Code paths cited are on current `main` at the time of writing (2026-07-05).
 
 ---
 
