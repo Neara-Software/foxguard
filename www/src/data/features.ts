@@ -35,7 +35,7 @@ export const features: Feature[] = [
   {
     icon: 'yaml',
     title: 'Semgrep YAML bridge',
-    desc: 'Load existing Semgrep/OpenGrep rules with --rules. Focused subset, parity-tested in CI.',
+    desc: 'Load existing Semgrep/OpenGrep rules with --rules. Loads ~98% of the public Semgrep/OpenGrep registry, parity-tested in CI.',
   },
 ];
 

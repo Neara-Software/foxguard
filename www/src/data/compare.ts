@@ -152,7 +152,7 @@ export const matrixRows: MatrixRow[] = [
   },
   {
     capability: 'Loads Semgrep / OpenGrep YAML',
-    note: 'Ingests a parity-tested subset of Semgrep/OpenGrep YAML via --rules.',
+    note: 'Ingests ~98% of the Semgrep/OpenGrep registry via --rules (parity-tested in CI).',
     cells: {
       foxguard: 'yes',
       semgrep: 'yes',
