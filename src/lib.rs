@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod app;
 pub mod baseline;
+pub mod certscan;
 pub mod cli;
 pub mod compliance;
 pub mod config;
@@ -204,4 +205,40 @@ pub struct Finding {
     /// Dependency path from manifest root to vulnerable package when known.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dep_path: Vec<String>,
+    /// Parsed cryptographic material (X.509 certificate or standalone key)
+    /// backing this finding. Populated only by the certificate/key scan pass
+    /// (`foxguard pqc`); `None` for source-, config-, and dependency-level
+    /// findings. Carries algorithm identity + metadata ONLY — never key bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crypto_material: Option<CryptoMaterial>,
+}
+
+/// Cryptographic material extracted from a real certificate or key file.
+///
+/// Emitted by the `foxguard pqc` cert/key scan pass and consumed by the CBOM
+/// formatter to build CycloneDX `certificate` / `related-crypto-material`
+/// assets. Contains only algorithm identity and public metadata — **never**
+/// private-key bytes or other secret material.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CryptoMaterial {
+    /// CBOM asset type: `"certificate"` for a parsed X.509 cert, or
+    /// `"related-crypto-material"` for a standalone public/private key.
+    pub asset_kind: String,
+    /// Human-readable subject public-key algorithm identity, e.g.
+    /// `"RSA-2048"`, `"ECDSA P-256"`, `"Ed25519"`, `"DSA-1024"`, `"ML-DSA"`.
+    pub subject_public_key_algorithm: String,
+    /// Certificate signature algorithm (present for full certs), e.g.
+    /// `"sha256WithRSAEncryption"`. `None` for standalone keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature_algorithm: Option<String>,
+    /// Encoding the material was parsed from: `"PEM"` or `"DER"`.
+    pub format: String,
+    /// Certificate `notValidAfter` timestamp in RFC 3339 / ISO-8601 form,
+    /// when available. `None` for standalone keys or unparseable validity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_valid_after: Option<String>,
+    /// Whether this material's public-key algorithm is quantum-vulnerable
+    /// (classical RSA/EC/DSA). Post-quantum material (ML-DSA/ML-KEM) is
+    /// `false`.
+    pub quantum_vulnerable: bool,
 }

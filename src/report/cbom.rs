@@ -280,6 +280,52 @@ fn build_dependency_component(
     component
 }
 
+/// Build a CBOM `certificate` or `related-crypto-material` component from a
+/// finding whose backing cryptographic material was parsed from a real cert or
+/// key file. Carries algorithm identity + public metadata ONLY — never key
+/// bytes.
+fn build_crypto_material_component(bom_ref: &str, finding: &Finding) -> serde_json::Value {
+    let material = finding
+        .crypto_material
+        .as_ref()
+        .expect("caller guarantees crypto_material is set");
+
+    let mut crypto_properties = json!({ "assetType": material.asset_kind });
+
+    if material.asset_kind == "certificate" {
+        let mut cert_props = serde_json::Map::new();
+        cert_props.insert(
+            "subjectPublicKeyAlgorithm".to_string(),
+            json!(material.subject_public_key_algorithm),
+        );
+        if let Some(sig) = &material.signature_algorithm {
+            cert_props.insert("signatureAlgorithm".to_string(), json!(sig));
+        }
+        cert_props.insert("certificateFormat".to_string(), json!(material.format));
+        if let Some(not_after) = &material.not_valid_after {
+            cert_props.insert("notValidAfter".to_string(), json!(not_after));
+        }
+        crypto_properties["certificateProperties"] = json!(cert_props);
+    } else {
+        // related-crypto-material: a standalone public/private key.
+        crypto_properties["relatedCryptoMaterialProperties"] = json!({
+            "type": "key",
+            "format": material.format,
+            "algorithm": material.subject_public_key_algorithm
+        });
+    }
+
+    json!({
+        "type": "cryptographic-asset",
+        "bom-ref": bom_ref,
+        "name": material.subject_public_key_algorithm,
+        "cryptoProperties": crypto_properties,
+        "evidence": {
+            "occurrences": [occurrence_json(finding, None)]
+        }
+    })
+}
+
 fn build_vulnerability(algo: &str, bom_ref: &str, findings: &[&Finding]) -> serde_json::Value {
     // Use the highest severity from the group
     let max_severity = findings
@@ -409,7 +455,18 @@ pub fn build_cbom(findings: &[Finding]) -> (serde_json::Value, bool) {
     let mut groups: BTreeMap<String, Vec<&Finding>> = BTreeMap::new();
     let mut dependency_groups: BTreeMap<DependencyIdentity, Vec<DependencyOccurrence>> =
         BTreeMap::new();
+    // Findings backed by real parsed cryptographic material (certs / keys)
+    // become dedicated `certificate` / `related-crypto-material` assets rather
+    // than being folded into the algorithm grouping below.
+    let material_findings: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.crypto_material.is_some())
+        .collect();
+
     for f in findings {
+        if f.crypto_material.is_some() {
+            continue;
+        }
         if let Some(algo) = &f.crypto_algorithm {
             groups.entry(algo.clone()).or_default().push(f);
             if let Some(occurrence) = dependency_occurrence(f) {
@@ -421,7 +478,8 @@ pub fn build_cbom(findings: &[Finding]) -> (serde_json::Value, bool) {
         }
     }
 
-    let empty_but_findings_present = groups.is_empty() && !findings.is_empty();
+    let empty_but_findings_present =
+        groups.is_empty() && material_findings.is_empty() && !findings.is_empty();
 
     let mut components = Vec::new();
     let mut vulnerabilities = Vec::new();
@@ -432,6 +490,25 @@ pub fn build_cbom(findings: &[Finding]) -> (serde_json::Value, bool) {
 
         components.push(build_component(algo, &bom_ref, group_findings, &props));
         vulnerabilities.push(build_vulnerability(algo, &bom_ref, group_findings));
+    }
+
+    for f in &material_findings {
+        let material = f.crypto_material.as_ref().expect("filtered on Some");
+        let bom_ref = format!(
+            "crypto-material-{}",
+            deterministic_uuid(&format!(
+                "{}|{}|{}",
+                f.file, material.asset_kind, material.subject_public_key_algorithm
+            ))
+        );
+        components.push(build_crypto_material_component(&bom_ref, f));
+        if material.quantum_vulnerable {
+            vulnerabilities.push(build_vulnerability(
+                &material.subject_public_key_algorithm,
+                &bom_ref,
+                &[f],
+            ));
+        }
     }
 
     for (identity, occurrences) in &dependency_groups {
@@ -529,7 +606,22 @@ mod tests {
             dep_source: None,
             dep_vulnerability_severity: None,
             dep_path: vec![],
+            crypto_material: None,
         }
+    }
+
+    fn make_certificate_finding() -> Finding {
+        let mut finding = make_crypto_finding("RSA", "certs/server.pem", 1);
+        finding.rule_id = "cert/pq-vulnerable-certificate".to_string();
+        finding.crypto_material = Some(crate::CryptoMaterial {
+            asset_kind: "certificate".to_string(),
+            subject_public_key_algorithm: "RSA-2048".to_string(),
+            signature_algorithm: Some("sha256WithRSAEncryption".to_string()),
+            format: "PEM".to_string(),
+            not_valid_after: Some("Tue, 08 Jul 2036 20:20:42 +0000".to_string()),
+            quantum_vulnerable: true,
+        });
+        finding
     }
 
     fn make_dependency_finding(dep_name: &str, file: &str, line: usize, snippet: &str) -> Finding {
@@ -595,6 +687,7 @@ mod tests {
             dep_source: None,
             dep_vulnerability_severity: None,
             dep_path: vec![],
+            crypto_material: None,
         }];
 
         let groups: BTreeMap<String, Vec<&Finding>> = findings
@@ -789,5 +882,63 @@ mod tests {
             assert_eq!(occurrence["source"]["context"], "manifest");
             assert!(occurrence["versionText"].is_string());
         }
+    }
+
+    #[test]
+    fn cbom_emits_certificate_asset_for_parsed_material() {
+        let findings = vec![make_certificate_finding()];
+        let (cbom, empty) = build_cbom(&findings);
+        assert!(!empty, "cert material must not be treated as empty CBOM");
+
+        let components = cbom["components"].as_array().expect("components array");
+        // Exactly one component, and it is a certificate asset (NOT folded into
+        // the RSA algorithm grouping).
+        assert_eq!(components.len(), 1);
+        let cert = &components[0];
+        assert_eq!(cert["type"], "cryptographic-asset");
+        let props = &cert["cryptoProperties"];
+        assert_eq!(props["assetType"], "certificate");
+        let cp = &props["certificateProperties"];
+        assert_eq!(cp["subjectPublicKeyAlgorithm"], "RSA-2048");
+        assert_eq!(cp["signatureAlgorithm"], "sha256WithRSAEncryption");
+        assert_eq!(cp["certificateFormat"], "PEM");
+        assert!(cp["notValidAfter"].is_string());
+
+        // A quantum-vulnerable cert also yields a linked vulnerability.
+        let vulns = cbom["vulnerabilities"].as_array().expect("vulns array");
+        assert_eq!(vulns.len(), 1);
+        assert_eq!(vulns[0]["affects"][0]["ref"], cert["bom-ref"]);
+
+        // No key bytes anywhere in the serialized CBOM.
+        let serialized = serde_json::to_string(&cbom).unwrap();
+        assert!(!serialized.contains("BEGIN"));
+        assert!(!serialized.contains("PRIVATE"));
+    }
+
+    #[test]
+    fn cbom_standalone_key_is_related_crypto_material() {
+        let mut f = make_certificate_finding();
+        f.rule_id = "cert/pq-vulnerable-key".to_string();
+        f.file = "keys/id_rsa.key".to_string();
+        f.crypto_material = Some(crate::CryptoMaterial {
+            asset_kind: "related-crypto-material".to_string(),
+            subject_public_key_algorithm: "RSA".to_string(),
+            signature_algorithm: None,
+            format: "PEM".to_string(),
+            not_valid_after: None,
+            quantum_vulnerable: true,
+        });
+
+        let (cbom, _) = build_cbom(&[f]);
+        let components = cbom["components"].as_array().unwrap();
+        assert_eq!(components.len(), 1);
+        assert_eq!(
+            components[0]["cryptoProperties"]["assetType"],
+            "related-crypto-material"
+        );
+        assert_eq!(
+            components[0]["cryptoProperties"]["relatedCryptoMaterialProperties"]["algorithm"],
+            "RSA"
+        );
     }
 }

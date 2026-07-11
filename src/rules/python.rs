@@ -2102,6 +2102,7 @@ fn map_taint_findings(
             dep_source: None,
             dep_vulnerability_severity: None,
             dep_path: vec![],
+            crypto_material: None,
         })
         .collect()
 }
@@ -3049,6 +3050,7 @@ pub fn run_py_taint_batched(
                 dep_source: None,
                 dep_vulnerability_severity: None,
                 dep_path: vec![],
+                crypto_material: None,
             })
         })
         .collect()
