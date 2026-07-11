@@ -2161,6 +2161,7 @@ fn map_js_taint_findings(
             dep_source: None,
             dep_vulnerability_severity: None,
             dep_path: vec![],
+            crypto_material: None,
         })
         .collect()
 }
@@ -3170,6 +3171,7 @@ pub fn run_js_taint_batched(
                 dep_source: None,
                 dep_vulnerability_severity: None,
                 dep_path: vec![],
+                crypto_material: None,
             })
         })
         .collect()
