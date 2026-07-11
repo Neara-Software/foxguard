@@ -765,6 +765,22 @@ fn is_static_concat(node: tree_sitter::Node, src: &str) -> bool {
     }
 }
 
+// ─── Rule: pq-ready-crypto (informational) ────────────────────────────────
+
+pub struct PqReadyCrypto;
+
+impl_rule! {
+    PqReadyCrypto,
+    id = "js/pq-ready-crypto",
+    severity = Severity::Low,
+    cwe = None,
+    description = "Post-quantum / hybrid cryptographic algorithm in use (ML-KEM, ML-DSA, SLH-DSA, FN-DSA, HQC, or hybrid KEM)",
+    language = Language::JavaScript,
+    fn check(_self, source, _tree) {
+        crate::rules::pq::pq_ready_findings(_self.id(), source)
+    }
+}
+
 // ─── Rule 9: no-path-traversal ─────────────────────────────────────────────
 
 pub struct NoPathTraversal;

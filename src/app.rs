@@ -772,6 +772,10 @@ fn validate_rules_path(rules: Option<&str>) -> Result<(), String> {
 /// Returns `true` if the rule ID belongs to the PQ audit rule set.
 fn is_pq_rule_id(id: &str) -> bool {
     id.contains("pq-vulnerable")
+        // Informational post-quantum-ready detectors: the migration-target
+        // side of the audit. Included so `foxguard pqc` activates them (they
+        // are opt-in and therefore dormant in a normal scan).
+        || id.contains("pq-ready")
         || id.contains("hardcoded-crypto-algorithm")
         || id == "config/dockerfile-insecure-tls-env"
 }

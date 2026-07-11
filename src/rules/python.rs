@@ -784,6 +784,22 @@ impl_rule! {
     }
 }
 
+// ─── Rule: pq-ready-crypto (informational) ────────────────────────────────
+
+pub struct PqReadyCrypto;
+
+impl_rule! {
+    PqReadyCrypto,
+    id = "py/pq-ready-crypto",
+    severity = Severity::Low,
+    cwe = None,
+    description = "Post-quantum / hybrid cryptographic algorithm in use (ML-KEM, ML-DSA, SLH-DSA, FN-DSA, HQC, or hybrid KEM)",
+    language = Language::Python,
+    fn check(_self, source, _tree) {
+        crate::rules::pq::pq_ready_findings(_self.id(), source)
+    }
+}
+
 // ─── Rule 7: no-pickle ─────────────────────────────────────────────────────
 
 pub struct NoPickle;
