@@ -129,6 +129,18 @@ pub fn default_confidence() -> f32 {
     1.0
 }
 
+/// Tag applied to informational "post-quantum ready" findings.
+///
+/// The vulnerable side of the PQC audit tags findings `"PQ"` (see the
+/// `pq-vulnerable-crypto` rules). The migration-target side tags findings
+/// with this marker instead. A finding carrying [`PQ_READY_TAG`] describes a
+/// *post-quantum / quantum-resistant* algorithm already in use — it is a
+/// positive inventory entry, **not** a vulnerability. Modeling this as a tag
+/// (rather than a new `Finding` field) keeps it symmetric with the existing
+/// `"PQ"` marker, serializes for free, and lets the CBOM / migration
+/// scorecard partition findings without a schema change.
+pub const PQ_READY_TAG: &str = "PQ-READY";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
     pub rule_id: String,
@@ -241,4 +253,14 @@ pub struct CryptoMaterial {
     /// (classical RSA/EC/DSA). Post-quantum material (ML-DSA/ML-KEM) is
     /// `false`.
     pub quantum_vulnerable: bool,
+}
+
+impl Finding {
+    /// `true` when this finding is an informational post-quantum inventory
+    /// entry (see [`PQ_READY_TAG`]) rather than a vulnerability. Used by the
+    /// CBOM formatter and migration scorecard to keep quantum-resistant
+    /// algorithms out of the vulnerability set.
+    pub fn is_pq_ready(&self) -> bool {
+        self.tags.iter().any(|t| t == PQ_READY_TAG)
+    }
 }

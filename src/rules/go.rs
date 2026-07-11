@@ -572,6 +572,22 @@ impl_rule! {
     }
 }
 
+// ─── Rule: pq-ready-crypto (informational) ────────────────────────────────
+
+pub struct PqReadyCrypto;
+
+impl_rule! {
+    PqReadyCrypto,
+    id = "go/pq-ready-crypto",
+    severity = Severity::Low,
+    cwe = None,
+    description = "Post-quantum / hybrid cryptographic algorithm in use (ML-KEM, ML-DSA, SLH-DSA, FN-DSA, HQC, or hybrid KEM)",
+    language = Language::Go,
+    fn check(_self, source, _tree) {
+        crate::rules::pq::pq_ready_findings(_self.id(), source)
+    }
+}
+
 // ─── Rule 5: gin-no-trusted-proxies ────────────────────────────────────────
 
 pub struct GinNoTrustedProxies;

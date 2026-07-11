@@ -12,6 +12,10 @@ struct CryptoProps {
     primitive: Option<&'static str>,
     functions: &'static [&'static str],
     protocol_type: Option<&'static str>,
+    /// `Some(standard)` for NIST/FIPS post-quantum algorithms (e.g.
+    /// `"FIPS 203"`). Marks the asset quantum-resistant and suppresses the
+    /// vulnerability entry — a PQ algorithm is an inventory asset, not a risk.
+    quantum_resistant: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -28,24 +32,50 @@ struct DependencyOccurrence {
 }
 
 fn crypto_props(algo: &str) -> CryptoProps {
+    // Post-quantum / hybrid algorithms: emit as quantum-resistant assets with
+    // their NIST/FIPS standard, and (below, in build_cbom) without an attached
+    // vulnerability. The primitive comes from the shared PQ algorithm table.
+    if let Some(pq) = crate::rules::pq::algorithm_by_canonical(algo) {
+        let primitive = match pq.primitive {
+            "kem" => Some("kem"),
+            "signature" => Some("signature"),
+            _ => None,
+        };
+        let functions: &'static [&'static str] = match pq.primitive {
+            "kem" => &["encapsulate", "decapsulate"],
+            "signature" => &["sign", "verify"],
+            _ => &[],
+        };
+        return CryptoProps {
+            asset_type: "algorithm",
+            primitive,
+            functions,
+            protocol_type: None,
+            quantum_resistant: Some(pq.standard),
+        };
+    }
+
     match algo {
         "RSA" => CryptoProps {
             asset_type: "algorithm",
             primitive: Some("pk-encryption"),
             functions: &["encrypt", "sign"],
             protocol_type: None,
+            quantum_resistant: None,
         },
         "ECDSA" | "DSA" | "Ed25519" | "Ed448" => CryptoProps {
             asset_type: "algorithm",
             primitive: Some("signature"),
             functions: &["sign", "verify"],
             protocol_type: None,
+            quantum_resistant: None,
         },
         "ECDH" | "DH" | "X25519" | "X448" => CryptoProps {
             asset_type: "algorithm",
             primitive: Some("key-agree"),
             functions: &["keyagree"],
             protocol_type: None,
+            quantum_resistant: None,
         },
         "AES" | "AES-CBC" | "AES-GCM" | "DES" | "3DES" | "Blowfish" | "RC4" | "RC2" => {
             CryptoProps {
@@ -53,6 +83,7 @@ fn crypto_props(algo: &str) -> CryptoProps {
                 primitive: Some("block-cipher"),
                 functions: &["encrypt", "decrypt"],
                 protocol_type: None,
+                quantum_resistant: None,
             }
         }
         "MD5" | "SHA1" | "SHA-1" => CryptoProps {
@@ -60,18 +91,21 @@ fn crypto_props(algo: &str) -> CryptoProps {
             primitive: Some("hash"),
             functions: &["digest"],
             protocol_type: None,
+            quantum_resistant: None,
         },
         "TLS" => CryptoProps {
             asset_type: "protocol",
             primitive: None,
             functions: &[],
             protocol_type: Some("tls"),
+            quantum_resistant: None,
         },
         _ => CryptoProps {
             asset_type: "related-crypto-material",
             primitive: None,
             functions: &[],
             protocol_type: None,
+            quantum_resistant: None,
         },
     }
 }
@@ -214,7 +248,7 @@ fn build_component(
         }
     }
 
-    json!({
+    let mut component = json!({
         "type": "cryptographic-asset",
         "bom-ref": bom_ref,
         "name": algo,
@@ -222,7 +256,19 @@ fn build_component(
         "evidence": {
             "occurrences": occurrences
         }
-    })
+    });
+
+    // Mark post-quantum algorithms as quantum-resistant, standardized assets so
+    // a CBOM reader can tell the migration targets apart from the vulnerable
+    // inventory at a glance.
+    if let Some(standard) = props.quantum_resistant {
+        component["properties"] = json!([
+            { "name": "foxguard:quantum-resistant", "value": "true" },
+            { "name": "foxguard:nist-standard", "value": standard }
+        ]);
+    }
+
+    component
 }
 
 fn build_dependency_component(
@@ -489,7 +535,12 @@ pub fn build_cbom(findings: &[Finding]) -> (serde_json::Value, bool) {
         let props = crypto_props(algo);
 
         components.push(build_component(algo, &bom_ref, group_findings, &props));
-        vulnerabilities.push(build_vulnerability(algo, &bom_ref, group_findings));
+        // Post-quantum assets are inventory, not risk: emit the component but
+        // no vulnerability entry. A quantum-resistant algorithm must never
+        // appear in `vulnerabilities[]`.
+        if props.quantum_resistant.is_none() {
+            vulnerabilities.push(build_vulnerability(algo, &bom_ref, group_findings));
+        }
     }
 
     for f in &material_findings {
